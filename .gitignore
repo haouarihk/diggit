@@ -1,0 +1,10 @@
+.env
+.env.local
+node_modules
+.next
+target
+storage/git/*
+!storage/git/.gitkeep
+*.log
+
+.pnpm-store

@@ -1,0 +1,203 @@
+@import "tailwindcss";
+
+:root {
+  color-scheme: light;
+  --color-canvas: #f6f8fa;
+  --color-surface: #ffffff;
+  --color-subtle: #f6f8fa;
+  --color-muted-surface: #eaeef2;
+  --color-border: #d0d7de;
+  --color-border-muted: #d8dee4;
+  --color-fg: #1f2328;
+  --color-fg-inverse: #ffffff;
+  --color-muted: #59636e;
+  --color-muted-light: #8c959f;
+  --color-strong: #24292f;
+  --color-neutral-emphasis: #24292f;
+  --color-accent-fg: #0969da;
+  --color-accent-emphasis: #0969da;
+  --color-accent-subtle: #ddf4ff;
+  --color-success-emphasis: #1a7f37;
+  --color-success-emphasis-hover: #116329;
+  --color-danger-fg: #cf222e;
+  --color-danger-subtle: #fff8f8;
+  --color-attention-muted: #fd8c73;
+  --color-code-bg: #0d1117;
+  --color-code-fg: #f0f6fc;
+  --color-shadow: rgb(31 35 40 / 12%);
+  --color-button-border: rgb(31 35 40 / 15%);
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --color-canvas: #0d1117;
+  --color-surface: #161b22;
+  --color-subtle: #21262d;
+  --color-muted-surface: #30363d;
+  --color-border: #30363d;
+  --color-border-muted: #21262d;
+  --color-fg: #e6edf3;
+  --color-fg-inverse: #ffffff;
+  --color-muted: #8b949e;
+  --color-muted-light: #6e7681;
+  --color-strong: #f0f6fc;
+  --color-neutral-emphasis: #30363d;
+  --color-accent-fg: #58a6ff;
+  --color-accent-emphasis: #1f6feb;
+  --color-accent-subtle: #0c2d6b;
+  --color-success-emphasis: #238636;
+  --color-success-emphasis-hover: #2ea043;
+  --color-danger-fg: #ff7b72;
+  --color-danger-subtle: #2d1517;
+  --color-attention-muted: #f78166;
+  --color-code-bg: #010409;
+  --color-code-fg: #e6edf3;
+  --color-shadow: rgb(1 4 9 / 80%);
+  --color-button-border: rgb(240 246 252 / 12%);
+}
+
+html,
+body {
+  background: var(--color-canvas);
+  color: var(--color-fg);
+}
+
+* {
+  border-color: var(--color-border);
+}
+
+::selection {
+  background: color-mix(in srgb, var(--color-accent-emphasis) 30%, transparent);
+}
+
+input,
+select,
+textarea {
+  color-scheme: inherit;
+}
+
+/* Theme-map the existing GitHub-like utility palette without rewriting every component. */
+[class~="bg-[#f6f8fa]"],
+[class~="hover:bg-[#f6f8fa]"]:hover {
+  background-color: var(--color-subtle) !important;
+}
+
+[class~="bg-white"],
+[class~="hover:bg-white"]:hover,
+[class~="focus-within:bg-white"]:focus-within {
+  background-color: var(--color-surface) !important;
+}
+
+[class~="bg-[#eaeef2]"] {
+  background-color: var(--color-muted-surface) !important;
+}
+
+[class~="bg-[#ddf4ff]"] {
+  background-color: var(--color-accent-subtle) !important;
+}
+
+[class~="bg-[#d0d7de]"] {
+  background-color: var(--color-muted-surface) !important;
+}
+
+[class~="bg-[#24292f]"],
+[class~="hover:bg-[#24292f]"]:hover {
+  background-color: var(--color-neutral-emphasis) !important;
+}
+
+[class~="bg-[#0969da]"],
+[class~="hover:bg-[#0969da]"]:hover {
+  background-color: var(--color-accent-emphasis) !important;
+}
+
+.group:hover [class~="group-hover:bg-[#0969da]"] {
+  background-color: var(--color-accent-emphasis) !important;
+}
+
+[class~="bg-[#1a7f37]"],
+[class~="hover:bg-[#1a7f37]"]:hover {
+  background-color: var(--color-success-emphasis) !important;
+}
+
+[class~="bg-[#116329]"],
+[class~="hover:bg-[#116329]"]:hover {
+  background-color: var(--color-success-emphasis-hover) !important;
+}
+
+[class~="bg-[#fff8f8]"],
+[class~="hover:bg-[#fff8f8]"]:hover {
+  background-color: var(--color-danger-subtle) !important;
+}
+
+[class~="bg-[#0d1117]"] {
+  background-color: var(--color-code-bg) !important;
+}
+
+[class~="text-[#1f2328]"],
+[class~="hover:text-[#1f2328]"]:hover {
+  color: var(--color-fg) !important;
+}
+
+[class~="text-[#24292f]"] {
+  color: var(--color-strong) !important;
+}
+
+[class~="text-[#59636e]"],
+[class~="hover:text-[#59636e]"]:hover,
+[class~="placeholder:text-[#59636e]"]::placeholder {
+  color: var(--color-muted) !important;
+}
+
+[class~="text-[#8c959f]"] {
+  color: var(--color-muted-light) !important;
+}
+
+[class~="text-[#0969da]"],
+[class~="hover:text-[#0969da]"]:hover {
+  color: var(--color-accent-fg) !important;
+}
+
+[class~="text-[#cf222e]"] {
+  color: var(--color-danger-fg) !important;
+}
+
+[class~="text-[#f0f6fc]"] {
+  color: var(--color-code-fg) !important;
+}
+
+[class~="text-white"] {
+  color: var(--color-fg-inverse) !important;
+}
+
+[class~="border-[#d0d7de]"],
+[class~="hover:border-[#d0d7de]"]:hover,
+[class~="focus-within:border-[#d0d7de]"]:focus-within {
+  border-color: var(--color-border) !important;
+}
+
+[class~="border-[#d8dee4]"] {
+  border-color: var(--color-border-muted) !important;
+}
+
+[class~="border-[#0969da]"],
+[class~="hover:border-[#0969da]"]:hover,
+[class~="focus-within:border-[#0969da]"]:focus-within {
+  border-color: var(--color-accent-emphasis) !important;
+}
+
+[class~="border-[#cf222e]"] {
+  border-color: var(--color-danger-fg) !important;
+}
+
+[class~="border-black/15"] {
+  border-color: var(--color-button-border) !important;
+}
+
+[class~="border-[#fd8c73]"] {
+  border-color: var(--color-attention-muted) !important;
+}
+
+[class~="shadow-sm"],
+[class~="shadow-lg"] {
+  --tw-shadow-color: var(--color-shadow) !important;
+}

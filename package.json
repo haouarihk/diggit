@@ -1,0 +1,15 @@
+{
+  "name": "diggit",
+  "private": true,
+  "packageManager": "pnpm@11.3.0",
+  "scripts": {
+    "dev": "pnpm --filter @diggit/web dev",
+    "backend": "cargo run --manifest-path apps/api/Cargo.toml",
+    "build": "pnpm --filter @diggit/web build",
+    "lint": "pnpm --filter @diggit/web lint",
+    "test": "pnpm --filter @diggit/web test"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}
