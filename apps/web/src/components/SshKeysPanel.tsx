@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useRef, useState } from "react";
+import { authHeaders } from "@/lib/auth-session";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
 
@@ -10,11 +11,6 @@ type SshKey = {
   fingerprint: string;
   created_at: string;
 };
-
-function authHeaders(): Record<string, string> {
-  const token = window.localStorage.getItem("diggit_token");
-  return token ? { authorization: `Bearer ${token}` } : {};
-}
 
 export function SshKeysPanel() {
   const [keys, setKeys] = useState<SshKey[]>([]);

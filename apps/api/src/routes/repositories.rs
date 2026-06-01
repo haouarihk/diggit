@@ -202,6 +202,131 @@ pub(crate) async fn get_repo_raw_file(
         .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response()))
 }
 
+pub(crate) async fn list_commits_route(
+    State(state): State<AppState>,
+    Path((owner, name)): Path<(String, String)>,
+    Query(query): Query<CommitListQuery>,
+) -> ApiResult<Json<RepositoryCommitListResponse>> {
+    let repo = find_repo(&state.pool, &owner, &name).await?;
+    let commits = list_commits(&repo, query.ref_name.as_deref(), query.limit.unwrap_or(50)).await?;
+    Ok(Json(RepositoryCommitListResponse { data: commits }))
+}
+
+pub(crate) async fn get_commit_route(
+    State(state): State<AppState>,
+    Path((owner, name, sha)): Path<(String, String, String)>,
+) -> ApiResult<Json<RepositoryCommitDetailResponse>> {
+    let repo = find_repo(&state.pool, &owner, &name).await?;
+    Ok(Json(commit_detail(&repo, &sha).await?))
+}
+
+pub(crate) async fn compare_upstream(
+    State(state): State<AppState>,
+    Path((owner, name)): Path<(String, String)>,
+) -> ApiResult<Json<RepositoryCompareResponse>> {
+    let repo = find_repo(&state.pool, &owner, &name).await?;
+    Ok(Json(compare_repo_upstream(&state, &repo).await?))
+}
+
+pub(crate) async fn sync_upstream(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((owner, name)): Path<(String, String)>,
+) -> ApiResult<Json<RepositoryCompareResponse>> {
+    let auth = require_auth(&state, &headers)?;
+    let repo = find_repo(&state.pool, &owner, &name).await?;
+    resolve_writable_namespace(&state.pool, &auth, &repo.owner_handle).await?;
+
+    let (source, upstream_url, upstream_branch) = upstream_target(&state, &repo).await?.ok_or_else(|| {
+        ApiError::BadRequest("repository is not a fork or upstream is unavailable".to_string())
+    })?;
+    let upstream_ref = fetch_upstream_ref(&repo, &upstream_url, &upstream_branch).await?;
+    sync_from_upstream(&repo, &upstream_ref, &auth).await?;
+    sqlx::query("UPDATE repositories SET updated_at = now() WHERE id = $1")
+        .bind(repo.id)
+        .execute(&state.pool)
+        .await?;
+    invalidate_repo_cache(&state, &repo.owner_handle, &repo.name).await;
+
+    let repo = find_repo(&state.pool, &owner, &name).await?;
+    let fork_ref = format!("refs/heads/{}", repo.default_branch);
+    Ok(Json(
+        compare_refs(&repo, source, &upstream_ref, &fork_ref).await?,
+    ))
+}
+
+async fn compare_repo_upstream(
+    state: &AppState,
+    repo: &Repository,
+) -> ApiResult<RepositoryCompareResponse> {
+    let Some((source, upstream_url, upstream_branch)) = upstream_target(state, repo).await? else {
+        return Ok(RepositoryCompareResponse {
+            status: "unavailable".to_string(),
+            source: repository_source_response(&state.pool, &state.config, repo).await?,
+            ahead_by: 0,
+            behind_by: 0,
+            ahead_commits: Vec::new(),
+            behind_commits: Vec::new(),
+            files: Vec::new(),
+            message: Some("This repository is not a fork or its upstream could not be resolved.".to_string()),
+        });
+    };
+
+    match fetch_upstream_ref(repo, &upstream_url, &upstream_branch).await {
+        Ok(upstream_ref) => {
+            let fork_ref = format!("refs/heads/{}", repo.default_branch);
+            compare_refs(repo, source, &upstream_ref, &fork_ref).await
+        }
+        Err(error) => Ok(RepositoryCompareResponse {
+            status: "unavailable".to_string(),
+            source,
+            ahead_by: 0,
+            behind_by: 0,
+            ahead_commits: Vec::new(),
+            behind_commits: Vec::new(),
+            files: Vec::new(),
+            message: Some(error.to_string()),
+        }),
+    }
+}
+
+async fn upstream_target(
+    state: &AppState,
+    repo: &Repository,
+) -> ApiResult<Option<(Option<RepositorySourceResponse>, String, String)>> {
+    if let Some(source_id) = repo.source_repository_id {
+        let source: Option<Repository> =
+            sqlx::query_as("SELECT * FROM repositories WHERE id = $1")
+                .bind(source_id)
+                .fetch_optional(&state.pool)
+                .await?;
+        if let Some(source) = source {
+            let source_response = RepositorySourceResponse {
+                owner_handle: source.owner_handle.clone(),
+                name: source.name.clone(),
+                url: repo_activity_url(&state.config, &source),
+                kind: "local".to_string(),
+            };
+            return Ok(Some((
+                Some(source_response),
+                source.local_path,
+                source.default_branch,
+            )));
+        }
+    }
+
+    if let Some(source_url) = repo.source_remote_url.as_ref() {
+        let source_response = repository_source_response(&state.pool, &state.config, repo).await?;
+        return Ok(Some((
+            source_response,
+            source_url.clone(),
+            repo.default_branch.clone(),
+        )));
+    }
+
+    Ok(None)
+}
+
 pub(crate) async fn update_repo_file(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -264,19 +389,43 @@ pub(crate) async fn star_repo(
     headers: HeaderMap,
     Path((owner, name)): Path<(String, String)>,
 ) -> ApiResult<Json<RepositoryResponse>> {
-    let auth = require_auth(&state, &headers)?;
+    let auth = require_repo_action_auth(&state, &headers, "repo:star")?;
     let repo = find_repo(&state.pool, &owner, &name).await?;
-    sqlx::query(
-        r#"
-        INSERT INTO repository_stars (repository_id, user_id)
-        VALUES ($1, $2)
-        ON CONFLICT DO NOTHING
-        "#,
-    )
-    .bind(repo.id)
-    .bind(auth.id)
-    .execute(&state.pool)
-    .await?;
+    match auth {
+        RepoActionAuth::Local(auth) => {
+            sqlx::query(
+                r#"
+                INSERT INTO repository_stars (repository_id, user_id)
+                VALUES ($1, $2)
+                ON CONFLICT DO NOTHING
+                "#,
+            )
+            .bind(repo.id)
+            .bind(auth.id)
+            .execute(&state.pool)
+            .await?;
+        }
+        RepoActionAuth::Federated(auth) => {
+            sqlx::query(
+                r#"
+                INSERT INTO repository_remote_stars
+                  (repository_id, remote_actor, remote_server, display_name, avatar_url)
+                VALUES ($1, $2, $3, $4, $5)
+                ON CONFLICT (repository_id, remote_actor)
+                DO UPDATE SET
+                  display_name = EXCLUDED.display_name,
+                  avatar_url = EXCLUDED.avatar_url
+                "#,
+            )
+            .bind(repo.id)
+            .bind(auth.actor_url)
+            .bind(auth.home_server)
+            .bind(auth.display_name)
+            .bind(auth.avatar_url)
+            .execute(&state.pool)
+            .await?;
+        }
+    }
     let repo = sync_repo_stars(&state.pool, repo.id).await?;
     invalidate_repo_cache(&state, &repo.owner_handle, &repo.name).await;
     Ok(Json(
@@ -289,13 +438,26 @@ pub(crate) async fn unstar_repo(
     headers: HeaderMap,
     Path((owner, name)): Path<(String, String)>,
 ) -> ApiResult<Json<RepositoryResponse>> {
-    let auth = require_auth(&state, &headers)?;
+    let auth = require_repo_action_auth(&state, &headers, "repo:star")?;
     let repo = find_repo(&state.pool, &owner, &name).await?;
-    sqlx::query("DELETE FROM repository_stars WHERE repository_id = $1 AND user_id = $2")
-        .bind(repo.id)
-        .bind(auth.id)
-        .execute(&state.pool)
-        .await?;
+    match auth {
+        RepoActionAuth::Local(auth) => {
+            sqlx::query("DELETE FROM repository_stars WHERE repository_id = $1 AND user_id = $2")
+                .bind(repo.id)
+                .bind(auth.id)
+                .execute(&state.pool)
+                .await?;
+        }
+        RepoActionAuth::Federated(auth) => {
+            sqlx::query(
+                "DELETE FROM repository_remote_stars WHERE repository_id = $1 AND remote_actor = $2",
+            )
+            .bind(repo.id)
+            .bind(auth.actor_url)
+            .execute(&state.pool)
+            .await?;
+        }
+    }
     let repo = sync_repo_stars(&state.pool, repo.id).await?;
     invalidate_repo_cache(&state, &repo.owner_handle, &repo.name).await;
     Ok(Json(
@@ -338,6 +500,14 @@ pub(crate) async fn fork_repo(
     .bind(repo_activity_url(&state.config, &source))
     .fetch_one(&state.pool)
     .await?;
+
+    if source.local_path.is_empty() {
+        if let Some(remote_url) = source.source_remote_url.as_deref().or(source.remote_url.as_deref()) {
+            try_initialize_fork_from_source(&repo, remote_url).await;
+        }
+    } else {
+        initialize_fork_from_source(&repo, &source.local_path).await?;
+    }
 
     let activity_id = format!(
         "{}/activities/{}",

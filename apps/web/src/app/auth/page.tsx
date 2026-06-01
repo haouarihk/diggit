@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { AuthPanel } from "@/components/AuthPanel";
 
 export default function AuthPage() {
@@ -11,7 +12,9 @@ export default function AuthPage() {
           display on forks and pull requests.
         </p>
       </section>
-      <AuthPanel />
+      <Suspense fallback={<p className="text-[#59636e]">Loading authentication...</p>}>
+        <AuthPanel />
+      </Suspense>
     </div>
   );
 }

@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { getAuthToken } from "@/lib/auth-session";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
 
@@ -15,7 +16,7 @@ export function DeleteOrganizationButton({ name }: DeleteOrganizationButtonProps
   const [message, setMessage] = useState("");
 
   async function deleteOrganization() {
-    const token = window.localStorage.getItem("diggit_token");
+    const token = getAuthToken();
     if (!token) {
       setMessage("Sign in to delete this organization.");
       return;

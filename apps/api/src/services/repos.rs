@@ -128,7 +128,10 @@ pub(crate) async fn sync_repo_stars(pool: &PgPool, repo_id: Uuid) -> ApiResult<R
         r#"
         UPDATE repositories
         SET stars_count = (
-          SELECT COUNT(*)::INTEGER FROM repository_stars WHERE repository_id = $1
+          SELECT (
+            (SELECT COUNT(*) FROM repository_stars WHERE repository_id = $1) +
+            (SELECT COUNT(*) FROM repository_remote_stars WHERE repository_id = $1)
+          )::INTEGER
         )
         WHERE id = $1
         RETURNING *
@@ -167,6 +170,47 @@ pub(crate) async fn find_repo_by_activity_url(
     }
 
     Ok(None)
+}
+
+pub(crate) async fn repository_source_response(
+    pool: &PgPool,
+    config: &Config,
+    repo: &Repository,
+) -> ApiResult<Option<RepositorySourceResponse>> {
+    if let Some(source_id) = repo.source_repository_id {
+        let source: Option<Repository> =
+            sqlx::query_as("SELECT * FROM repositories WHERE id = $1")
+                .bind(source_id)
+                .fetch_optional(pool)
+                .await?;
+        if let Some(source) = source {
+            return Ok(Some(RepositorySourceResponse {
+                owner_handle: source.owner_handle.clone(),
+                name: source.name.clone(),
+                url: repo_activity_url(config, &source),
+                kind: "local".to_string(),
+            }));
+        }
+    }
+
+    Ok(repo.source_remote_url.as_ref().map(|url| {
+        let name = url
+            .trim_end_matches('/')
+            .rsplit('/')
+            .next()
+            .unwrap_or("repository")
+            .trim_end_matches(".git")
+            .to_string();
+        RepositorySourceResponse {
+            owner_handle: repo
+                .remote_server
+                .clone()
+                .unwrap_or_else(|| "remote".to_string()),
+            name,
+            url: url.clone(),
+            kind: "remote".to_string(),
+        }
+    }))
 }
 
 pub(crate) fn cache_key(parts: &[&str]) -> String {
@@ -268,6 +312,8 @@ pub(crate) async fn repository_response(
         repo.owner_handle,
         repo.name
     );
+    let source_repository = repository_source_response(pool, config, &repo).await?;
+    let source_url = source_repository.as_ref().map(|source| source.url.clone());
 
     Ok(RepositoryResponse {
         id: repo.id,
@@ -287,6 +333,8 @@ pub(crate) async fn repository_response(
         remote_server: repo.remote_server,
         source_repository_id: repo.source_repository_id,
         source_remote_url: repo.source_remote_url,
+        source_url,
+        source_repository,
         ssh_url,
         http_url,
         created_at: repo.created_at,

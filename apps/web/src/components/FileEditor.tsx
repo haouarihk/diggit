@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
+import { getAuthToken } from "@/lib/auth-session";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
 
@@ -20,7 +21,7 @@ export function FileEditor({ content, name, owner, path, redirectTo }: FileEdito
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const token = window.localStorage.getItem("diggit_token");
+    const token = getAuthToken();
     if (!token) {
       setMessage("Sign in to edit");
       return;

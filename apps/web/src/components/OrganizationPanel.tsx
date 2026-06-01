@@ -4,13 +4,9 @@ import { FormEvent, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { Organization } from "@/lib/api";
+import { authHeaders } from "@/lib/auth-session";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
-
-function tokenHeaders(): Record<string, string> {
-  const token = window.localStorage.getItem("diggit_token");
-  return token ? { authorization: `Bearer ${token}` } : {};
-}
 
 export function OrganizationPanel() {
   const [organizations, setOrganizations] = useState<Organization[]>([]);
@@ -21,7 +17,7 @@ export function OrganizationPanel() {
     setIsLoading(true);
     setMessage("");
     const response = await fetch(`${API_URL}/organizations`, {
-      headers: tokenHeaders(),
+      headers: authHeaders(),
     });
     if (!response.ok) {
       setOrganizations([]);
@@ -140,7 +136,7 @@ export function CreateOrganizationForm() {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        ...tokenHeaders(),
+        ...authHeaders(),
       },
       body: JSON.stringify({
         name: form.get("name"),

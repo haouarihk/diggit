@@ -21,22 +21,37 @@ export type Repository = {
   remote_url: string | null;
   remote_server: string | null;
   source_repository_id: string | null;
+  source_remote_url: string | null;
+  source_url: string | null;
+  source_repository: RepositorySource | null;
   ssh_url: string;
   http_url: string;
   created_at: string;
   updated_at: string;
 };
 
+export type RepositorySource = {
+  owner_handle: string;
+  name: string;
+  url: string;
+  kind: "local" | "remote" | string;
+};
+
 export type CurrentUser = {
-  id: string;
+  id: string | null;
+  kind?: "local" | "federated";
   username: string;
   display_name: string;
   avatar_url: string | null;
   avatar_fallback: string;
+  actor_url?: string;
+  home_server?: string | null;
+  capabilities?: string[];
   is_admin: boolean;
 };
 
-export type SearchUser = CurrentUser & {
+export type SearchUser = Omit<CurrentUser, "id"> & {
+  id: string;
   created_at: string;
 };
 
@@ -93,6 +108,44 @@ export type RepositoryCommit = {
   author_email: string;
   avatar_fallback: string;
   created_at: string;
+};
+
+export type RepositoryDiffLine = {
+  kind: "addition" | "deletion" | "context";
+  old_line: number | null;
+  new_line: number | null;
+  content: string;
+};
+
+export type RepositoryDiffHunk = {
+  header: string;
+  lines: RepositoryDiffLine[];
+};
+
+export type RepositoryDiffFile = {
+  old_path: string | null;
+  new_path: string | null;
+  status: string;
+  additions: number;
+  deletions: number;
+  hunks: RepositoryDiffHunk[];
+};
+
+export type RepositoryCommitDetail = {
+  commit: RepositoryCommit;
+  parents: string[];
+  files: RepositoryDiffFile[];
+};
+
+export type RepositoryCompare = {
+  status: "up_to_date" | "ahead" | "behind" | "diverged" | "unavailable" | string;
+  source: RepositorySource | null;
+  ahead_by: number;
+  behind_by: number;
+  ahead_commits: RepositoryCommit[];
+  behind_commits: RepositoryCommit[];
+  files: RepositoryDiffFile[];
+  message: string | null;
 };
 
 export type RepositoryTreeEntry = {
@@ -200,6 +253,29 @@ export function getRepositoryFile(owner: string, name: string, path: string, ref
   }
   return apiFetch<RepositoryFile>(
     `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/contents?${searchParams.toString()}`,
+  );
+}
+
+export function listCommits(owner: string, name: string, refName?: string) {
+  const searchParams = new URLSearchParams();
+  if (refName) {
+    searchParams.set("ref", refName);
+  }
+  const query = searchParams.toString();
+  return apiFetch<Collection<RepositoryCommit>>(
+    `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/commits${query ? `?${query}` : ""}`,
+  );
+}
+
+export function getCommit(owner: string, name: string, sha: string) {
+  return apiFetch<RepositoryCommitDetail>(
+    `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/commits/${encodeURIComponent(sha)}`,
+  );
+}
+
+export function compareUpstream(owner: string, name: string) {
+  return apiFetch<RepositoryCompare>(
+    `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/compare-upstream`,
   );
 }
 

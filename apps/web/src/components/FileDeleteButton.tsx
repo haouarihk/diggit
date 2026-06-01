@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { getAuthToken } from "@/lib/auth-session";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
 
@@ -25,7 +26,7 @@ export function FileDeleteButton({
   const [isDeleting, setIsDeleting] = useState(false);
 
   async function deletePath() {
-    const token = window.localStorage.getItem("diggit_token");
+    const token = getAuthToken();
     if (!token) {
       setMessage("Sign in to delete");
       return;

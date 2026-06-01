@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useState } from "react";
+import { getAuthToken } from "@/lib/auth-session";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
 
@@ -9,7 +10,7 @@ export function ServerPolicyForm() {
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const token = window.localStorage.getItem("diggit_token");
+    const token = getAuthToken();
     const form = new FormData(event.currentTarget);
     const response = await fetch(`${API_URL}/servers`, {
       method: "POST",

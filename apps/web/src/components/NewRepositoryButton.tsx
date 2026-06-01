@@ -3,13 +3,14 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import type { CurrentUser } from "@/lib/api";
+import { getAuthToken } from "@/lib/auth-session";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
 
 type NewRepositoryButtonProps = {
   owner: string;
-  ownerUserId?: string;
-  organizationCreatorId?: string;
+  ownerUserId?: string | null;
+  organizationCreatorId?: string | null;
 };
 
 export function NewRepositoryButton({ owner, ownerUserId, organizationCreatorId }: NewRepositoryButtonProps) {
@@ -17,7 +18,7 @@ export function NewRepositoryButton({ owner, ownerUserId, organizationCreatorId 
 
   useEffect(() => {
     const timeout = window.setTimeout(async () => {
-      const token = window.localStorage.getItem("diggit_token");
+      const token = getAuthToken();
       if (!token) {
         return;
       }

@@ -60,6 +60,14 @@ pub(crate) struct RepositoryOwnerResponse {
     pub(crate) kind: String,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub(crate) struct RepositorySourceResponse {
+    pub(crate) owner_handle: String,
+    pub(crate) name: String,
+    pub(crate) url: String,
+    pub(crate) kind: String,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct RepositoryResponse {
     pub(crate) id: Uuid,
@@ -79,6 +87,8 @@ pub(crate) struct RepositoryResponse {
     pub(crate) remote_server: Option<String>,
     pub(crate) source_repository_id: Option<Uuid>,
     pub(crate) source_remote_url: Option<String>,
+    pub(crate) source_url: Option<String>,
+    pub(crate) source_repository: Option<RepositorySourceResponse>,
     pub(crate) ssh_url: String,
     pub(crate) http_url: String,
     pub(crate) created_at: DateTime<Utc>,
@@ -93,6 +103,54 @@ pub(crate) struct RepositoryCommitResponse {
     pub(crate) author_email: String,
     pub(crate) avatar_fallback: String,
     pub(crate) created_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub(crate) struct RepositoryCommitListResponse {
+    pub(crate) data: Vec<RepositoryCommitResponse>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub(crate) struct RepositoryDiffLineResponse {
+    pub(crate) kind: String,
+    pub(crate) old_line: Option<i32>,
+    pub(crate) new_line: Option<i32>,
+    pub(crate) content: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub(crate) struct RepositoryDiffHunkResponse {
+    pub(crate) header: String,
+    pub(crate) lines: Vec<RepositoryDiffLineResponse>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub(crate) struct RepositoryDiffFileResponse {
+    pub(crate) old_path: Option<String>,
+    pub(crate) new_path: Option<String>,
+    pub(crate) status: String,
+    pub(crate) additions: i32,
+    pub(crate) deletions: i32,
+    pub(crate) hunks: Vec<RepositoryDiffHunkResponse>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub(crate) struct RepositoryCommitDetailResponse {
+    pub(crate) commit: RepositoryCommitResponse,
+    pub(crate) parents: Vec<String>,
+    pub(crate) files: Vec<RepositoryDiffFileResponse>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub(crate) struct RepositoryCompareResponse {
+    pub(crate) status: String,
+    pub(crate) source: Option<RepositorySourceResponse>,
+    pub(crate) ahead_by: i32,
+    pub(crate) behind_by: i32,
+    pub(crate) ahead_commits: Vec<RepositoryCommitResponse>,
+    pub(crate) behind_commits: Vec<RepositoryCommitResponse>,
+    pub(crate) files: Vec<RepositoryDiffFileResponse>,
+    pub(crate) message: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -234,6 +292,53 @@ pub(crate) struct AuthUser {
     pub(crate) username: String,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub(crate) struct FederatedIdentityClaims {
+    pub(crate) iss: String,
+    pub(crate) sub: String,
+    pub(crate) preferred_username: String,
+    pub(crate) display_name: String,
+    pub(crate) avatar_url: Option<String>,
+    pub(crate) aud: String,
+    pub(crate) scope: String,
+    pub(crate) exp: usize,
+    pub(crate) iat: usize,
+    pub(crate) nonce: String,
+    pub(crate) jti: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub(crate) struct FederatedSessionClaims {
+    pub(crate) iss: String,
+    pub(crate) sub: String,
+    pub(crate) preferred_username: String,
+    pub(crate) display_name: String,
+    pub(crate) avatar_url: Option<String>,
+    pub(crate) aud: String,
+    pub(crate) home_server: String,
+    pub(crate) scope: String,
+    pub(crate) exp: usize,
+    pub(crate) iat: usize,
+    pub(crate) nonce: String,
+    pub(crate) jti: String,
+}
+
+#[derive(Debug)]
+pub(crate) struct FederatedAuthUser {
+    pub(crate) actor_url: String,
+    pub(crate) username: String,
+    pub(crate) display_name: String,
+    pub(crate) avatar_url: Option<String>,
+    pub(crate) home_server: String,
+    pub(crate) scopes: Vec<String>,
+}
+
+#[derive(Debug)]
+pub(crate) enum RepoActionAuth {
+    Local(AuthUser),
+    Federated(FederatedAuthUser),
+}
+
 #[derive(Debug, Deserialize)]
 pub(crate) struct RegisterRequest {
     pub(crate) username: String,
@@ -251,6 +356,94 @@ pub(crate) struct LoginRequest {
 pub(crate) struct AuthResponse {
     pub(crate) token: String,
     pub(crate) user: UserResponse,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct CurrentUserResponse {
+    pub(crate) id: Option<Uuid>,
+    pub(crate) kind: String,
+    pub(crate) username: String,
+    pub(crate) display_name: String,
+    pub(crate) avatar_url: Option<String>,
+    pub(crate) avatar_fallback: String,
+    pub(crate) actor_url: String,
+    pub(crate) inbox_url: Option<String>,
+    pub(crate) outbox_url: Option<String>,
+    pub(crate) is_admin: bool,
+    pub(crate) home_server: Option<String>,
+    pub(crate) capabilities: Vec<String>,
+    pub(crate) created_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct FederatedAuthorizeRequest {
+    pub(crate) client_id: String,
+    pub(crate) redirect_uri: String,
+    pub(crate) audience: String,
+    pub(crate) scope: String,
+    pub(crate) state: String,
+    pub(crate) nonce: String,
+    pub(crate) code_challenge: String,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct FederatedAuthorizeResponse {
+    pub(crate) code: String,
+    pub(crate) redirect_uri: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub(crate) struct FederatedTokenRequest {
+    pub(crate) code: String,
+    pub(crate) client_id: String,
+    pub(crate) redirect_uri: String,
+    pub(crate) code_verifier: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub(crate) struct FederatedTokenResponse {
+    pub(crate) identity_token: String,
+    pub(crate) token_type: String,
+    pub(crate) expires_in: i64,
+    pub(crate) issuer: String,
+    pub(crate) audience: String,
+    pub(crate) actor_url: String,
+    pub(crate) username: String,
+    pub(crate) display_name: String,
+    pub(crate) avatar_url: Option<String>,
+    pub(crate) scope: String,
+    pub(crate) nonce: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct FederatedExchangeRequest {
+    pub(crate) home_server: String,
+    pub(crate) code: String,
+    pub(crate) client_id: String,
+    pub(crate) redirect_uri: String,
+    pub(crate) code_verifier: String,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct FederatedExchangeResponse {
+    pub(crate) token: String,
+    pub(crate) home_token: String,
+    pub(crate) expires_at: DateTime<Utc>,
+    pub(crate) user: CurrentUserResponse,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct DiggitDiscoveryResponse {
+    pub(crate) issuer: String,
+    pub(crate) authorization_endpoint: String,
+    pub(crate) token_endpoint: String,
+    pub(crate) jwks_uri: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct FederatedForkRequest {
+    pub(crate) source_repo_url: String,
+    pub(crate) name: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -333,6 +526,13 @@ pub(crate) struct RepoListQuery {
 pub(crate) struct RepoTreeQuery {
     #[serde(rename = "ref")]
     pub(crate) ref_name: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct CommitListQuery {
+    #[serde(rename = "ref")]
+    pub(crate) ref_name: Option<String>,
+    pub(crate) limit: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]

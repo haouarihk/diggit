@@ -21,9 +21,18 @@ pub(crate) mod users;
 pub(crate) fn router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health::health))
+        .route("/.well-known/diggit", get(auth::discovery))
+        .route("/.well-known/diggit/jwks.json", get(auth::jwks))
         .route("/auth/register", post(auth::register))
         .route("/auth/login", post(auth::login))
         .route("/auth/me", get(auth::me))
+        .route(
+            "/auth/federated/authorize",
+            get(auth::federated_authorize_get).post(auth::federated_authorize),
+        )
+        .route("/auth/federated/token", post(auth::federated_token))
+        .route("/auth/federated/exchange", post(auth::federated_exchange))
+        .route("/auth/federated/fork", post(auth::federated_fork))
         .route("/search", get(search::search))
         .route(
             "/user/keys",
@@ -97,6 +106,22 @@ pub(crate) fn router(state: AppState) -> Router {
         .route(
             "/repos/{owner}/{name}/raw",
             get(repositories::get_repo_raw_file),
+        )
+        .route(
+            "/repos/{owner}/{name}/commits",
+            get(repositories::list_commits_route),
+        )
+        .route(
+            "/repos/{owner}/{name}/commits/{sha}",
+            get(repositories::get_commit_route),
+        )
+        .route(
+            "/repos/{owner}/{name}/compare-upstream",
+            get(repositories::compare_upstream),
+        )
+        .route(
+            "/repos/{owner}/{name}/sync-upstream",
+            post(repositories::sync_upstream),
         )
         .route(
             "/repos/{owner}/{name}/star",

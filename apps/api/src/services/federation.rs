@@ -149,6 +149,8 @@ mod tests {
     fn local_handle_uses_configured_host() {
         let config = Config {
             database_url: String::new(),
+            redis_url: None,
+            cache_ttl_seconds: 60,
             app_base_url: "https://git.example.com".to_string(),
             public_web_url: String::new(),
             git_storage_path: PathBuf::new(),
@@ -165,6 +167,8 @@ mod tests {
     fn admin_usernames_are_detected_from_config() {
         let config = Config {
             database_url: String::new(),
+            redis_url: None,
+            cache_ttl_seconds: 60,
             app_base_url: "https://git.example.com".to_string(),
             public_web_url: String::new(),
             git_storage_path: PathBuf::new(),

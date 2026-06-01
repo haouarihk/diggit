@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { authHeaders } from "@/lib/auth-session";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
 
@@ -18,11 +19,6 @@ type RunnerPanelProps = {
   listPath: string;
   tokenPath: string;
 };
-
-function authHeaders(): Record<string, string> {
-  const token = window.localStorage.getItem("diggit_token");
-  return token ? { authorization: `Bearer ${token}` } : {};
-}
 
 export function RunnerPanel({ scopeLabel, listPath, tokenPath }: RunnerPanelProps) {
   const [runners, setRunners] = useState<Runner[]>([]);

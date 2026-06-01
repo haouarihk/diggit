@@ -39,16 +39,12 @@ function applyTheme(theme: ResolvedTheme) {
 }
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const [preference, setPreferenceState] = useState<ThemePreference>("system");
-  const [resolvedTheme, setResolvedTheme] = useState<ResolvedTheme>("light");
+  const [preference, setPreferenceState] = useState<ThemePreference>(() => storedPreference());
+  const [resolvedTheme, setResolvedTheme] = useState<ResolvedTheme>(() => resolveTheme(storedPreference()));
 
   useEffect(() => {
-    const nextPreference = storedPreference();
-    const nextTheme = resolveTheme(nextPreference);
-    setPreferenceState(nextPreference);
-    setResolvedTheme(nextTheme);
-    applyTheme(nextTheme);
-  }, []);
+    applyTheme(resolvedTheme);
+  }, [resolvedTheme]);
 
   useEffect(() => {
     const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");

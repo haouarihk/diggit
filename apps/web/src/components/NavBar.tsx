@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import type { CurrentUser } from "@/lib/api";
+import { clearAuthSession, getAuthToken } from "@/lib/auth-session";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
 
@@ -14,7 +15,7 @@ export function NavBar() {
   const [user, setUser] = useState<CurrentUser | null>(null);
 
   async function loadUser() {
-    const token = window.localStorage.getItem("diggit_token");
+    const token = getAuthToken();
     if (!token) {
       setUser(null);
       return;
@@ -24,7 +25,7 @@ export function NavBar() {
       headers: { authorization: `Bearer ${token}` },
     });
     if (!response.ok) {
-      window.localStorage.removeItem("diggit_token");
+      clearAuthSession();
       setUser(null);
       return;
     }
@@ -75,9 +76,8 @@ export function NavBar() {
   }, []);
 
   function signOut() {
-    window.localStorage.removeItem("diggit_token");
+    clearAuthSession();
     setUser(null);
-    window.dispatchEvent(new Event("diggit-auth-changed"));
   }
 
   function submitSearch(event: FormEvent<HTMLFormElement>) {
@@ -98,6 +98,15 @@ export function NavBar() {
 
     router.push(`/search?q=${encodeURIComponent(query)}&type=repositories`);
   }
+
+  const isFederated = user?.kind === "federated";
+  const homeServer = user?.home_server?.replace(/\/+$/, "");
+  const profileHref = isFederated && homeServer ? `${homeServer}/users/${encodeURIComponent(user.username)}` : user ? `/users/${encodeURIComponent(user.username)}` : "#";
+  const repositoriesHref = isFederated && homeServer ? `${homeServer}/users/${encodeURIComponent(user.username)}?tab=repositories` : user ? `/users/${encodeURIComponent(user.username)}?tab=repositories` : "#";
+  const settingsKeysHref = isFederated && homeServer ? `${homeServer}/settings/keys` : "/settings/keys";
+  const runnersHref = isFederated && homeServer ? `${homeServer}/settings/runners` : "/settings/runners";
+  const newRepositoryHref = isFederated && homeServer ? `${homeServer}/new/repository` : "/new/repository";
+  const newOrganizationHref = isFederated && homeServer ? `${homeServer}/new/organization` : "/new/organization";
 
   return (
     <header className="-mx-6 mb-8 border-b border-[#d0d7de] bg-white">
@@ -137,7 +146,7 @@ export function NavBar() {
             Organizations
           </Link>
           {user ? (
-            <Link className="rounded-md px-3 py-2 font-semibold text-[#1f2328] hover:bg-[#f6f8fa] hover:text-[#0969da]" href="/settings/runners">
+            <Link className="rounded-md px-3 py-2 font-semibold text-[#1f2328] hover:bg-[#f6f8fa] hover:text-[#0969da]" href={runnersHref}>
               Runners
             </Link>
           ) : null}
@@ -151,10 +160,10 @@ export function NavBar() {
                 +
               </summary>
               <div className="absolute right-0 z-20 mt-2 w-52 overflow-hidden rounded-md border border-[#d0d7de] bg-white py-1 shadow-lg">
-                <Link className="block px-3 py-2 hover:bg-[#f6f8fa]" href="/new/repository">
+                <Link className="block px-3 py-2 hover:bg-[#f6f8fa]" href={newRepositoryHref}>
                   New repository
                 </Link>
-                <Link className="block px-3 py-2 hover:bg-[#f6f8fa]" href="/new/organization">
+                <Link className="block px-3 py-2 hover:bg-[#f6f8fa]" href={newOrganizationHref}>
                   New organization
                 </Link>
               </div>
@@ -185,21 +194,22 @@ export function NavBar() {
                 <div className="border-b border-[#d8dee4] px-3 py-2">
                   <div className="text-xs text-[#59636e]">Signed in as</div>
                   <div className="truncate font-semibold">{user.username}</div>
+                  {isFederated && homeServer ? <div className="truncate text-xs text-[#59636e]">{homeServer}</div> : null}
                 </div>
-                <Link className="block px-3 py-2 hover:bg-[#f6f8fa]" href={`/users/${encodeURIComponent(user.username)}`}>
+                <Link className="block px-3 py-2 hover:bg-[#f6f8fa]" href={profileHref}>
                   Profile
                 </Link>
-                <Link className="block px-3 py-2 hover:bg-[#f6f8fa]" href={`/users/${encodeURIComponent(user.username)}?tab=repositories`}>
+                <Link className="block px-3 py-2 hover:bg-[#f6f8fa]" href={repositoriesHref}>
                   Repositories
                 </Link>
                 <Link className="block px-3 py-2 hover:bg-[#f6f8fa]" href="/organizations">
                   Organizations
                 </Link>
                 <div className="border-t border-[#d8dee4] py-1">
-                  <Link className="block px-3 py-2 hover:bg-[#f6f8fa]" href="/settings/keys">
+                  <Link className="block px-3 py-2 hover:bg-[#f6f8fa]" href={settingsKeysHref}>
                     SSH keys
                   </Link>
-                  <Link className="block px-3 py-2 hover:bg-[#f6f8fa]" href="/settings/runners">
+                  <Link className="block px-3 py-2 hover:bg-[#f6f8fa]" href={runnersHref}>
                     User runners
                   </Link>
                 </div>
@@ -234,7 +244,7 @@ export function NavBar() {
           Organizations
         </Link>
         {user ? (
-          <Link className="whitespace-nowrap rounded-md px-3 py-1.5 font-semibold text-[#1f2328] hover:bg-[#f6f8fa]" href="/settings/runners">
+          <Link className="whitespace-nowrap rounded-md px-3 py-1.5 font-semibold text-[#1f2328] hover:bg-[#f6f8fa]" href={runnersHref}>
             Runners
           </Link>
         ) : null}

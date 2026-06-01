@@ -2,13 +2,9 @@
 
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
+import { authHeaders, getAuthSession } from "@/lib/auth-session";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
-
-function authHeaders(): Record<string, string> {
-  const token = window.localStorage.getItem("diggit_token");
-  return token ? { authorization: `Bearer ${token}` } : {};
-}
 
 export function CreateRepoForm({ initialOwner = "" }: { initialOwner?: string }) {
   const router = useRouter();
@@ -74,6 +70,23 @@ export function ForkRepoForm({ owner, name }: { owner: string; name: string }) {
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
+    const session = getAuthSession();
+    if (session?.kind === "federated") {
+      const response = await fetch(`${session.homeServer}/auth/federated/fork`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${session.homeToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          source_repo_url: `${API_URL}/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`,
+          name: form.get("name") || undefined,
+        }),
+      });
+      setMessage(response.ok ? "Fork created on your home server." : `Failed: ${response.status}`);
+      return;
+    }
+
     const response = await fetch(
       `${API_URL}/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/fork`,
       {

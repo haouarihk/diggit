@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { getAuthToken } from "@/lib/auth-session";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
 
@@ -15,7 +16,7 @@ export function StarButton({ owner, name, initialStars }: StarButtonProps) {
   const [message, setMessage] = useState("");
 
   async function star() {
-    const token = window.localStorage.getItem("diggit_token");
+    const token = getAuthToken();
     if (!token) {
       setMessage("Sign in to star");
       return;

@@ -2,11 +2,14 @@ import Link from "next/link";
 import { FileDeleteButton } from "@/components/FileDeleteButton";
 import { MarkdownViewer } from "@/components/MarkdownViewer";
 import { RepoHeader } from "@/components/RepoHeader";
+import { SyncForkButton } from "@/components/SyncForkButton";
 import {
   apiFetch,
+  compareUpstream,
   getRepositoryFile,
   getRepositoryTree,
   repositoryRawFileUrl,
+  type RepositoryCompare,
   type PullRequest,
   type Repository,
   type RepositoryCommit,
@@ -32,7 +35,7 @@ export default async function RepoPage({ params, searchParams }: Props) {
   const decodedName = decodeURIComponent(name);
   const baseHref = `/${encodeURIComponent(decodedOwner)}/${encodeURIComponent(decodedName)}`;
   const repo = await apiFetch<Repository>(baseHref);
-  const [pullRequests, tree] = await Promise.all([
+  const [pullRequests, tree, upstreamCompare] = await Promise.all([
     apiFetch<{ data: PullRequest[] }>(`${baseHref}/pull-requests`).catch(() => ({ data: [] })),
     getRepositoryTree(decodedOwner, decodedName).catch(
       (): RepositoryTree => ({
@@ -41,6 +44,20 @@ export default async function RepoPage({ params, searchParams }: Props) {
         entries: [],
       }),
     ),
+    repo.source_repository_id || repo.source_remote_url
+      ? compareUpstream(decodedOwner, decodedName).catch(
+          (): RepositoryCompare => ({
+            status: "unavailable",
+            source: repo.source_repository,
+            ahead_by: 0,
+            behind_by: 0,
+            ahead_commits: [],
+            behind_commits: [],
+            files: [],
+            message: "Upstream comparison is unavailable.",
+          }),
+        )
+      : Promise.resolve(null),
   ]);
   const readme = findReadme(tree.entries);
   const selectedPath = file ?? readme?.path;
@@ -54,6 +71,9 @@ export default async function RepoPage({ params, searchParams }: Props) {
 
       <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
         <main className="grid min-w-0 gap-6">
+          {upstreamCompare ? (
+            <ForkStatusBanner compare={upstreamCompare} name={decodedName} owner={decodedOwner} />
+          ) : null}
           <section>
             <div className="flex flex-wrap items-center justify-between gap-3 rounded-t-md border border-[#d0d7de] bg-[#f6f8fa] px-4 py-3">
               <div className="flex min-w-0 items-center gap-3">
@@ -68,6 +88,9 @@ export default async function RepoPage({ params, searchParams }: Props) {
                 </div>
               </div>
               <div className="text-xs text-[#59636e]">Created {formatDate(repo.created_at)}</div>
+              <Link className="text-xs font-semibold text-[#0969da] hover:underline" href={`${baseHref}/commits`}>
+                View commits
+              </Link>
             </div>
             <FileTable
               baseHref={baseHref}
@@ -123,7 +146,7 @@ export default async function RepoPage({ params, searchParams }: Props) {
               <RepoFact label="Language" value={repo.dominant_language || "Unknown"} />
               <RepoFact label="Stars" value={String(repo.stars_count)} />
               <RepoFact label="Updated" value={formatDate(repo.updated_at)} />
-              {repo.source_repository_id ? <RepoFact label="Type" value="Fork" /> : null}
+              {repo.source_repository_id || repo.source_remote_url ? <RepoFact label="Type" value="Fork" /> : null}
             </div>
           </section>
 
@@ -145,6 +168,54 @@ export default async function RepoPage({ params, searchParams }: Props) {
         </aside>
       </div>
     </div>
+  );
+}
+
+function ForkStatusBanner({
+  compare,
+  name,
+  owner,
+}: {
+  compare: RepositoryCompare;
+  name: string;
+  owner: string;
+}) {
+  const source = compare.source;
+  return (
+    <section className="grid gap-3 rounded-md border border-[#d0d7de] bg-white p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="font-semibold">Fork status</h2>
+          <p className="text-sm text-[#59636e]">
+            {source ? (
+              <>
+                Forked from{" "}
+                <Link className="font-semibold text-[#0969da] hover:underline" href={source.url}>
+                  {source.owner_handle}/{source.name}
+                </Link>
+              </>
+            ) : (
+              "Original repository unavailable."
+            )}
+          </p>
+        </div>
+        <Link className="rounded-md border border-[#d0d7de] bg-[#f6f8fa] px-3 py-1.5 text-sm font-semibold text-[#1f2328]" href={`/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/compare-upstream`}>
+          Compare
+        </Link>
+      </div>
+      {compare.status === "unavailable" ? (
+        <p className="text-sm text-[#59636e]">{compare.message ?? "Upstream comparison is unavailable."}</p>
+      ) : (
+        <div className="flex flex-wrap items-center gap-3 text-sm text-[#59636e]">
+          <span>{compare.ahead_by} commits ahead</span>
+          <span>{compare.behind_by} commits behind</span>
+          <span className="rounded-full border border-[#d0d7de] px-2 py-0.5">{compare.status.replaceAll("_", " ")}</span>
+        </div>
+      )}
+      {compare.behind_by > 0 ? (
+        <SyncForkButton disabled={compare.status === "unavailable"} name={name} owner={owner} />
+      ) : null}
+    </section>
   );
 }
 
