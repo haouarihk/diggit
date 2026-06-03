@@ -1,5 +1,6 @@
 "use client";
 
+import { apiBaseUrl } from "@/lib/runtime-config";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useRef, useState } from "react";
@@ -7,7 +8,7 @@ import { ThemeToggle } from "@/components/ThemeToggle";
 import type { CurrentUser } from "@/lib/api";
 import { clearAuthSession, getAuthToken } from "@/lib/auth-session";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
+const API_URL = apiBaseUrl();
 
 export function NavBar() {
   const router = useRouter();

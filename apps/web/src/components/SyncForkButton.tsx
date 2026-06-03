@@ -1,10 +1,11 @@
 "use client";
 
+import { apiBaseUrl } from "@/lib/runtime-config";
 import { useState } from "react";
 import { authHeaders } from "@/lib/auth-session";
 import type { RepositoryCompare } from "@/lib/api";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
+const API_URL = apiBaseUrl();
 
 type SyncForkButtonProps = {
   owner: string;

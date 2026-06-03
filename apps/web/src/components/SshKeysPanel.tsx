@@ -1,9 +1,10 @@
 "use client";
 
+import { apiBaseUrl } from "@/lib/runtime-config";
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { authHeaders } from "@/lib/auth-session";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
+const API_URL = apiBaseUrl();
 
 type SshKey = {
   id: string;

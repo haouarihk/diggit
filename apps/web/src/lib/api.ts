@@ -1,4 +1,5 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
+import { apiBaseUrl } from "@/lib/runtime-config";
+const API_URL = apiBaseUrl();
 
 export type Repository = {
   id: string;

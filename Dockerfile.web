@@ -27,6 +27,7 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 ENV HOSTNAME=0.0.0.0
+ENV API_URL=http://localhost:3001
 ENV PORT=3000
 
 COPY --from=builder /app/apps/web/.next/standalone ./

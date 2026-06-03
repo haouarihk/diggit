@@ -1,11 +1,12 @@
 "use client";
 
+import { apiBaseUrl } from "@/lib/runtime-config";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import type { CurrentUser } from "@/lib/api";
 import { getAuthToken } from "@/lib/auth-session";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
+const API_URL = apiBaseUrl();
 
 type NewRepositoryButtonProps = {
   owner: string;

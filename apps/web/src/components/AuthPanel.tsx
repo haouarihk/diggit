@@ -1,5 +1,6 @@
 "use client";
 
+import { apiBaseUrl } from "@/lib/runtime-config";
 import { FormEvent, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import {
@@ -11,7 +12,7 @@ import {
   clearAuthSession,
 } from "@/lib/auth-session";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
+const API_URL = apiBaseUrl();
 
 type Mode = "login" | "register";
 

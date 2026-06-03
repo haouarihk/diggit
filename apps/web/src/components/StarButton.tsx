@@ -1,9 +1,10 @@
 "use client";
 
+import { apiBaseUrl } from "@/lib/runtime-config";
 import { useState } from "react";
 import { getAuthToken } from "@/lib/auth-session";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
+const API_URL = apiBaseUrl();
 
 type StarButtonProps = {
   owner: string;

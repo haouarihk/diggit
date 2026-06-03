@@ -1,12 +1,13 @@
 "use client";
 
+import { apiBaseUrl } from "@/lib/runtime-config";
 import { FormEvent, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { Organization } from "@/lib/api";
 import { authHeaders } from "@/lib/auth-session";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
+const API_URL = apiBaseUrl();
 
 export function OrganizationPanel() {
   const [organizations, setOrganizations] = useState<Organization[]>([]);

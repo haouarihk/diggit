@@ -1,10 +1,11 @@
 "use client";
 
+import { apiBaseUrl } from "@/lib/runtime-config";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { getAuthToken } from "@/lib/auth-session";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
+const API_URL = apiBaseUrl();
 
 type DeleteOrganizationButtonProps = {
   name: string;

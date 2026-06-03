@@ -1,10 +1,11 @@
 "use client";
 
+import { apiBaseUrl } from "@/lib/runtime-config";
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 import { authHeaders, getAuthSession } from "@/lib/auth-session";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
+const API_URL = apiBaseUrl();
 
 export function CreateRepoForm({ initialOwner = "" }: { initialOwner?: string }) {
   const router = useRouter();
