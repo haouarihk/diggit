@@ -8,7 +8,8 @@ pub(crate) async fn health(State(state): State<AppState>) -> Json<Value> {
         "status": "ok",
         "server": state.config.host(),
         "webUrl": state.config.public_web_url,
-        "sshHost": state.config.ssh_host,
+        "sshHost": state.config.ssh_bind_host,
+        "sshPublicHost": state.config.public_api_host(),
         "sshPort": state.config.ssh_port,
     }))
 }

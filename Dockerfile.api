@@ -3,7 +3,7 @@ FROM rust:1.94-slim-bookworm AS builder
 WORKDIR /app
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends pkg-config libssl-dev \
+  && apt-get install -y --no-install-recommends cmake pkg-config libssl-dev \
   && rm -rf /var/lib/apt/lists/*
 
 COPY apps/api/Cargo.toml apps/api/Cargo.lock ./apps/api/
@@ -23,6 +23,6 @@ RUN apt-get update \
 COPY --from=builder /app/apps/api/target/release/diggit-api /usr/local/bin/diggit-api
 
 ENV PORT=3001
-EXPOSE 3001
+EXPOSE 3001 22
 
 CMD ["diggit-api"]

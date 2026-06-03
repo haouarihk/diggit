@@ -349,15 +349,16 @@ pub(crate) async fn repository_response(
             .bind(repo.id)
             .fetch_one(pool)
             .await?;
+    let ssh_public_host = config.public_api_host();
     let ssh_url = if config.ssh_port == 22 {
         format!(
             "git@{}:{}/{}.git",
-            config.ssh_host, repo.owner_handle, repo.name
+            ssh_public_host, repo.owner_handle, repo.name
         )
     } else {
         format!(
             "ssh://git@{}:{}/{}/{}.git",
-            config.ssh_host, config.ssh_port, repo.owner_handle, repo.name
+            ssh_public_host, config.ssh_port, repo.owner_handle, repo.name
         )
     };
     let http_url = format!(

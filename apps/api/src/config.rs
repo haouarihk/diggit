@@ -11,7 +11,8 @@ pub(crate) struct Config {
     pub(crate) jwt_secret: String,
     pub(crate) admin_usernames: Vec<String>,
     pub(crate) signups_enabled: bool,
-    pub(crate) ssh_host: String,
+    pub(crate) ssh_bind_host: String,
+    pub(crate) ssh_host_key_path: PathBuf,
     pub(crate) ssh_port: u16,
     pub(crate) port: u16,
 }
@@ -43,14 +44,12 @@ impl Config {
                 .filter(|username| !username.is_empty())
                 .collect(),
             signups_enabled: env_bool("SIGNUPS_ENABLED", true),
-            ssh_host: env::var("SSH_HOST").unwrap_or_else(|_| {
-                env::var("PUBLIC_WEB_URL")
-                    .unwrap_or_else(|_| "localhost".to_string())
-                    .trim_start_matches("https://")
-                    .trim_start_matches("http://")
-                    .trim_end_matches('/')
-                    .to_string()
-            }),
+            ssh_bind_host: env::var("SSH_HOST")
+                .or_else(|_| env::var("SSH_BIND_HOST"))
+                .unwrap_or_else(|_| "0.0.0.0".to_string()),
+            ssh_host_key_path: env::var("SSH_HOST_KEY_PATH")
+                .map(PathBuf::from)
+                .unwrap_or_else(|_| PathBuf::from("./storage/ssh/ssh_host_ed25519_key")),
             ssh_port: env::var("SSH_PORT")
                 .ok()
                 .and_then(|port| port.parse().ok())
@@ -68,6 +67,10 @@ impl Config {
             .trim_start_matches("http://")
             .trim_end_matches('/')
             .to_string()
+    }
+
+    pub(crate) fn public_api_host(&self) -> String {
+        host_without_scheme_or_port(&self.app_base_url)
     }
 
     pub(crate) fn actor_url(&self, username: &str) -> String {
@@ -95,6 +98,30 @@ fn env_bool(name: &str, default: bool) -> bool {
     }
 }
 
+fn host_without_scheme_or_port(url: &str) -> String {
+    let without_scheme = url
+        .trim()
+        .trim_start_matches("https://")
+        .trim_start_matches("http://");
+    let authority = without_scheme
+        .split('/')
+        .next()
+        .unwrap_or(without_scheme)
+        .trim_end_matches('/');
+
+    if let Some(rest) = authority.strip_prefix('[') {
+        if let Some((host, _)) = rest.split_once(']') {
+            return host.to_string();
+        }
+    }
+
+    authority
+        .rsplit_once(':')
+        .map(|(host, _)| host)
+        .unwrap_or(authority)
+        .to_string()
+}
+
 fn jwt_secret_from_env() -> String {
     match env::var("JWT_SECRET") {
         Ok(secret) if secret.len() >= 32 && secret != "dev-secret-change-me" => secret,
@@ -102,5 +129,27 @@ fn jwt_secret_from_env() -> String {
         Ok(_) => panic!("JWT_SECRET must be at least 32 characters and not use the dev default"),
         Err(_) if cfg!(debug_assertions) => "dev-secret-change-me".to_string(),
         Err(_) => panic!("JWT_SECRET must be set in production"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn public_api_host_removes_scheme_and_port() {
+        assert_eq!(
+            host_without_scheme_or_port("https://git-api.example.com"),
+            "git-api.example.com"
+        );
+        assert_eq!(
+            host_without_scheme_or_port("http://localhost:3001"),
+            "localhost"
+        );
+    }
+
+    #[test]
+    fn public_api_host_handles_ipv6_authority() {
+        assert_eq!(host_without_scheme_or_port("http://[::1]:3001"), "::1");
     }
 }

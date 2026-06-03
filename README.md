@@ -50,7 +50,8 @@ services:
       JWT_SECRET: replace-with-at-least-32-random-characters
       ADMIN_USERNAMES: alice
       SIGNUPS_ENABLED: "true"
-      SSH_HOST: localhost
+      SSH_HOST: 0.0.0.0 # bind address
+      SSH_HOST_KEY_PATH: /data/ssh/ssh_host_ed25519_key
       SSH_PORT: "2222" # *
       PORT: "3001"
     ports:
@@ -59,6 +60,7 @@ services:
       - "2222:2222"
     volumes:
       - git_data:/data/git
+      - ssh_data:/data/ssh
 
   web:
     image: ghcr.io/haouarihk/diggit-web:main
@@ -74,9 +76,11 @@ volumes:
   postgres_data:
   redis_data:
   git_data:
+  ssh_data:
 ```
 
 Save this as `compose.yml`, then run `docker compose up -d`.
+Clone over SSH with `git clone ssh://git@localhost:2222/OWNER/REPO.git` after adding your public key in Diggit. The displayed clone host comes from `APP_BASE_URL`; `SSH_HOST` only controls which address the SSH server binds to.
 
 ## License
 

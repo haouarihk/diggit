@@ -14,6 +14,7 @@ mod services;
 mod state;
 
 use config::Config;
+use services::spawn_ssh_server;
 use state::{AppState, Cache};
 
 #[tokio::main]
@@ -42,11 +43,19 @@ async fn main() -> anyhow::Result<()> {
         cache: Cache::new(config.redis_url.as_deref(), config.cache_ttl_seconds),
     };
 
+    let ssh_server = spawn_ssh_server(state.clone()).await?;
     let app = routes::router(state);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], config.port));
     let listener = tokio::net::TcpListener::bind(addr).await?;
     info!("diggit api listening on http://{}", addr);
-    axum::serve(listener, app).await?;
+    tokio::select! {
+        result = axum::serve(listener, app) => {
+            result?;
+        }
+        result = ssh_server => {
+            result??;
+        }
+    }
     Ok(())
 }

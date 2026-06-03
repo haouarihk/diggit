@@ -286,7 +286,7 @@ pub(crate) struct Claims {
     pub(crate) exp: usize,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct AuthUser {
     pub(crate) id: Uuid,
     pub(crate) username: String,

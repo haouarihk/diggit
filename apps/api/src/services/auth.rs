@@ -359,7 +359,8 @@ mod tests {
             jwt_secret: "test-secret".to_string(),
             admin_usernames: vec!["alice".to_string()],
             signups_enabled: true,
-            ssh_host: "visited.example.com".to_string(),
+            ssh_bind_host: "0.0.0.0".to_string(),
+            ssh_host_key_path: PathBuf::new(),
             ssh_port: 22,
             port: 3001,
         }

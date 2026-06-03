@@ -1,4 +1,5 @@
 use super::*;
+use std::process::Stdio;
 
 const GIT_COMMAND_TIMEOUT_SECONDS: u64 = 30;
 const MAX_GIT_OUTPUT_BYTES: usize = 2 * 1024 * 1024;
@@ -580,6 +581,31 @@ pub(crate) async fn git_worktree_command(
         command.arg(arg);
     }
     timeout_command(command).await
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum GitSshService {
+    UploadPack,
+    ReceivePack,
+}
+
+impl GitSshService {
+    pub(crate) fn program(self) -> &'static str {
+        match self {
+            Self::UploadPack => "git-upload-pack",
+            Self::ReceivePack => "git-receive-pack",
+        }
+    }
+}
+
+pub(crate) fn git_ssh_service_command(repo: &Repository, service: GitSshService) -> Command {
+    let mut command = Command::new(service.program());
+    command
+        .arg(&repo.local_path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    command
 }
 
 async fn timeout_command(mut command: Command) -> ApiResult<std::process::Output> {
