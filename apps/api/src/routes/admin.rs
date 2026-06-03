@@ -9,7 +9,12 @@ use crate::{
     state::AppState,
 };
 
-pub(crate) async fn list_servers(State(state): State<AppState>) -> ApiResult<Json<Value>> {
+pub(crate) async fn list_servers(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> ApiResult<Json<Value>> {
+    let auth = require_auth(&state, &headers)?;
+    require_admin(&state, &auth)?;
     let servers = sqlx::query_as::<_, ServerPolicy>("SELECT * FROM servers ORDER BY host ASC")
         .fetch_all(&state.pool)
         .await?;
@@ -21,7 +26,8 @@ pub(crate) async fn upsert_server(
     headers: HeaderMap,
     Json(input): Json<UpsertServerRequest>,
 ) -> ApiResult<Json<ServerPolicy>> {
-    require_auth(&state, &headers)?;
+    let auth = require_auth(&state, &headers)?;
+    require_admin(&state, &auth)?;
     if !matches!(input.status.as_str(), "allowed" | "blocked" | "pending") {
         return Err(ApiError::BadRequest("invalid server status".to_string()));
     }
@@ -45,7 +51,12 @@ pub(crate) async fn upsert_server(
     Ok(Json(server))
 }
 
-pub(crate) async fn list_activities(State(state): State<AppState>) -> ApiResult<Json<Value>> {
+pub(crate) async fn list_activities(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> ApiResult<Json<Value>> {
+    let auth = require_auth(&state, &headers)?;
+    require_admin(&state, &auth)?;
     let activities = sqlx::query_as::<_, ActivityRow>(
         "SELECT * FROM activities ORDER BY created_at DESC LIMIT 100",
     )

@@ -83,6 +83,7 @@ pub(crate) async fn inbox(
 ) -> ApiResult<Json<Value>> {
     let remote_server = host_from_actor(&activity.actor)
         .ok_or_else(|| ApiError::BadRequest("activity actor must include a host".to_string()))?;
+    enforce_rate_limit(&state, "federation-inbox", &remote_server, 120, 300).await?;
     ensure_server_allowed(&state.pool, &remote_server).await?;
 
     let object_type = activity
@@ -128,13 +129,15 @@ pub(crate) async fn accept_repository_fork(
         .get("fork")
         .and_then(Value::as_str)
         .ok_or_else(|| ApiError::BadRequest("fork URL is required".to_string()))?;
+    let source_url = validate_remote_url(source_url)?.to_string();
+    let fork_url = validate_remote_url(fork_url)?.to_string();
     let name = activity
         .object
         .get("name")
         .and_then(Value::as_str)
         .unwrap_or("remote-fork");
 
-    if let Some(source) = find_repo_by_activity_url(&state.pool, source_url).await? {
+    if let Some(source) = find_repo_by_activity_url(&state.pool, &source_url).await? {
         let fork_repo = sqlx::query_as::<_, Repository>(
             r#"
             INSERT INTO repositories
@@ -149,10 +152,10 @@ pub(crate) async fn accept_repository_fork(
         .bind(Uuid::now_v7())
         .bind(activity.actor.clone())
         .bind(name)
-        .bind(fork_url)
+        .bind(&fork_url)
         .bind(remote_server)
         .bind(source.id)
-        .bind(source_url)
+        .bind(&source_url)
         .fetch_one(&state.pool)
         .await?;
 
@@ -184,7 +187,8 @@ pub(crate) async fn accept_pull_request(state: &AppState, activity: &Activity) -
         .get("target")
         .and_then(Value::as_str)
         .ok_or_else(|| ApiError::BadRequest("pull request target is required".to_string()))?;
-    let target = find_repo_by_activity_url(&state.pool, target_url)
+    let target_url = validate_remote_url(target_url)?.to_string();
+    let target = find_repo_by_activity_url(&state.pool, &target_url)
         .await?
         .ok_or(ApiError::NotFound)?;
     let title = activity
@@ -214,11 +218,14 @@ pub(crate) async fn accept_pull_request(state: &AppState, activity: &Activity) -
     )
     .bind(&activity.actor)
     .bind(
-        activity
-            .object
-            .get("source")
-            .and_then(Value::as_str)
-            .unwrap_or(""),
+        validate_remote_url(
+            activity
+                .object
+                .get("source")
+                .and_then(Value::as_str)
+                .unwrap_or(""),
+        )?
+        .to_string(),
     )
     .bind(
         activity

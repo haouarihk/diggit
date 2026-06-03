@@ -129,12 +129,14 @@ pub(crate) async fn delete_organization(
 
 pub(crate) async fn list_organization_repos(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path(name): Path<String>,
     Query(query): Query<RepoListQuery>,
 ) -> ApiResult<Json<Value>> {
+    let auth = optional_auth(&state, &headers)?;
     let name = normalize_name(&name)?;
     get_organization_by_name(&state.pool, &name).await?;
-    let repos = owner_repositories(&state, &name, query).await?;
+    let repos = owner_repositories(&state, &name, query, auth.as_ref()).await?;
     Ok(Json(json!({ "data": repos })))
 }
 

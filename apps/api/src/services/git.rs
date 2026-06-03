@@ -1,5 +1,9 @@
 use super::*;
 
+const GIT_COMMAND_TIMEOUT_SECONDS: u64 = 30;
+const MAX_GIT_OUTPUT_BYTES: usize = 2 * 1024 * 1024;
+const MAX_RAW_FILE_BYTES: i64 = 10 * 1024 * 1024;
+
 pub(crate) async fn create_bare_repo(path: &PathBuf) -> ApiResult<()> {
     if fs::try_exists(path).await? {
         return Ok(());
@@ -56,6 +60,11 @@ pub(crate) async fn repo_file_response(
     let extension = file_extension(&name);
     let media_type = media_type_for_path(&name);
     let is_binary = is_binary_extension(extension.as_deref());
+    if !is_binary && size > MAX_GIT_OUTPUT_BYTES as i64 {
+        return Err(ApiError::BadRequest(
+            "file is too large to render".to_string(),
+        ));
+    }
     let content = if is_binary {
         String::new()
     } else {
@@ -263,7 +272,12 @@ pub(crate) async fn commit_detail(
         .ok_or(ApiError::NotFound)?;
     let parents = run_git_command(
         repo,
-        &["show".to_string(), "-s".to_string(), "--format=%P".to_string(), sha.to_string()],
+        &[
+            "show".to_string(),
+            "-s".to_string(),
+            "--format=%P".to_string(),
+            sha.to_string(),
+        ],
     )
     .await?
     .split_whitespace()
@@ -306,7 +320,11 @@ pub(crate) async fn fetch_upstream_ref(
     upstream_url: &str,
     branch: &str,
 ) -> ApiResult<String> {
-    let upstream_ref = format!("refs/remotes/diggit-upstream/{}", normalize_path_segment(branch));
+    validate_git_source(upstream_url)?;
+    let upstream_ref = format!(
+        "refs/remotes/diggit-upstream/{}",
+        normalize_path_segment(branch)
+    );
     run_git_command(
         fork,
         &[
@@ -324,6 +342,7 @@ pub(crate) async fn initialize_fork_from_source(
     fork: &Repository,
     source_url: &str,
 ) -> ApiResult<()> {
+    validate_git_source(source_url)?;
     run_git_command(
         fork,
         &[
@@ -336,6 +355,13 @@ pub(crate) async fn initialize_fork_from_source(
     )
     .await
     .map(|_| ())
+}
+
+fn validate_git_source(source_url: &str) -> ApiResult<()> {
+    if source_url.contains("://") {
+        validate_remote_url(source_url)?;
+    }
+    Ok(())
 }
 
 pub(crate) async fn try_initialize_fork_from_source(fork: &Repository, source_url: &str) {
@@ -455,9 +481,15 @@ async fn sync_from_upstream_in_worktree(
         .arg("--no-edit")
         .arg(upstream_ref)
         .env("GIT_AUTHOR_NAME", &author.username)
-        .env("GIT_AUTHOR_EMAIL", format!("{}@diggit.local", author.username))
+        .env(
+            "GIT_AUTHOR_EMAIL",
+            format!("{}@diggit.local", author.username),
+        )
         .env("GIT_COMMITTER_NAME", &author.username)
-        .env("GIT_COMMITTER_EMAIL", format!("{}@diggit.local", author.username));
+        .env(
+            "GIT_COMMITTER_EMAIL",
+            format!("{}@diggit.local", author.username),
+        );
     let output = command.output().await?;
     if !output.status.success() {
         return Err(ApiError::BadRequest(
@@ -474,6 +506,7 @@ pub(crate) async fn run_git_command(repo: &Repository, args: &[String]) -> ApiRe
             String::from_utf8_lossy(&output.stderr).trim().to_string(),
         ));
     }
+    ensure_output_size(&output.stdout)?;
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
@@ -485,6 +518,11 @@ pub(crate) async fn run_git_command_bytes(
     if !output.status.success() {
         return Err(ApiError::BadRequest(
             String::from_utf8_lossy(&output.stderr).trim().to_string(),
+        ));
+    }
+    if output.stdout.len() > MAX_RAW_FILE_BYTES as usize {
+        return Err(ApiError::BadRequest(
+            "file is too large to download".to_string(),
         ));
     }
     Ok(output.stdout)
@@ -510,7 +548,7 @@ pub(crate) async fn git_command(
     for arg in args {
         command.arg(arg);
     }
-    Ok(command.output().await?)
+    timeout_command(command).await
 }
 
 pub(crate) async fn run_git_worktree_command(
@@ -541,7 +579,25 @@ pub(crate) async fn git_worktree_command(
     for arg in args {
         command.arg(arg);
     }
-    Ok(command.output().await?)
+    timeout_command(command).await
+}
+
+async fn timeout_command(mut command: Command) -> ApiResult<std::process::Output> {
+    tokio::time::timeout(
+        std::time::Duration::from_secs(GIT_COMMAND_TIMEOUT_SECONDS),
+        command.output(),
+    )
+    .await
+    .map_err(|_| ApiError::BadRequest("git command timed out".to_string()))?
+    .map_err(ApiError::from)
+}
+
+fn ensure_output_size(output: &[u8]) -> ApiResult<()> {
+    if output.len() > MAX_GIT_OUTPUT_BYTES {
+        Err(ApiError::BadRequest("git output is too large".to_string()))
+    } else {
+        Ok(())
+    }
 }
 
 pub(crate) fn parse_git_commit(output: &str) -> Option<RepositoryCommitResponse> {

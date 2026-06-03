@@ -63,10 +63,7 @@ pub(crate) async fn list_repos(State(state): State<AppState>) -> ApiResult<Json<
         return Ok(Json(cached));
     }
 
-    let repos =
-        sqlx::query_as::<_, Repository>("SELECT * FROM repositories ORDER BY created_at DESC")
-            .fetch_all(&state.pool)
-            .await?;
+    let repos = public_repositories(&state.pool).await?;
     let mut responses = Vec::with_capacity(repos.len());
     for repo in repos {
         responses.push(repository_response(&state.pool, &state.config, repo).await?);
@@ -78,35 +75,27 @@ pub(crate) async fn list_repos(State(state): State<AppState>) -> ApiResult<Json<
 
 pub(crate) async fn get_repo(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path((owner, name)): Path<(String, String)>,
 ) -> ApiResult<Json<RepositoryResponse>> {
-    let cache_key = cache_key(&["repo", &owner, &name, "detail"]);
-    if let Some(cached) = state.cache.get_json::<RepositoryResponse>(&cache_key).await {
-        return Ok(Json(cached));
-    }
-
+    let auth = optional_auth(&state, &headers)?;
+    enforce_rate_limit(&state, "repo-tree", &format!("{owner}/{name}"), 120, 60).await?;
     let repo = find_repo(&state.pool, &owner, &name).await?;
+    ensure_repo_visible(&state.pool, auth.as_ref(), &repo).await?;
     let response = repository_response(&state.pool, &state.config, repo).await?;
-    state.cache.set_json(&cache_key, &response).await;
     Ok(Json(response))
 }
 
 pub(crate) async fn list_repo_tree(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path((owner, name)): Path<(String, String)>,
     Query(query): Query<RepoTreeQuery>,
 ) -> ApiResult<Json<RepositoryTreeResponse>> {
-    let ref_part = query.ref_name.as_deref().unwrap_or("default");
-    let cache_key = cache_key(&["repo", &owner, &name, "tree", ref_part]);
-    if let Some(cached) = state
-        .cache
-        .get_json::<RepositoryTreeResponse>(&cache_key)
-        .await
-    {
-        return Ok(Json(cached));
-    }
-
+    let auth = optional_auth(&state, &headers)?;
+    enforce_rate_limit(&state, "repo-tree", &format!("{owner}/{name}"), 120, 60).await?;
     let repo = find_repo(&state.pool, &owner, &name).await?;
+    ensure_repo_visible(&state.pool, auth.as_ref(), &repo).await?;
     let ref_name = query
         .ref_name
         .as_deref()
@@ -118,7 +107,6 @@ pub(crate) async fn list_repo_tree(
             last_commit: None,
             entries: Vec::new(),
         };
-        state.cache.set_json(&cache_key, &response).await;
         return Ok(Json(response));
     };
     let tree = run_git_command(
@@ -148,38 +136,34 @@ pub(crate) async fn list_repo_tree(
         last_commit: git_last_commit(&repo, &commit_sha, None).await?,
         entries,
     };
-    state.cache.set_json(&cache_key, &response).await;
     Ok(Json(response))
 }
 
 pub(crate) async fn get_repo_file(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path((owner, name)): Path<(String, String)>,
     Query(query): Query<RepoFileQuery>,
 ) -> ApiResult<Json<RepositoryFileResponse>> {
-    let ref_part = query.ref_name.as_deref().unwrap_or("default");
-    let cache_key = cache_key(&["repo", &owner, &name, "file", &query.path, ref_part]);
-    if let Some(cached) = state
-        .cache
-        .get_json::<RepositoryFileResponse>(&cache_key)
-        .await
-    {
-        return Ok(Json(cached));
-    }
-
+    let auth = optional_auth(&state, &headers)?;
+    enforce_rate_limit(&state, "repo-file", &format!("{owner}/{name}"), 120, 60).await?;
     let repo = find_repo(&state.pool, &owner, &name).await?;
+    ensure_repo_visible(&state.pool, auth.as_ref(), &repo).await?;
     let path = normalize_repo_file_path(&query.path)?;
     let response = repo_file_response(&repo, &path, query.ref_name.as_deref()).await?;
-    state.cache.set_json(&cache_key, &response).await;
     Ok(Json(response))
 }
 
 pub(crate) async fn get_repo_raw_file(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path((owner, name)): Path<(String, String)>,
     Query(query): Query<RepoFileQuery>,
 ) -> ApiResult<Response> {
+    let auth = optional_auth(&state, &headers)?;
+    enforce_rate_limit(&state, "repo-raw", &format!("{owner}/{name}"), 60, 60).await?;
     let repo = find_repo(&state.pool, &owner, &name).await?;
+    ensure_repo_visible(&state.pool, auth.as_ref(), &repo).await?;
     let path = normalize_repo_file_path(&query.path)?;
     let commit_sha = resolve_git_ref(&repo, query.ref_name.as_deref())
         .await?
@@ -204,27 +188,46 @@ pub(crate) async fn get_repo_raw_file(
 
 pub(crate) async fn list_commits_route(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path((owner, name)): Path<(String, String)>,
     Query(query): Query<CommitListQuery>,
 ) -> ApiResult<Json<RepositoryCommitListResponse>> {
+    let auth = optional_auth(&state, &headers)?;
+    enforce_rate_limit(&state, "repo-commit", &format!("{owner}/{name}"), 120, 60).await?;
     let repo = find_repo(&state.pool, &owner, &name).await?;
+    ensure_repo_visible(&state.pool, auth.as_ref(), &repo).await?;
     let commits = list_commits(&repo, query.ref_name.as_deref(), query.limit.unwrap_or(50)).await?;
     Ok(Json(RepositoryCommitListResponse { data: commits }))
 }
 
 pub(crate) async fn get_commit_route(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path((owner, name, sha)): Path<(String, String, String)>,
 ) -> ApiResult<Json<RepositoryCommitDetailResponse>> {
+    let auth = optional_auth(&state, &headers)?;
+    enforce_rate_limit(
+        &state,
+        "repo-commit-detail",
+        &format!("{owner}/{name}"),
+        60,
+        60,
+    )
+    .await?;
     let repo = find_repo(&state.pool, &owner, &name).await?;
+    ensure_repo_visible(&state.pool, auth.as_ref(), &repo).await?;
     Ok(Json(commit_detail(&repo, &sha).await?))
 }
 
 pub(crate) async fn compare_upstream(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path((owner, name)): Path<(String, String)>,
 ) -> ApiResult<Json<RepositoryCompareResponse>> {
+    let auth = optional_auth(&state, &headers)?;
+    enforce_rate_limit(&state, "repo-compare", &format!("{owner}/{name}"), 20, 60).await?;
     let repo = find_repo(&state.pool, &owner, &name).await?;
+    ensure_repo_visible(&state.pool, auth.as_ref(), &repo).await?;
     Ok(Json(compare_repo_upstream(&state, &repo).await?))
 }
 
@@ -234,12 +237,14 @@ pub(crate) async fn sync_upstream(
     Path((owner, name)): Path<(String, String)>,
 ) -> ApiResult<Json<RepositoryCompareResponse>> {
     let auth = require_auth(&state, &headers)?;
+    enforce_rate_limit(&state, "repo-sync", &auth.username, 10, 300).await?;
     let repo = find_repo(&state.pool, &owner, &name).await?;
     resolve_writable_namespace(&state.pool, &auth, &repo.owner_handle).await?;
 
-    let (source, upstream_url, upstream_branch) = upstream_target(&state, &repo).await?.ok_or_else(|| {
-        ApiError::BadRequest("repository is not a fork or upstream is unavailable".to_string())
-    })?;
+    let (source, upstream_url, upstream_branch) =
+        upstream_target(&state, &repo).await?.ok_or_else(|| {
+            ApiError::BadRequest("repository is not a fork or upstream is unavailable".to_string())
+        })?;
     let upstream_ref = fetch_upstream_ref(&repo, &upstream_url, &upstream_branch).await?;
     sync_from_upstream(&repo, &upstream_ref, &auth).await?;
     sqlx::query("UPDATE repositories SET updated_at = now() WHERE id = $1")
@@ -268,7 +273,9 @@ async fn compare_repo_upstream(
             ahead_commits: Vec::new(),
             behind_commits: Vec::new(),
             files: Vec::new(),
-            message: Some("This repository is not a fork or its upstream could not be resolved.".to_string()),
+            message: Some(
+                "This repository is not a fork or its upstream could not be resolved.".to_string(),
+            ),
         });
     };
 
@@ -295,11 +302,10 @@ async fn upstream_target(
     repo: &Repository,
 ) -> ApiResult<Option<(Option<RepositorySourceResponse>, String, String)>> {
     if let Some(source_id) = repo.source_repository_id {
-        let source: Option<Repository> =
-            sqlx::query_as("SELECT * FROM repositories WHERE id = $1")
-                .bind(source_id)
-                .fetch_optional(&state.pool)
-                .await?;
+        let source: Option<Repository> = sqlx::query_as("SELECT * FROM repositories WHERE id = $1")
+            .bind(source_id)
+            .fetch_optional(&state.pool)
+            .await?;
         if let Some(source) = source {
             let source_response = RepositorySourceResponse {
                 owner_handle: source.owner_handle.clone(),
@@ -336,6 +342,7 @@ pub(crate) async fn update_repo_file(
 ) -> ApiResult<Json<RepositoryFileResponse>> {
     let auth = require_auth(&state, &headers)?;
     let repo = find_repo(&state.pool, &owner, &name).await?;
+    resolve_writable_namespace(&state.pool, &auth, &repo.owner_handle).await?;
     let path = normalize_repo_file_path(&query.path)?;
     commit_repo_file_change(
         &repo,
@@ -364,6 +371,7 @@ pub(crate) async fn delete_repo_path(
 ) -> ApiResult<Json<RepositoryResponse>> {
     let auth = require_auth(&state, &headers)?;
     let repo = find_repo(&state.pool, &owner, &name).await?;
+    resolve_writable_namespace(&state.pool, &auth, &repo.owner_handle).await?;
     let path = normalize_repo_file_path(&query.path)?;
     commit_repo_file_change(
         &repo,
@@ -391,6 +399,7 @@ pub(crate) async fn star_repo(
 ) -> ApiResult<Json<RepositoryResponse>> {
     let auth = require_repo_action_auth(&state, &headers, "repo:star")?;
     let repo = find_repo(&state.pool, &owner, &name).await?;
+    ensure_repo_action_visible(&state.pool, &auth, &repo).await?;
     match auth {
         RepoActionAuth::Local(auth) => {
             sqlx::query(
@@ -440,6 +449,7 @@ pub(crate) async fn unstar_repo(
 ) -> ApiResult<Json<RepositoryResponse>> {
     let auth = require_repo_action_auth(&state, &headers, "repo:star")?;
     let repo = find_repo(&state.pool, &owner, &name).await?;
+    ensure_repo_action_visible(&state.pool, &auth, &repo).await?;
     match auth {
         RepoActionAuth::Local(auth) => {
             sqlx::query("DELETE FROM repository_stars WHERE repository_id = $1 AND user_id = $2")
@@ -473,6 +483,7 @@ pub(crate) async fn fork_repo(
 ) -> ApiResult<Json<RepositoryResponse>> {
     let auth = require_auth(&state, &headers)?;
     let source = find_repo(&state.pool, &owner, &name).await?;
+    ensure_repo_visible(&state.pool, Some(&auth), &source).await?;
     let fork_name = normalize_name(input.name.as_deref().unwrap_or(&source.name))?;
     let namespace = resolve_writable_namespace(&state.pool, &auth, &auth.username).await?;
     let local_path = repo_path(&state.config, &namespace.name, &fork_name);
@@ -502,7 +513,11 @@ pub(crate) async fn fork_repo(
     .await?;
 
     if source.local_path.is_empty() {
-        if let Some(remote_url) = source.source_remote_url.as_deref().or(source.remote_url.as_deref()) {
+        if let Some(remote_url) = source
+            .source_remote_url
+            .as_deref()
+            .or(source.remote_url.as_deref())
+        {
             try_initialize_fork_from_source(&repo, remote_url).await;
         }
     } else {
@@ -555,6 +570,8 @@ pub(crate) async fn create_pull_request(
 ) -> ApiResult<Json<PullRequest>> {
     let auth = require_auth(&state, &headers)?;
     let target = find_repo(&state.pool, &owner, &name).await?;
+    ensure_repo_visible(&state.pool, Some(&auth), &target).await?;
+    let source_repo_url = validate_remote_url(&input.source_repo_url)?.to_string();
     let activity_id = format!(
         "{}/activities/{}",
         state.config.app_base_url,
@@ -576,7 +593,7 @@ pub(crate) async fn create_pull_request(
     .bind(input.title)
     .bind(input.body.unwrap_or_default())
     .bind(local_handle(&auth.username, &state.config))
-    .bind(input.source_repo_url)
+    .bind(source_repo_url)
     .bind(input.source_branch)
     .bind(
         input
@@ -622,9 +639,12 @@ pub(crate) async fn create_pull_request(
 
 pub(crate) async fn list_pull_requests(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path((owner, name)): Path<(String, String)>,
 ) -> ApiResult<Json<Value>> {
+    let auth = optional_auth(&state, &headers)?;
     let target = find_repo(&state.pool, &owner, &name).await?;
+    ensure_repo_visible(&state.pool, auth.as_ref(), &target).await?;
     let prs = sqlx::query_as::<_, PullRequest>(
         "SELECT * FROM pull_requests WHERE target_repository_id = $1 ORDER BY created_at DESC",
     )

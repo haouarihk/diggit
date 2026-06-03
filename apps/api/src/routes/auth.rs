@@ -20,6 +20,7 @@ pub(crate) async fn register(
     Json(input): Json<RegisterRequest>,
 ) -> ApiResult<Json<AuthResponse>> {
     let username = normalize_name(&input.username)?;
+    enforce_rate_limit(&state, "auth-register", &username, 5, 300).await?;
     ensure_claimable_owner_name(&username)?;
     ensure_namespace_available(&state.pool, &username).await?;
     if input.password.len() < 8 {
@@ -75,6 +76,8 @@ pub(crate) async fn login(
     State(state): State<AppState>,
     Json(input): Json<LoginRequest>,
 ) -> ApiResult<Json<AuthResponse>> {
+    let username = normalize_name(&input.username)?;
+    enforce_rate_limit(&state, "auth-login", &username, 10, 300).await?;
     let row: (
         Uuid,
         String,
@@ -92,7 +95,7 @@ pub(crate) async fn login(
         WHERE username = $1
         "#,
     )
-    .bind(normalize_name(&input.username)?)
+    .bind(username)
     .fetch_one(&state.pool)
     .await?;
 
@@ -173,12 +176,15 @@ async fn create_federated_authorization_code(
     input: FederatedAuthorizeRequest,
 ) -> ApiResult<Json<FederatedAuthorizeResponse>> {
     let auth = require_auth(&state, &headers)?;
-    if input.audience.trim_end_matches('/') == state.config.app_base_url.trim_end_matches('/') {
+    let audience = validate_remote_base_url(&input.audience)?;
+    let redirect_uri = validate_remote_url(&input.redirect_uri)?.to_string();
+    let redirect_base = validate_remote_base_url(&redirect_uri)?;
+    if audience == state.config.app_base_url.trim_end_matches('/') {
         return Err(ApiError::BadRequest(
             "audience must be a different Diggit instance".to_string(),
         ));
     }
-    if !input.redirect_uri.starts_with(&input.audience) {
+    if redirect_base != audience {
         return Err(ApiError::BadRequest(
             "redirect_uri must belong to the audience".to_string(),
         ));
@@ -195,8 +201,8 @@ async fn create_federated_authorization_code(
     .bind(&code)
     .bind(auth.id)
     .bind(input.client_id)
-    .bind(&input.redirect_uri)
-    .bind(input.audience.trim_end_matches('/'))
+    .bind(&redirect_uri)
+    .bind(&audience)
     .bind(input.scope)
     .bind(&input.state)
     .bind(input.nonce)
@@ -205,11 +211,11 @@ async fn create_federated_authorization_code(
     .execute(&state.pool)
     .await?;
 
-    let separator = if input.redirect_uri.contains('?') { '&' } else { '?' };
+    let separator = if redirect_uri.contains('?') { '&' } else { '?' };
     Ok(Json(FederatedAuthorizeResponse {
         redirect_uri: format!(
             "{}{}code={}&state={}",
-            input.redirect_uri, separator, code, input.state
+            redirect_uri, separator, code, input.state
         ),
         code,
     }))
@@ -240,7 +246,11 @@ pub(crate) async fn federated_token(
     .fetch_one(&state.pool)
     .await?;
 
-    if row.8.is_some() || row.7 < Utc::now() || row.1 != input.client_id || row.2 != input.redirect_uri {
+    if row.8.is_some()
+        || row.7 < Utc::now()
+        || row.1 != input.client_id
+        || row.2 != input.redirect_uri
+    {
         return Err(ApiError::Unauthorized);
     }
     verify_pkce(&input.code_verifier, &row.6)?;
@@ -273,10 +283,11 @@ pub(crate) async fn federated_exchange(
     State(state): State<AppState>,
     Json(input): Json<FederatedExchangeRequest>,
 ) -> ApiResult<Json<FederatedExchangeResponse>> {
-    let home_server = input.home_server.trim_end_matches('/').to_string();
-    if let Some(host) = host_from_actor(&home_server) {
-        ensure_server_allowed(&state.pool, &host).await?;
-    }
+    let home_server = validate_remote_base_url(&input.home_server)?;
+    let host = host_from_actor(&home_server)
+        .ok_or_else(|| ApiError::BadRequest("home_server must include a host".to_string()))?;
+    enforce_rate_limit(&state, "federated-exchange", &host, 20, 300).await?;
+    ensure_server_allowed(&state.pool, &host).await?;
     let token: FederatedTokenResponse = state
         .http
         .post(format!("{home_server}/auth/federated/token"))
@@ -328,10 +339,8 @@ pub(crate) async fn federated_fork(
 ) -> ApiResult<Json<RepositoryResponse>> {
     let auth = require_federated_identity(&state, &headers, "repo:fork")?;
     let user = get_user_by_actor_url(&state.pool, &auth.actor_url).await?;
-    let source_repo_url = input.source_repo_url.trim_end_matches('/').to_string();
-    let source_server = remote_base_url(&source_repo_url).ok_or_else(|| {
-        ApiError::BadRequest("source_repo_url must be an absolute URL".to_string())
-    })?;
+    let source_repo_url = validate_remote_url(&input.source_repo_url)?.to_string();
+    let source_server = validate_remote_base_url(&source_repo_url)?;
     let fork_name = normalize_name(
         input
             .name
@@ -395,14 +404,4 @@ pub(crate) async fn federated_fork(
     Ok(Json(
         repository_response(&state.pool, &state.config, repo).await?,
     ))
-}
-
-fn remote_base_url(url: &str) -> Option<String> {
-    let (scheme, rest) = url.split_once("://")?;
-    let host = rest.split('/').next()?;
-    if host.is_empty() {
-        None
-    } else {
-        Some(format!("{scheme}://{host}"))
-    }
 }

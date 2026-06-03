@@ -16,10 +16,7 @@ pub(crate) async fn search(
         .search_type
         .unwrap_or_else(|| "repositories".to_string());
 
-    let repos =
-        sqlx::query_as::<_, Repository>("SELECT * FROM repositories ORDER BY updated_at DESC")
-            .fetch_all(&state.pool)
-            .await?;
+    let repos = public_repositories(&state.pool).await?;
     let users = sqlx::query_as::<_, User>(
         "SELECT id, username, display_name, avatar_url, actor_url, inbox_url, outbox_url, created_at FROM users ORDER BY username ASC",
     )

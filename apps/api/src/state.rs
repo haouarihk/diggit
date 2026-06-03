@@ -84,4 +84,30 @@ impl Cache {
             warn!(%error, "failed to invalidate redis cache");
         }
     }
+
+    pub(crate) async fn is_rate_limited(&self, key: &str, limit: u64, window_seconds: u64) -> bool {
+        let Some(client) = self.client.as_ref() else {
+            return false;
+        };
+        let Ok(mut connection) = client.get_multiplexed_async_connection().await else {
+            return false;
+        };
+
+        let count: redis::RedisResult<u64> = redis::cmd("INCR")
+            .arg(key)
+            .query_async(&mut connection)
+            .await;
+        let Ok(count) = count else {
+            return false;
+        };
+        if count == 1 {
+            let _: redis::RedisResult<()> = redis::cmd("EXPIRE")
+                .arg(key)
+                .arg(window_seconds)
+                .query_async(&mut connection)
+                .await;
+        }
+
+        count > limit
+    }
 }

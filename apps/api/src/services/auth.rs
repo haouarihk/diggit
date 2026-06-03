@@ -78,11 +78,23 @@ pub(crate) fn create_federated_session_token(
 
 pub(crate) fn require_auth(state: &AppState, headers: &HeaderMap) -> ApiResult<AuthUser> {
     let token = bearer_token(headers).ok_or(ApiError::Unauthorized)?;
+    decode_local_auth(state, token)
+}
+
+pub(crate) fn optional_auth(state: &AppState, headers: &HeaderMap) -> ApiResult<Option<AuthUser>> {
+    let Some(token) = bearer_token(headers) else {
+        return Ok(None);
+    };
+    decode_local_auth(state, token).map(Some)
+}
+
+fn decode_local_auth(state: &AppState, token: &str) -> ApiResult<AuthUser> {
     let claims = decode::<Claims>(
         token,
         &DecodingKey::from_secret(state.config.jwt_secret.as_bytes()),
         &Validation::default(),
-    )?
+    )
+    .map_err(|_| ApiError::Unauthorized)?
     .claims;
 
     Ok(AuthUser {

@@ -181,8 +181,9 @@ function renderInline(text: string): ReactNode[] {
       );
     } else {
       const link = token.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
+      const href = safeMarkdownHref(link?.[2] ?? "");
       nodes.push(
-        <a className="font-medium text-[#0969da] hover:underline" href={link?.[2] ?? "#"} key={`${token}-${match.index}`}>
+        <a className="font-medium text-[#0969da] hover:underline" href={href} key={`${token}-${match.index}`}>
           {link?.[1] ?? token}
         </a>,
       );
@@ -197,6 +198,20 @@ function renderInline(text: string): ReactNode[] {
   }
 
   return nodes;
+}
+
+export function safeMarkdownHref(href: string) {
+  const trimmed = href.trim();
+  if (trimmed.startsWith("#") || trimmed.startsWith("/") || trimmed.startsWith("./") || trimmed.startsWith("../")) {
+    return trimmed || "#";
+  }
+
+  try {
+    const parsed = new URL(trimmed);
+    return parsed.protocol === "http:" || parsed.protocol === "https:" || parsed.protocol === "mailto:" ? trimmed : "#";
+  } catch {
+    return "#";
+  }
 }
 
 function fileIcon(fileName: string) {

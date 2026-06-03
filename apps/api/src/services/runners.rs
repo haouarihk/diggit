@@ -66,7 +66,7 @@ pub(crate) fn token_hash(token: &str) -> String {
 }
 
 pub(crate) fn generate_token(prefix: &str) -> String {
-    format!("{}-{}", prefix, Uuid::now_v7().as_simple())
+    format!("{}-{}", prefix, Uuid::new_v4().as_simple())
 }
 
 pub(crate) fn parse_runner_labels(labels: Option<&str>) -> Vec<String> {

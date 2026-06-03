@@ -18,6 +18,8 @@ pub(crate) enum ApiError {
     NotFound,
     #[error("remote server is blocked")]
     BlockedServer,
+    #[error("rate limit exceeded")]
+    RateLimited,
     #[error(transparent)]
     Sqlx(#[from] sqlx::Error),
     #[error(transparent)]
@@ -38,6 +40,7 @@ impl IntoResponse for ApiError {
             ApiError::Unauthorized => StatusCode::UNAUTHORIZED,
             ApiError::NotFound => StatusCode::NOT_FOUND,
             ApiError::BlockedServer => StatusCode::FORBIDDEN,
+            ApiError::RateLimited => StatusCode::TOO_MANY_REQUESTS,
             ApiError::Sqlx(sqlx::Error::RowNotFound) => StatusCode::NOT_FOUND,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         };

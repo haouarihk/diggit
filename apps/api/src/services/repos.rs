@@ -4,11 +4,13 @@ pub(crate) async fn owner_repositories(
     state: &AppState,
     owner: &str,
     query: RepoListQuery,
+    auth: Option<&AuthUser>,
 ) -> ApiResult<Vec<RepositoryResponse>> {
     let cache_key = cache_key(&[
         "repos",
         "owner",
         owner,
+        auth.map(|auth| auth.username.as_str()).unwrap_or("public"),
         query.q.as_deref().unwrap_or(""),
         query.sort.as_deref().unwrap_or("updated"),
         query.direction.as_deref().unwrap_or("desc"),
@@ -27,6 +29,21 @@ pub(crate) async fn owner_repositories(
     .bind(owner)
     .fetch_all(&state.pool)
     .await?;
+    repos.retain(|repo| repo.visibility == "public");
+
+    if let Some(auth) = auth {
+        let can_read_private = resolve_writable_namespace(&state.pool, auth, owner)
+            .await
+            .is_ok();
+        if can_read_private {
+            repos = sqlx::query_as::<_, Repository>(
+                "SELECT * FROM repositories WHERE owner_handle = $1 ORDER BY updated_at DESC",
+            )
+            .bind(owner)
+            .fetch_all(&state.pool)
+            .await?;
+        }
+    }
 
     if let Some(query) = query.q.map(|query| query.trim().to_ascii_lowercase()) {
         if !query.is_empty() {
@@ -123,6 +140,44 @@ pub(crate) async fn find_repo(pool: &PgPool, owner: &str, name: &str) -> ApiResu
     .await?)
 }
 
+pub(crate) async fn ensure_repo_visible(
+    pool: &PgPool,
+    auth: Option<&AuthUser>,
+    repo: &Repository,
+) -> ApiResult<()> {
+    if repo.visibility == "public" {
+        return Ok(());
+    }
+
+    let Some(auth) = auth else {
+        return Err(ApiError::NotFound);
+    };
+
+    resolve_writable_namespace(pool, auth, &repo.owner_handle)
+        .await
+        .map(|_| ())
+        .map_err(|_| ApiError::NotFound)
+}
+
+pub(crate) async fn ensure_repo_action_visible(
+    pool: &PgPool,
+    auth: &RepoActionAuth,
+    repo: &Repository,
+) -> ApiResult<()> {
+    match auth {
+        RepoActionAuth::Local(auth) => ensure_repo_visible(pool, Some(auth), repo).await,
+        RepoActionAuth::Federated(_) => ensure_repo_visible(pool, None, repo).await,
+    }
+}
+
+pub(crate) async fn public_repositories(pool: &PgPool) -> ApiResult<Vec<Repository>> {
+    Ok(sqlx::query_as::<_, Repository>(
+        "SELECT * FROM repositories WHERE visibility = 'public' ORDER BY created_at DESC",
+    )
+    .fetch_all(pool)
+    .await?)
+}
+
 pub(crate) async fn sync_repo_stars(pool: &PgPool, repo_id: Uuid) -> ApiResult<Repository> {
     Ok(sqlx::query_as::<_, Repository>(
         r#"
@@ -178,11 +233,10 @@ pub(crate) async fn repository_source_response(
     repo: &Repository,
 ) -> ApiResult<Option<RepositorySourceResponse>> {
     if let Some(source_id) = repo.source_repository_id {
-        let source: Option<Repository> =
-            sqlx::query_as("SELECT * FROM repositories WHERE id = $1")
-                .bind(source_id)
-                .fetch_optional(pool)
-                .await?;
+        let source: Option<Repository> = sqlx::query_as("SELECT * FROM repositories WHERE id = $1")
+            .bind(source_id)
+            .fetch_optional(pool)
+            .await?;
         if let Some(source) = source {
             return Ok(Some(RepositorySourceResponse {
                 owner_handle: source.owner_handle.clone(),
@@ -340,4 +394,50 @@ pub(crate) async fn repository_response(
         created_at: repo.created_at,
         updated_at: repo.updated_at,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn repo_with_visibility(visibility: &str) -> Repository {
+        Repository {
+            id: Uuid::now_v7(),
+            namespace_id: None,
+            owner_id: None,
+            owner_handle: "alice".to_string(),
+            name: "demo".to_string(),
+            description: String::new(),
+            visibility: visibility.to_string(),
+            default_branch: "main".to_string(),
+            dominant_language: String::new(),
+            stars_count: 0,
+            local_path: String::new(),
+            remote_url: None,
+            remote_server: None,
+            source_repository_id: None,
+            source_remote_url: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }
+    }
+
+    #[tokio::test]
+    async fn public_repositories_are_visible_without_auth() {
+        let pool = PgPool::connect_lazy("postgres://diggit:diggit@localhost/diggit").unwrap();
+        assert!(
+            ensure_repo_visible(&pool, None, &repo_with_visibility("public"))
+                .await
+                .is_ok()
+        );
+    }
+
+    #[tokio::test]
+    async fn private_repositories_are_hidden_without_auth() {
+        let pool = PgPool::connect_lazy("postgres://diggit:diggit@localhost/diggit").unwrap();
+        assert!(matches!(
+            ensure_repo_visible(&pool, None, &repo_with_visibility("private")).await,
+            Err(ApiError::NotFound)
+        ));
+    }
 }

@@ -116,6 +116,7 @@ pub(crate) async fn register_runner(
     Json(input): Json<RegisterRunnerRequest>,
 ) -> ApiResult<Json<RegisterRunnerResponse>> {
     let registration_token_hash = token_hash(&input.token);
+    enforce_rate_limit(&state, "runner-register", &registration_token_hash, 20, 300).await?;
     let token: (String, Option<Uuid>, Option<Uuid>, Option<Uuid>) = sqlx::query_as(
         r#"
         SELECT scope_kind, user_id, organization_id, repository_id
@@ -159,13 +160,15 @@ pub(crate) async fn fetch_runner_task(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> ApiResult<Json<Value>> {
-    if let Some(token) = bearer_token(&headers) {
-        sqlx::query(
-            "UPDATE runners SET last_seen_at = now(), status = 'online' WHERE token_hash = $1",
-        )
-        .bind(token_hash(token))
-        .execute(&state.pool)
-        .await?;
+    let token = bearer_token(&headers).ok_or(crate::error::ApiError::Unauthorized)?;
+    let result = sqlx::query(
+        "UPDATE runners SET last_seen_at = now(), status = 'online' WHERE token_hash = $1",
+    )
+    .bind(token_hash(token))
+    .execute(&state.pool)
+    .await?;
+    if result.rows_affected() == 0 {
+        return Err(crate::error::ApiError::Unauthorized);
     }
 
     Ok(Json(json!({

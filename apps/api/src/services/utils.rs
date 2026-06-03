@@ -33,3 +33,22 @@ pub(crate) fn ensure_claimable_owner_name(name: &str) -> ApiResult<()> {
 
     Ok(())
 }
+
+pub(crate) async fn enforce_rate_limit(
+    state: &AppState,
+    scope: &str,
+    identity: &str,
+    limit: u64,
+    window_seconds: u64,
+) -> ApiResult<()> {
+    let key = cache_key(&["rate", scope, identity]);
+    if state
+        .cache
+        .is_rate_limited(&key, limit, window_seconds)
+        .await
+    {
+        Err(ApiError::RateLimited)
+    } else {
+        Ok(())
+    }
+}

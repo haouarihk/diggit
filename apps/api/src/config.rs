@@ -34,8 +34,7 @@ impl Config {
             git_storage_path: env::var("GIT_STORAGE_PATH")
                 .map(PathBuf::from)
                 .unwrap_or_else(|_| PathBuf::from("./storage/git")),
-            jwt_secret: env::var("JWT_SECRET")
-                .unwrap_or_else(|_| "dev-secret-change-me".to_string()),
+            jwt_secret: jwt_secret_from_env(),
             admin_usernames: env::var("ADMIN_USERNAMES")
                 .unwrap_or_default()
                 .split(',')
@@ -81,5 +80,15 @@ impl Config {
         self.admin_usernames
             .iter()
             .any(|admin| admin == &username.to_ascii_lowercase())
+    }
+}
+
+fn jwt_secret_from_env() -> String {
+    match env::var("JWT_SECRET") {
+        Ok(secret) if secret.len() >= 32 && secret != "dev-secret-change-me" => secret,
+        Ok(_) if cfg!(debug_assertions) => "dev-secret-change-me".to_string(),
+        Ok(_) => panic!("JWT_SECRET must be at least 32 characters and not use the dev default"),
+        Err(_) if cfg!(debug_assertions) => "dev-secret-change-me".to_string(),
+        Err(_) => panic!("JWT_SECRET must be set in production"),
     }
 }
