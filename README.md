@@ -49,6 +49,7 @@ services:
       GIT_STORAGE_PATH: /data/git
       JWT_SECRET: replace-with-at-least-32-random-characters
       ADMIN_USERNAMES: alice
+      SIGNUPS_ENABLED: "true"
       SSH_HOST: localhost
       SSH_PORT: "2222" # *
       PORT: "3001"

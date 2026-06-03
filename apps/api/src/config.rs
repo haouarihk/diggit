@@ -10,6 +10,7 @@ pub(crate) struct Config {
     pub(crate) git_storage_path: PathBuf,
     pub(crate) jwt_secret: String,
     pub(crate) admin_usernames: Vec<String>,
+    pub(crate) signups_enabled: bool,
     pub(crate) ssh_host: String,
     pub(crate) ssh_port: u16,
     pub(crate) port: u16,
@@ -41,6 +42,7 @@ impl Config {
                 .map(|username| username.trim().to_ascii_lowercase())
                 .filter(|username| !username.is_empty())
                 .collect(),
+            signups_enabled: env_bool("SIGNUPS_ENABLED", true),
             ssh_host: env::var("SSH_HOST").unwrap_or_else(|_| {
                 env::var("PUBLIC_WEB_URL")
                     .unwrap_or_else(|_| "localhost".to_string())
@@ -80,6 +82,16 @@ impl Config {
         self.admin_usernames
             .iter()
             .any(|admin| admin == &username.to_ascii_lowercase())
+    }
+}
+
+fn env_bool(name: &str, default: bool) -> bool {
+    match env::var(name) {
+        Ok(value) => matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        ),
+        Err(_) => default,
     }
 }
 

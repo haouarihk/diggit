@@ -358,6 +358,7 @@ mod tests {
             git_storage_path: PathBuf::new(),
             jwt_secret: "test-secret".to_string(),
             admin_usernames: vec!["alice".to_string()],
+            signups_enabled: true,
             ssh_host: "visited.example.com".to_string(),
             ssh_port: 22,
             port: 3001,

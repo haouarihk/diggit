@@ -14,6 +14,8 @@ pub(crate) enum ApiError {
     Conflict(String),
     #[error("unauthorized")]
     Unauthorized,
+    #[error("forbidden: {0}")]
+    Forbidden(String),
     #[error("not found")]
     NotFound,
     #[error("remote server is blocked")]
@@ -38,6 +40,7 @@ impl IntoResponse for ApiError {
             ApiError::BadRequest(_) => StatusCode::BAD_REQUEST,
             ApiError::Conflict(_) => StatusCode::CONFLICT,
             ApiError::Unauthorized => StatusCode::UNAUTHORIZED,
+            ApiError::Forbidden(_) => StatusCode::FORBIDDEN,
             ApiError::NotFound => StatusCode::NOT_FOUND,
             ApiError::BlockedServer => StatusCode::FORBIDDEN,
             ApiError::RateLimited => StatusCode::TOO_MANY_REQUESTS,

@@ -162,7 +162,8 @@ export function AuthPanel() {
     });
 
     if (!response.ok) {
-      setMessage(`Request failed with ${response.status}`);
+      const body = (await response.json().catch(() => null)) as { error?: string } | null;
+      setMessage(body?.error ?? `Request failed with ${response.status}`);
       return;
     }
 
