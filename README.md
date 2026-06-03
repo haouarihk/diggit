@@ -17,3 +17,7 @@ Diggit is a federated Git hosting MVP. It uses a Next.js web app, a Rust API, lo
 4. Run the web app with `pnpm install` then `pnpm dev`.
 
 The API listens on `http://localhost:3001` by default and the web app expects it at `NEXT_PUBLIC_API_URL`.
+
+## License
+
+Diggit is licensed under the [MIT License](LICENSE).
