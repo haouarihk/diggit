@@ -50,10 +50,12 @@ services:
       JWT_SECRET: replace-with-at-least-32-random-characters
       ADMIN_USERNAMES: alice
       SSH_HOST: localhost
-      SSH_PORT: "22"
+      SSH_PORT: "2222" # *
       PORT: "3001"
     ports:
       - "3001:3001"
+      # ssh port (make sure to change it in all 3 places. so that the frontend knows what port to deliver to the client. copy link feature)
+      - "2222:2222"
     volumes:
       - git_data:/data/git
 
