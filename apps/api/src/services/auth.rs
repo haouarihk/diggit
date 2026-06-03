@@ -126,7 +126,8 @@ pub(crate) fn require_repo_action_auth(
         token,
         &DecodingKey::from_secret(state.config.jwt_secret.as_bytes()),
         &validation,
-    )?
+    )
+    .map_err(|_| ApiError::Unauthorized)?
     .claims;
     if claims.aud != state.config.app_base_url.trim_end_matches('/') {
         return Err(ApiError::Unauthorized);
@@ -158,7 +159,8 @@ pub(crate) fn require_federated_identity(
         token,
         &DecodingKey::from_secret(state.config.jwt_secret.as_bytes()),
         &validation,
-    )?
+    )
+    .map_err(|_| ApiError::Unauthorized)?
     .claims;
     if claims.iss != state.config.app_base_url.trim_end_matches('/') {
         return Err(ApiError::Unauthorized);
@@ -199,7 +201,8 @@ pub(crate) fn require_current_user(
         token,
         &DecodingKey::from_secret(state.config.jwt_secret.as_bytes()),
         &validation,
-    )?
+    )
+    .map_err(|_| ApiError::Unauthorized)?
     .claims;
     if claims.aud != state.config.app_base_url.trim_end_matches('/') {
         return Err(ApiError::Unauthorized);
