@@ -1,4 +1,5 @@
 # Diggit
+> **⚠️ This project is under heavy development. Features, APIs, and behavior may change at any time. Use with caution and expect breaking changes.**
 
 Diggit is a federated Git hosting MVP. It uses a Next.js web app, a Rust API, local bare Git repositories, and ActivityPub-inspired server-to-server messages for cross-host forks and pull requests.
 
