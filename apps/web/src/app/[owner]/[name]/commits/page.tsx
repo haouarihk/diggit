@@ -7,17 +7,22 @@ type Props = {
     owner: string;
     name: string;
   }>;
+  searchParams: Promise<{
+    branch?: string;
+  }>;
 };
 
-export default async function CommitsPage({ params }: Props) {
+export default async function CommitsPage({ params, searchParams }: Props) {
   const { owner, name } = await params;
+  const { branch } = await searchParams;
   const decodedOwner = decodeURIComponent(owner);
   const decodedName = decodeURIComponent(name);
   const baseHref = repoHref(decodedOwner, decodedName);
-  const [repo, pullRequests, commits] = await Promise.all([
-    apiFetch<Repository>(baseHref),
+  const repo = await apiFetch<Repository>(baseHref);
+  const selectedBranch = branch || repo.default_branch;
+  const [pullRequests, commits] = await Promise.all([
     apiFetch<{ data: PullRequest[] }>(`${baseHref}/pull-requests`).catch(() => ({ data: [] })),
-    listCommits(decodedOwner, decodedName).catch(() => ({ data: [] })),
+    listCommits(decodedOwner, decodedName, selectedBranch).catch(() => ({ data: [] })),
   ]);
 
   return (
@@ -25,7 +30,7 @@ export default async function CommitsPage({ params }: Props) {
       <RepoHeader activeTab="code" pullRequestsCount={pullRequests.data.length} repo={repo} />
       <section className="overflow-hidden rounded-md border border-[#d0d7de] bg-white">
         <header className="border-b border-[#d8dee4] bg-[#f6f8fa] px-4 py-3">
-          <h2 className="font-semibold">Commit history</h2>
+          <h2 className="font-semibold">Commit history for {selectedBranch}</h2>
         </header>
         {commits.data.length === 0 ? (
           <p className="p-4 text-[#59636e]">No commits found.</p>

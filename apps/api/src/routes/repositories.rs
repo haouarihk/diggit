@@ -139,6 +139,20 @@ pub(crate) async fn list_repo_tree(
     Ok(Json(response))
 }
 
+pub(crate) async fn list_repo_branches(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((owner, name)): Path<(String, String)>,
+) -> ApiResult<Json<RepositoryBranchListResponse>> {
+    let auth = optional_auth(&state, &headers)?;
+    enforce_rate_limit(&state, "repo-branches", &format!("{owner}/{name}"), 120, 60).await?;
+    let repo = find_repo(&state.pool, &owner, &name).await?;
+    ensure_repo_visible(&state.pool, auth.as_ref(), &repo).await?;
+    Ok(Json(RepositoryBranchListResponse {
+        data: list_branches(&repo).await?,
+    }))
+}
+
 pub(crate) async fn get_repo_file(
     State(state): State<AppState>,
     headers: HeaderMap,

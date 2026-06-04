@@ -111,6 +111,18 @@ pub(crate) struct RepositoryCommitListResponse {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub(crate) struct RepositoryBranchResponse {
+    pub(crate) name: String,
+    pub(crate) is_default: bool,
+    pub(crate) commit_sha: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub(crate) struct RepositoryBranchListResponse {
+    pub(crate) data: Vec<RepositoryBranchResponse>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct RepositoryDiffLineResponse {
     pub(crate) kind: String,
     pub(crate) old_line: Option<i32>,

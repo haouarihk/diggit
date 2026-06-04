@@ -8,8 +8,10 @@ import {
   compareUpstream,
   getRepositoryFile,
   getRepositoryTree,
+  listRepositoryBranches,
   repositoryRawFileUrl,
   type RepositoryCompare,
+  type RepositoryBranch,
   type PullRequest,
   type Repository,
   type RepositoryCommit,
@@ -24,22 +26,27 @@ type Props = {
     name: string;
   }>;
   searchParams: Promise<{
+    branch?: string;
     file?: string;
   }>;
 };
 
 export default async function RepoPage({ params, searchParams }: Props) {
   const { owner, name } = await params;
-  const { file } = await searchParams;
+  const { branch, file } = await searchParams;
   const decodedOwner = decodeURIComponent(owner);
   const decodedName = decodeURIComponent(name);
   const baseHref = `/${encodeURIComponent(decodedOwner)}/${encodeURIComponent(decodedName)}`;
   const repo = await apiFetch<Repository>(baseHref);
-  const [pullRequests, tree, upstreamCompare] = await Promise.all([
+  const selectedBranch = branch || repo.default_branch;
+  const [pullRequests, branches, tree, upstreamCompare] = await Promise.all([
     apiFetch<{ data: PullRequest[] }>(`${baseHref}/pull-requests`).catch(() => ({ data: [] })),
-    getRepositoryTree(decodedOwner, decodedName).catch(
+    listRepositoryBranches(decodedOwner, decodedName).catch(() => ({
+      data: [{ name: repo.default_branch, is_default: true, commit_sha: null }],
+    })),
+    getRepositoryTree(decodedOwner, decodedName, selectedBranch).catch(
       (): RepositoryTree => ({
-        ref_name: repo.default_branch,
+        ref_name: selectedBranch,
         last_commit: null,
         entries: [],
       }),
@@ -62,8 +69,9 @@ export default async function RepoPage({ params, searchParams }: Props) {
   const readme = findReadme(tree.entries);
   const selectedPath = file ?? readme?.path;
   const selectedFile = selectedPath
-    ? await getRepositoryFile(decodedOwner, decodedName, selectedPath).catch(() => null)
+    ? await getRepositoryFile(decodedOwner, decodedName, selectedPath, selectedBranch).catch(() => null)
     : null;
+  const canModifySelectedBranch = selectedBranch === repo.default_branch;
 
   return (
     <div className="grid gap-6">
@@ -77,6 +85,12 @@ export default async function RepoPage({ params, searchParams }: Props) {
           <section>
             <div className="flex flex-wrap items-center justify-between gap-3 rounded-t-md border border-[#d0d7de] bg-[#f6f8fa] px-4 py-3">
               <div className="flex min-w-0 items-center gap-3">
+                <BranchSelector
+                  baseHref={baseHref}
+                  branches={branches.data}
+                  selectedBranch={selectedBranch}
+                  selectedPath={selectedPath}
+                />
                 <AuthorAvatar commit={tree.last_commit} />
                 <div className="min-w-0">
                   <div className="truncate font-semibold">
@@ -88,12 +102,14 @@ export default async function RepoPage({ params, searchParams }: Props) {
                 </div>
               </div>
               <div className="text-xs text-[#59636e]">Created {formatDate(repo.created_at)}</div>
-              <Link className="text-xs font-semibold text-[#0969da] hover:underline" href={`${baseHref}/commits`}>
+              <Link className="text-xs font-semibold text-[#0969da] hover:underline" href={`${baseHref}/commits?branch=${encodeURIComponent(selectedBranch)}`}>
                 View commits
               </Link>
             </div>
             <FileTable
               baseHref={baseHref}
+              canModify={canModifySelectedBranch}
+              branch={selectedBranch}
               name={decodedName}
               entries={tree.entries}
               owner={decodedOwner}
@@ -106,7 +122,7 @@ export default async function RepoPage({ params, searchParams }: Props) {
               <span className="font-semibold">{selectedFile?.path ?? readme?.path ?? "README.md"}</span>
               {selectedFile ? (
                 <div className="flex flex-wrap items-center gap-2">
-                  {!selectedFile.is_binary ? (
+                  {!selectedFile.is_binary && canModifySelectedBranch ? (
                     <Link
                       className="inline-flex rounded-md border border-[#d0d7de] bg-white px-3 py-1.5 text-xs font-semibold text-[#1f2328] hover:border-[#0969da] hover:text-[#0969da]"
                       href={`${baseHref}/edit?file=${encodeURIComponent(selectedFile.path)}`}
@@ -114,13 +130,15 @@ export default async function RepoPage({ params, searchParams }: Props) {
                       Edit
                     </Link>
                   ) : null}
-                  <FileDeleteButton
-                    name={decodedName}
-                    owner={decodedOwner}
-                    path={selectedFile.path}
-                    redirectTo={baseHref}
-                    variant="danger"
-                  />
+                  {canModifySelectedBranch ? (
+                    <FileDeleteButton
+                      name={decodedName}
+                      owner={decodedOwner}
+                      path={selectedFile.path}
+                      redirectTo={baseHref}
+                      variant="danger"
+                    />
+                  ) : null}
                 </div>
               ) : null}
             </div>
@@ -128,7 +146,7 @@ export default async function RepoPage({ params, searchParams }: Props) {
               file={selectedFile}
               rawUrl={
                 selectedFile
-                  ? repositoryRawFileUrl(decodedOwner, decodedName, selectedFile.path)
+                  ? repositoryRawFileUrl(decodedOwner, decodedName, selectedFile.path, selectedBranch)
                   : null
               }
               repo={repo}
@@ -142,7 +160,7 @@ export default async function RepoPage({ params, searchParams }: Props) {
             <h2 className="text-base font-semibold">About</h2>
             <p className="text-[#59636e]">{repo.description || "No description provided."}</p>
             <div className="grid gap-2 border-t border-[#d8dee4] pt-3 text-sm">
-              <RepoFact label="Branch" value={repo.default_branch} />
+              <RepoFact label="Branch" value={selectedBranch} />
               <RepoFact label="Language" value={repo.dominant_language || "Unknown"} />
               <RepoFact label="Stars" value={String(repo.stars_count)} />
               <RepoFact label="Updated" value={formatDate(repo.updated_at)} />
@@ -152,8 +170,8 @@ export default async function RepoPage({ params, searchParams }: Props) {
 
           <section className="grid gap-3 rounded-md border border-[#d0d7de] bg-white p-4">
             <h2 className="text-base font-semibold">Clone</h2>
-            <CloneUrl label="SSH" value={repo.ssh_url} />
-            <CloneUrl label="HTTP" value={repo.http_url} />
+            <CloneUrl label="SSH" value={cloneCommand(repo.ssh_url, selectedBranch)} />
+            <CloneUrl label="HTTP" value={cloneCommand(repo.http_url, selectedBranch)} />
           </section>
 
           <section className="grid gap-3 rounded-md border border-[#d0d7de] bg-white p-4">
@@ -221,12 +239,16 @@ function ForkStatusBanner({
 
 function FileTable({
   baseHref,
+  branch,
+  canModify,
   name,
   entries,
   owner,
   selectedPath,
 }: {
   baseHref: string;
+  branch: string;
+  canModify: boolean;
   name: string;
   entries: RepositoryTreeEntry[];
   owner: string;
@@ -235,7 +257,7 @@ function FileTable({
   if (entries.length === 0) {
     return (
       <div className="rounded-b-md border border-t-0 border-[#d0d7de] bg-white p-4 text-[#59636e]">
-        This repository does not have files on the default branch yet.
+        This repository does not have files on {branch} yet.
       </div>
     );
   }
@@ -260,7 +282,7 @@ function FileTable({
             <div className="flex min-w-0 items-center gap-3">
               <FileIcon entry={entry} />
               {entry.kind === "file" ? (
-                <Link className="truncate font-semibold text-[#0969da] hover:underline" href={`${baseHref}?file=${encodeURIComponent(entry.path)}`}>
+                <Link className="truncate font-semibold text-[#0969da] hover:underline" href={repoBranchHref(baseHref, branch, entry.path)}>
                   {entry.name}
                 </Link>
               ) : (
@@ -271,11 +293,53 @@ function FileTable({
               {entry.last_commit?.message ?? "No commit message"}
             </div>
             <div className="text-[#59636e]">{formatDate(entry.last_commit?.created_at)}</div>
-            <FileDeleteButton name={name} owner={owner} path={entry.path} redirectTo={baseHref} />
+            {canModify ? (
+              <FileDeleteButton name={name} owner={owner} path={entry.path} redirectTo={baseHref} />
+            ) : (
+              <span className="text-xs text-[#59636e]">View only</span>
+            )}
           </div>
         );
       })}
     </div>
+  );
+}
+
+function BranchSelector({
+  baseHref,
+  branches,
+  selectedBranch,
+  selectedPath,
+}: {
+  baseHref: string;
+  branches: RepositoryBranch[];
+  selectedBranch: string;
+  selectedPath?: string;
+}) {
+  return (
+    <details className="relative">
+      <summary className="flex cursor-pointer list-none items-center gap-2 rounded-md border border-[#d0d7de] bg-white px-3 py-1.5 text-sm font-semibold text-[#1f2328] hover:border-[#0969da]">
+        <span>{selectedBranch}</span>
+        <span className="text-xs text-[#59636e]">▼</span>
+      </summary>
+      <div className="absolute left-0 z-20 mt-2 max-h-80 min-w-56 overflow-auto rounded-md border border-[#d0d7de] bg-white py-2 shadow-lg">
+        <div className="border-b border-[#d8dee4] px-3 pb-2 text-xs font-semibold uppercase tracking-wide text-[#59636e]">
+          Switch branches
+        </div>
+        {branches.map((branch) => (
+          <Link
+            className={`block px-3 py-2 text-sm hover:bg-[#f6f8fa] ${
+              branch.name === selectedBranch ? "font-semibold text-[#0969da]" : "text-[#1f2328]"
+            }`}
+            href={repoBranchHref(baseHref, branch.name, selectedPath)}
+            key={branch.name}
+          >
+            {branch.name}
+            {branch.is_default ? <span className="ml-2 text-xs text-[#59636e]">default</span> : null}
+          </Link>
+        ))}
+      </div>
+    </details>
   );
 }
 
@@ -379,6 +443,25 @@ function CloneUrl({ label, value }: { label: string; value: string }) {
       </div>
     </div>
   );
+}
+
+function cloneCommand(url: string, branch: string) {
+  return `git clone --branch ${shellArg(branch)} ${shellArg(url)}`;
+}
+
+function repoBranchHref(baseHref: string, branch: string, file?: string) {
+  const searchParams = new URLSearchParams({ branch });
+  if (file) {
+    searchParams.set("file", file);
+  }
+  return `${baseHref}?${searchParams.toString()}`;
+}
+
+function shellArg(value: string) {
+  if (/^[A-Za-z0-9_./:@-]+$/.test(value)) {
+    return value;
+  }
+  return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
 function findReadme(entries: RepositoryTreeEntry[]) {

@@ -98,6 +98,10 @@ pub(crate) fn router(state: AppState) -> Router {
             get(repositories::list_repo_tree),
         )
         .route(
+            "/repos/{owner}/{name}/branches",
+            get(repositories::list_repo_branches),
+        )
+        .route(
             "/repos/{owner}/{name}/contents",
             get(repositories::get_repo_file)
                 .put(repositories::update_repo_file)

@@ -16,6 +16,7 @@ pub(crate) async fn create_bare_repo(path: &PathBuf) -> ApiResult<()> {
     let output = Command::new("git")
         .arg("init")
         .arg("--bare")
+        .arg("--initial-branch=main")
         .arg(path)
         .output()
         .await?;
@@ -27,9 +28,57 @@ pub(crate) async fn create_bare_repo(path: &PathBuf) -> ApiResult<()> {
     Ok(())
 }
 
+pub(crate) async fn list_branches(repo: &Repository) -> ApiResult<Vec<RepositoryBranchResponse>> {
+    let output = try_run_git_command(
+        repo,
+        &[
+            "for-each-ref".to_string(),
+            "--format=%(refname:short)%00%(objectname)".to_string(),
+            "refs/heads".to_string(),
+        ],
+    )
+    .await?;
+    let mut branches = output
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|line| parse_branch_line(line, &repo.default_branch))
+        .collect::<Vec<_>>();
+
+    if branches.is_empty() {
+        branches.push(RepositoryBranchResponse {
+            name: repo.default_branch.clone(),
+            is_default: true,
+            commit_sha: None,
+        });
+    }
+
+    branches.sort_by(|left, right| {
+        right
+            .is_default
+            .cmp(&left.is_default)
+            .then_with(|| left.name.cmp(&right.name))
+    });
+    Ok(branches)
+}
+
 pub(crate) enum RepoFileChange {
     Delete,
     Write(String),
+}
+
+fn parse_branch_line(line: &str, default_branch: &str) -> Option<RepositoryBranchResponse> {
+    let mut parts = line.split('\0');
+    let name = parts.next()?.trim();
+    let commit_sha = parts.next()?.trim();
+    if name.is_empty() || commit_sha.is_empty() {
+        return None;
+    }
+
+    Some(RepositoryBranchResponse {
+        name: name.to_string(),
+        is_default: name == default_branch,
+        commit_sha: Some(commit_sha.to_string()),
+    })
 }
 
 pub(crate) async fn repo_file_response(
@@ -904,5 +953,16 @@ index 1111111..2222222 100644
         assert_eq!(files[0].deletions, 1);
         assert_eq!(files[0].hunks[0].lines[1].kind, "deletion");
         assert_eq!(files[0].hunks[0].lines[2].kind, "addition");
+    }
+
+    #[test]
+    fn parses_branch_refs() {
+        let branch = parse_branch_line("feature/test\0abc123", "main").unwrap();
+        assert_eq!(branch.name, "feature/test");
+        assert!(!branch.is_default);
+        assert_eq!(branch.commit_sha.as_deref(), Some("abc123"));
+
+        let default_branch = parse_branch_line("main\0def456", "main").unwrap();
+        assert!(default_branch.is_default);
     }
 }

@@ -111,6 +111,12 @@ export type RepositoryCommit = {
   created_at: string;
 };
 
+export type RepositoryBranch = {
+  name: string;
+  is_default: boolean;
+  commit_sha: string | null;
+};
+
 export type RepositoryDiffLine = {
   kind: "addition" | "deletion" | "context";
   old_line: number | null;
@@ -244,6 +250,12 @@ export function getRepositoryTree(owner: string, name: string, refName?: string)
   const query = searchParams.toString();
   return apiFetch<RepositoryTree>(
     `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/tree${query ? `?${query}` : ""}`,
+  );
+}
+
+export function listRepositoryBranches(owner: string, name: string) {
+  return apiFetch<Collection<RepositoryBranch>>(
+    `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/branches`,
   );
 }
 
