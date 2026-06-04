@@ -5,11 +5,12 @@ import type { Repository } from "@/lib/api";
 
 type RepoHeaderProps = {
   activeTab: "actions" | "code" | "issues" | "pull-requests" | "settings";
+  issuesCount?: number;
   pullRequestsCount?: number;
   repo: Repository;
 };
 
-export function RepoHeader({ activeTab, pullRequestsCount = 0, repo }: RepoHeaderProps) {
+export function RepoHeader({ activeTab, issuesCount = 0, pullRequestsCount = 0, repo }: RepoHeaderProps) {
   const ownerProfile = repoOwnerProfile(repo);
   const baseHref = repoHref(repo.owner_handle, repo.name);
 
@@ -22,7 +23,9 @@ export function RepoHeader({ activeTab, pullRequestsCount = 0, repo }: RepoHeade
               {ownerProfile.handle}
             </Link>
             <span className="text-[#59636e]">/</span>
-            <h1 className="min-w-0 break-all text-xl font-semibold text-[#0969da]">{repo.name}</h1>
+            <Link className="min-w-0 break-all text-xl font-semibold text-[#0969da] hover:underline" href={baseHref}>
+              {repo.name}
+            </Link>
             <span className="rounded-full border border-[#d0d7de] px-2 py-0.5 text-xs font-semibold text-[#59636e]">
               {repo.visibility}
             </span>
@@ -40,7 +43,7 @@ export function RepoHeader({ activeTab, pullRequestsCount = 0, repo }: RepoHeade
 
       <nav aria-label="Repository" className="flex gap-1 overflow-x-auto">
         <RepoTab active={activeTab === "code"} href={baseHref} label="Code" />
-        <RepoTab active={activeTab === "issues"} href={`${baseHref}/issues`} label="Issues" count={0} />
+        <RepoTab active={activeTab === "issues"} href={`${baseHref}/issues`} label="Issues" count={issuesCount} />
         <RepoTab
           active={activeTab === "pull-requests"}
           href={`${baseHref}/pull-requests`}

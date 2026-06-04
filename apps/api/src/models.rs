@@ -241,6 +241,56 @@ pub(crate) struct PullRequest {
 }
 
 #[derive(Debug, Serialize, Deserialize, FromRow)]
+pub(crate) struct Issue {
+    pub(crate) id: Uuid,
+    pub(crate) repository_id: Uuid,
+    pub(crate) number: i32,
+    pub(crate) title: String,
+    pub(crate) body: String,
+    pub(crate) author_handle: String,
+    pub(crate) author_actor_url: Option<String>,
+    pub(crate) author_display_name: String,
+    pub(crate) author_avatar_url: Option<String>,
+    pub(crate) remote_server: Option<String>,
+    pub(crate) remote_url: Option<String>,
+    pub(crate) status: String,
+    pub(crate) activity_id: Option<String>,
+    pub(crate) created_at: DateTime<Utc>,
+    pub(crate) updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize, Deserialize, FromRow)]
+pub(crate) struct IssueComment {
+    pub(crate) id: Uuid,
+    pub(crate) repository_id: Option<Uuid>,
+    pub(crate) pull_request_id: Option<Uuid>,
+    pub(crate) issue_id: Option<Uuid>,
+    pub(crate) author_handle: String,
+    pub(crate) author_actor_url: Option<String>,
+    pub(crate) author_display_name: String,
+    pub(crate) author_avatar_url: Option<String>,
+    pub(crate) remote_server: Option<String>,
+    pub(crate) body: String,
+    pub(crate) activity_id: Option<String>,
+    pub(crate) created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct Pagination {
+    pub(crate) page: i64,
+    pub(crate) limit: i64,
+    pub(crate) total: i64,
+    #[serde(rename = "totalPages")]
+    pub(crate) total_pages: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct PaginatedResponse<T> {
+    pub(crate) data: Vec<T>,
+    pub(crate) pagination: Pagination,
+}
+
+#[derive(Debug, Serialize, Deserialize, FromRow)]
 pub(crate) struct ServerPolicy {
     pub(crate) id: Uuid,
     pub(crate) host: String,
@@ -515,6 +565,24 @@ pub(crate) struct CreatePullRequestRequest {
 }
 
 #[derive(Debug, Deserialize)]
+pub(crate) struct CreateIssueRequest {
+    pub(crate) title: String,
+    pub(crate) body: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct UpdateIssueRequest {
+    pub(crate) title: Option<String>,
+    pub(crate) body: Option<String>,
+    pub(crate) status: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct CreateIssueCommentRequest {
+    pub(crate) body: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub(crate) struct UpdateRepoFileRequest {
     pub(crate) content: String,
     pub(crate) message: Option<String>,
@@ -545,6 +613,13 @@ pub(crate) struct CommitListQuery {
     #[serde(rename = "ref")]
     pub(crate) ref_name: Option<String>,
     pub(crate) limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct IssueListQuery {
+    pub(crate) page: Option<i64>,
+    pub(crate) limit: Option<i64>,
+    pub(crate) status: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

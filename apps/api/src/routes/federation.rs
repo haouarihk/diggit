@@ -98,7 +98,9 @@ pub(crate) async fn inbox(
             accept_repository_fork(&state, &activity, &remote_server).await?
         }
         ("Offer", "PullRequest") => accept_pull_request(&state, &activity).await?,
-        ("Create", "Note") => accept_comment(&state, &activity).await?,
+        ("Create", "Issue") => accept_issue(&state, &activity, &remote_server).await?,
+        ("Update", "Issue") => accept_issue_update(&state, &activity).await?,
+        ("Create", "Note") => accept_issue_comment(&state, &activity, &remote_server).await?,
         _ => warn!("accepted unsupported activity type for audit only"),
     }
 
@@ -247,24 +249,205 @@ pub(crate) async fn accept_pull_request(state: &AppState, activity: &Activity) -
     Ok(())
 }
 
-pub(crate) async fn accept_comment(state: &AppState, activity: &Activity) -> ApiResult<()> {
+pub(crate) async fn accept_issue(
+    state: &AppState,
+    activity: &Activity,
+    remote_server: &str,
+) -> ApiResult<()> {
+    let target_url = activity
+        .object
+        .get("target")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ApiError::BadRequest("issue target is required".to_string()))?;
+    let target_url = validate_remote_url(target_url)?.to_string();
+    let target = find_repo_by_activity_url(&state.pool, &target_url)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    let title = activity
+        .object
+        .get("title")
+        .and_then(Value::as_str)
+        .or_else(|| activity.object.get("name").and_then(Value::as_str))
+        .unwrap_or("Federated issue")
+        .trim();
+    if title.is_empty() {
+        return Err(ApiError::BadRequest("issue title is required".to_string()));
+    }
+    let remote_url = activity
+        .object
+        .get("id")
+        .and_then(Value::as_str)
+        .map(validate_remote_url)
+        .transpose()?
+        .map(|url| url.to_string());
+    if let Some(remote_url) = remote_url.as_deref() {
+        let existing: Option<(Uuid,)> =
+            sqlx::query_as("SELECT id FROM issues WHERE remote_url = $1")
+                .bind(remote_url)
+                .fetch_optional(&state.pool)
+                .await?;
+        if existing.is_some() {
+            return Ok(());
+        }
+    }
+
+    sqlx::query(
+        r#"
+        INSERT INTO issues
+          (id, repository_id, number, title, body, author_handle, author_actor_url,
+           author_display_name, author_avatar_url, remote_server, remote_url, status, activity_id)
+        SELECT $1, $2, COALESCE(MAX(number), 0) + 1, $3, $4, $5, $6, $7, $8, $9, $10, 'open', $11
+        FROM issues
+        WHERE repository_id = $2
+        ON CONFLICT (activity_id) DO NOTHING
+        "#,
+    )
+    .bind(Uuid::now_v7())
+    .bind(target.id)
+    .bind(title)
+    .bind(
+        activity
+            .object
+            .get("body")
+            .and_then(Value::as_str)
+            .unwrap_or(""),
+    )
+    .bind(&activity.actor)
+    .bind(&activity.actor)
+    .bind(
+        activity
+            .object
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or(&activity.actor),
+    )
+    .bind(activity.object.get("icon").and_then(Value::as_str))
+    .bind(remote_server)
+    .bind(remote_url)
+    .bind(activity_id(activity))
+    .execute(&state.pool)
+    .await?;
+    Ok(())
+}
+
+pub(crate) async fn accept_issue_update(state: &AppState, activity: &Activity) -> ApiResult<()> {
+    let issue_url = activity
+        .object
+        .get("id")
+        .and_then(Value::as_str)
+        .or_else(|| activity.object.get("target").and_then(Value::as_str))
+        .ok_or_else(|| ApiError::BadRequest("issue id is required".to_string()))?;
+    let issue = find_issue_by_url(state, issue_url)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    if issue.author_actor_url.as_deref() != Some(activity.actor.as_str()) {
+        return Err(ApiError::Unauthorized);
+    }
+    let status = activity
+        .object
+        .get("status")
+        .and_then(Value::as_str)
+        .filter(|status| matches!(*status, "open" | "closed"));
+
+    sqlx::query(
+        r#"
+        UPDATE issues
+        SET title = COALESCE($2, title),
+            body = COALESCE($3, body),
+            status = COALESCE($4, status),
+            updated_at = now()
+        WHERE id = $1
+        "#,
+    )
+    .bind(issue.id)
+    .bind(activity.object.get("title").and_then(Value::as_str))
+    .bind(activity.object.get("body").and_then(Value::as_str))
+    .bind(status)
+    .execute(&state.pool)
+    .await?;
+    Ok(())
+}
+
+pub(crate) async fn accept_issue_comment(
+    state: &AppState,
+    activity: &Activity,
+    remote_server: &str,
+) -> ApiResult<()> {
     let body = activity
         .object
         .get("content")
         .and_then(Value::as_str)
         .ok_or_else(|| ApiError::BadRequest("note content is required".to_string()))?;
+    let target_url = activity
+        .object
+        .get("target")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ApiError::BadRequest("note target is required".to_string()))?;
+    let issue = find_issue_by_url(state, target_url)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+
     sqlx::query(
         r#"
-        INSERT INTO comments (id, author_handle, body, activity_id)
-        VALUES ($1, $2, $3, $4)
+        INSERT INTO comments
+          (id, repository_id, issue_id, author_handle, author_actor_url,
+           author_display_name, author_avatar_url, remote_server, body, activity_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
         ON CONFLICT (activity_id) DO NOTHING
         "#,
     )
     .bind(Uuid::now_v7())
+    .bind(issue.repository_id)
+    .bind(issue.id)
     .bind(&activity.actor)
+    .bind(&activity.actor)
+    .bind(
+        activity
+            .object
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or(&activity.actor),
+    )
+    .bind(activity.object.get("icon").and_then(Value::as_str))
+    .bind(remote_server)
     .bind(body)
     .bind(activity_id(activity))
     .execute(&state.pool)
     .await?;
     Ok(())
+}
+
+async fn find_issue_by_url(state: &AppState, issue_url: &str) -> ApiResult<Option<Issue>> {
+    let issue_url = validate_remote_url(issue_url)?.to_string();
+    let stored = sqlx::query_as::<_, Issue>("SELECT * FROM issues WHERE remote_url = $1")
+        .bind(&issue_url)
+        .fetch_optional(&state.pool)
+        .await?;
+    if stored.is_some() {
+        return Ok(stored);
+    }
+
+    let url = reqwest::Url::parse(&issue_url)
+        .map_err(|_| ApiError::BadRequest("issue URL must be absolute".to_string()))?;
+    let segments: Vec<&str> = url
+        .path_segments()
+        .map(|segments| segments.filter(|segment| !segment.is_empty()).collect())
+        .unwrap_or_default();
+    if segments.len() < 4 || segments[segments.len() - 2] != "issues" {
+        return Ok(None);
+    }
+    let number = segments[segments.len() - 1]
+        .parse::<i32>()
+        .map_err(|_| ApiError::BadRequest("issue number is invalid".to_string()))?;
+    let owner = segments[segments.len() - 4];
+    let name = segments[segments.len() - 3];
+    let repo = find_repo(&state.pool, owner, name).await?;
+
+    Ok(
+        sqlx::query_as::<_, Issue>("SELECT * FROM issues WHERE repository_id = $1 AND number = $2")
+            .bind(repo.id)
+            .bind(number)
+            .fetch_optional(&state.pool)
+            .await?,
+    )
 }

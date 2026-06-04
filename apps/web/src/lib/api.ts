@@ -102,6 +102,39 @@ export type PullRequest = {
   created_at: string;
 };
 
+export type Issue = {
+  id: string;
+  repository_id: string;
+  number: number;
+  title: string;
+  body: string;
+  author_handle: string;
+  author_actor_url: string | null;
+  author_display_name: string;
+  author_avatar_url: string | null;
+  remote_server: string | null;
+  remote_url: string | null;
+  status: "open" | "closed";
+  activity_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type IssueComment = {
+  id: string;
+  repository_id: string | null;
+  pull_request_id: string | null;
+  issue_id: string | null;
+  author_handle: string;
+  author_actor_url: string | null;
+  author_display_name: string;
+  author_avatar_url: string | null;
+  remote_server: string | null;
+  body: string;
+  activity_id: string | null;
+  created_at: string;
+};
+
 export type RepositoryCommit = {
   sha: string;
   message: string;
@@ -203,6 +236,15 @@ type Collection<T> = {
   data: T[];
 };
 
+export type PaginatedCollection<T> = Collection<T> & {
+  pagination: {
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
+  };
+};
+
 export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_URL}${path}`, {
     ...init,
@@ -283,6 +325,38 @@ export function listCommits(owner: string, name: string, refName?: string) {
 export function getCommit(owner: string, name: string, sha: string) {
   return apiFetch<RepositoryCommitDetail>(
     `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/commits/${encodeURIComponent(sha)}`,
+  );
+}
+
+export function listRepositoryIssues(
+  owner: string,
+  name: string,
+  params?: { page?: number; limit?: number; status?: "open" | "closed" | "all" },
+) {
+  const searchParams = new URLSearchParams();
+  if (params?.page) {
+    searchParams.set("page", String(params.page));
+  }
+  if (params?.limit) {
+    searchParams.set("limit", String(params.limit));
+  }
+  if (params?.status) {
+    searchParams.set("status", params.status);
+  }
+  const query = searchParams.toString();
+  return apiFetch<PaginatedCollection<Issue>>(
+    `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/issues${query ? `?${query}` : ""}`,
+  );
+}
+
+export function getRepositoryIssue(owner: string, name: string, number: number) {
+  return apiFetch<Issue>(`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/issues/${number}`);
+}
+
+export function listRepositoryIssueComments(owner: string, name: string, number: number, page = 1, limit = 100) {
+  const searchParams = new URLSearchParams({ page: String(page), limit: String(limit) });
+  return apiFetch<PaginatedCollection<IssueComment>>(
+    `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/issues/${number}/comments?${searchParams.toString()}`,
   );
 }
 

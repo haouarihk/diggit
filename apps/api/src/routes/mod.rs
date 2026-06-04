@@ -1,7 +1,7 @@
 use axum::{
     Router,
     routing::delete,
-    routing::{get, post},
+    routing::{get, patch, post},
 };
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 
@@ -137,6 +137,18 @@ pub(crate) fn router(state: AppState) -> Router {
             get(repositories::list_pull_requests).post(repositories::create_pull_request),
         )
         .route(
+            "/repos/{owner}/{name}/issues",
+            get(repositories::list_issues).post(repositories::create_issue),
+        )
+        .route(
+            "/repos/{owner}/{name}/issues/{number}",
+            get(repositories::get_issue).patch(repositories::update_issue),
+        )
+        .route(
+            "/repos/{owner}/{name}/issues/{number}/comments",
+            get(repositories::list_issue_comments).post(repositories::create_issue_comment),
+        )
+        .route(
             "/servers",
             get(admin::list_servers).post(admin::upsert_server),
         )
@@ -150,6 +162,18 @@ pub(crate) fn router(state: AppState) -> Router {
         .route(
             "/{owner}/{name}/pull-requests",
             get(repositories::list_pull_requests).post(repositories::create_pull_request),
+        )
+        .route(
+            "/{owner}/{name}/issues",
+            get(repositories::list_issues).post(repositories::create_issue),
+        )
+        .route(
+            "/{owner}/{name}/issues/{number}",
+            get(repositories::get_issue).patch(repositories::update_issue),
+        )
+        .route(
+            "/{owner}/{name}/issues/{number}/comments",
+            get(repositories::list_issue_comments).post(repositories::create_issue_comment),
         )
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())

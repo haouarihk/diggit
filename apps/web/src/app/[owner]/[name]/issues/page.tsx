@@ -1,31 +1,68 @@
 import { RepoHeader, repoHref } from "@/components/RepoHeader";
-import { apiFetch, type PullRequest, type Repository } from "@/lib/api";
+import { RepositoryIssuesPanel } from "@/components/RepositoryIssuesPanel";
+import { apiFetch, listRepositoryIssues, type Issue, type PullRequest, type Repository } from "@/lib/api";
 
 type Props = {
   params: Promise<{
     owner: string;
     name: string;
   }>;
+  searchParams: Promise<{
+    page?: string;
+    status?: string;
+  }>;
 };
 
-export default async function RepositoryIssuesPage({ params }: Props) {
+export default async function RepositoryIssuesPage({ params, searchParams }: Props) {
   const { owner, name } = await params;
+  const { page, status: rawStatus } = await searchParams;
   const decodedOwner = decodeURIComponent(owner);
   const decodedName = decodeURIComponent(name);
   const baseHref = repoHref(decodedOwner, decodedName);
-  const [repo, pullRequests] = await Promise.all([
+  const status = issueStatus(rawStatus);
+  const selectedPage = Number.parseInt(page ?? "1", 10) || 1;
+  const [repo, pullRequests, issues, issueCount] = await Promise.all([
     apiFetch<Repository>(baseHref),
     apiFetch<{ data: PullRequest[] }>(`${baseHref}/pull-requests`).catch(() => ({ data: [] })),
+    listRepositoryIssues(decodedOwner, decodedName, { page: selectedPage, limit: 25, status }).catch(
+      () => emptyIssues(selectedPage),
+    ),
+    listRepositoryIssues(decodedOwner, decodedName, { page: 1, limit: 1, status: "open" }).catch(() => emptyIssues(1)),
   ]);
 
   return (
     <div className="grid gap-6">
-      <RepoHeader activeTab="issues" pullRequestsCount={pullRequests.data.length} repo={repo} />
+      <RepoHeader
+        activeTab="issues"
+        issuesCount={issueCount.pagination.total}
+        pullRequestsCount={pullRequests.data.length}
+        repo={repo}
+      />
 
-      <section className="rounded-md border border-[#d0d7de] bg-white p-6 text-center">
-        <h2 className="text-lg font-semibold">Issues are not available yet</h2>
-        <p className="mt-2 text-[#59636e]">This page is ready for repository issue tracking when the API supports it.</p>
-      </section>
+      <RepositoryIssuesPanel
+        baseHref={baseHref}
+        issues={issues.data}
+        name={decodedName}
+        owner={decodedOwner}
+        pagination={issues.pagination}
+        status={status}
+      />
     </div>
   );
+}
+
+function issueStatus(value?: string): "open" | "closed" | "all" {
+  return value === "closed" || value === "all" ? value : "open";
+}
+
+function emptyIssues(page: number) {
+  return {
+    data: [] as Issue[],
+    pagination: {
+      page,
+      limit: 25,
+      total: 0,
+      totalPages: 0,
+    },
+  };
 }

@@ -667,3 +667,463 @@ pub(crate) async fn list_pull_requests(
     .await?;
     Ok(Json(json!({ "data": prs })))
 }
+
+pub(crate) async fn list_issues(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((owner, name)): Path<(String, String)>,
+    Query(query): Query<IssueListQuery>,
+) -> ApiResult<Json<PaginatedResponse<Issue>>> {
+    let auth = optional_auth(&state, &headers)?;
+    let repo = find_repo(&state.pool, &owner, &name).await?;
+    ensure_repo_visible(&state.pool, auth.as_ref(), &repo).await?;
+    let (page, limit, offset) = pagination_input(query.page, query.limit);
+    let status = normalize_issue_status_filter(query.status)?;
+    let total = issue_count(&state, repo.id, status.as_deref()).await?;
+    let issues = sqlx::query_as::<_, Issue>(
+        r#"
+        SELECT *
+        FROM issues
+        WHERE repository_id = $1 AND ($2::TEXT IS NULL OR status = $2)
+        ORDER BY created_at DESC
+        LIMIT $3 OFFSET $4
+        "#,
+    )
+    .bind(repo.id)
+    .bind(status)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(&state.pool)
+    .await?;
+
+    Ok(Json(PaginatedResponse {
+        data: issues,
+        pagination: pagination(page, limit, total),
+    }))
+}
+
+pub(crate) async fn create_issue(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((owner, name)): Path<(String, String)>,
+    Json(input): Json<CreateIssueRequest>,
+) -> ApiResult<Json<Issue>> {
+    let auth = require_repo_action_auth(&state, &headers, "repo:issue")?;
+    let repo = find_repo(&state.pool, &owner, &name).await?;
+    ensure_repo_action_visible(&state.pool, &auth, &repo).await?;
+    let title = validate_issue_title(&input.title)?;
+    let author = issue_author(&state, &auth).await?;
+    let activity_id = format!(
+        "{}/activities/{}",
+        state.config.app_base_url.trim_end_matches('/'),
+        Uuid::now_v7()
+    );
+
+    let issue = sqlx::query_as::<_, Issue>(
+        r#"
+        INSERT INTO issues
+          (id, repository_id, number, title, body, author_handle, author_actor_url,
+           author_display_name, author_avatar_url, remote_server, status, activity_id)
+        SELECT $1, $2, COALESCE(MAX(number), 0) + 1, $3, $4, $5, $6, $7, $8, $9, 'open', $10
+        FROM issues
+        WHERE repository_id = $2
+        RETURNING *
+        "#,
+    )
+    .bind(Uuid::now_v7())
+    .bind(repo.id)
+    .bind(title)
+    .bind(input.body.unwrap_or_default())
+    .bind(author.handle)
+    .bind(author.actor_url)
+    .bind(author.display_name)
+    .bind(author.avatar_url)
+    .bind(author.remote_server)
+    .bind(&activity_id)
+    .fetch_one(&state.pool)
+    .await?;
+
+    deliver_issue_activity(&state, &repo, &issue, &activity_id, "Create").await?;
+    Ok(Json(issue))
+}
+
+pub(crate) async fn get_issue(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((owner, name, number)): Path<(String, String, i32)>,
+) -> ApiResult<Json<Issue>> {
+    let auth = optional_auth(&state, &headers)?;
+    let repo = find_repo(&state.pool, &owner, &name).await?;
+    ensure_repo_visible(&state.pool, auth.as_ref(), &repo).await?;
+    Ok(Json(find_issue(&state, repo.id, number).await?))
+}
+
+pub(crate) async fn update_issue(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((owner, name, number)): Path<(String, String, i32)>,
+    Json(input): Json<UpdateIssueRequest>,
+) -> ApiResult<Json<Issue>> {
+    let auth = require_repo_action_auth(&state, &headers, "repo:issue")?;
+    let repo = find_repo(&state.pool, &owner, &name).await?;
+    ensure_repo_action_visible(&state.pool, &auth, &repo).await?;
+    let current = find_issue(&state, repo.id, number).await?;
+    ensure_issue_updatable(&state, &repo, &current, &auth).await?;
+    let title = match input.title {
+        Some(title) => Some(validate_issue_title(&title)?),
+        None => None,
+    };
+    let status = match input.status {
+        Some(status) => Some(normalize_issue_status(&status)?),
+        None => None,
+    };
+
+    let issue = sqlx::query_as::<_, Issue>(
+        r#"
+        UPDATE issues
+        SET title = COALESCE($3, title),
+            body = COALESCE($4, body),
+            status = COALESCE($5, status),
+            updated_at = now()
+        WHERE repository_id = $1 AND number = $2
+        RETURNING *
+        "#,
+    )
+    .bind(repo.id)
+    .bind(number)
+    .bind(title)
+    .bind(input.body)
+    .bind(status)
+    .fetch_one(&state.pool)
+    .await?;
+
+    let activity_id = format!(
+        "{}/activities/{}",
+        state.config.app_base_url.trim_end_matches('/'),
+        Uuid::now_v7()
+    );
+    deliver_issue_activity(&state, &repo, &issue, &activity_id, "Update").await?;
+    Ok(Json(issue))
+}
+
+pub(crate) async fn list_issue_comments(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((owner, name, number)): Path<(String, String, i32)>,
+    Query(query): Query<IssueListQuery>,
+) -> ApiResult<Json<PaginatedResponse<IssueComment>>> {
+    let auth = optional_auth(&state, &headers)?;
+    let repo = find_repo(&state.pool, &owner, &name).await?;
+    ensure_repo_visible(&state.pool, auth.as_ref(), &repo).await?;
+    let issue = find_issue(&state, repo.id, number).await?;
+    let (page, limit, offset) = pagination_input(query.page, query.limit);
+    let total: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM comments WHERE issue_id = $1")
+        .bind(issue.id)
+        .fetch_one(&state.pool)
+        .await?;
+    let comments = sqlx::query_as::<_, IssueComment>(
+        r#"
+        SELECT *
+        FROM comments
+        WHERE issue_id = $1
+        ORDER BY created_at ASC
+        LIMIT $2 OFFSET $3
+        "#,
+    )
+    .bind(issue.id)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(&state.pool)
+    .await?;
+
+    Ok(Json(PaginatedResponse {
+        data: comments,
+        pagination: pagination(page, limit, total.0),
+    }))
+}
+
+pub(crate) async fn create_issue_comment(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((owner, name, number)): Path<(String, String, i32)>,
+    Json(input): Json<CreateIssueCommentRequest>,
+) -> ApiResult<Json<IssueComment>> {
+    let auth = require_repo_action_auth(&state, &headers, "repo:comment")?;
+    let repo = find_repo(&state.pool, &owner, &name).await?;
+    ensure_repo_action_visible(&state.pool, &auth, &repo).await?;
+    let issue = find_issue(&state, repo.id, number).await?;
+    let body = validate_comment_body(&input.body)?;
+    let author = issue_author(&state, &auth).await?;
+    let activity_id = format!(
+        "{}/activities/{}",
+        state.config.app_base_url.trim_end_matches('/'),
+        Uuid::now_v7()
+    );
+
+    let comment = sqlx::query_as::<_, IssueComment>(
+        r#"
+        INSERT INTO comments
+          (id, repository_id, issue_id, author_handle, author_actor_url,
+           author_display_name, author_avatar_url, remote_server, body, activity_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        RETURNING *
+        "#,
+    )
+    .bind(Uuid::now_v7())
+    .bind(repo.id)
+    .bind(issue.id)
+    .bind(author.handle)
+    .bind(author.actor_url)
+    .bind(author.display_name)
+    .bind(author.avatar_url)
+    .bind(author.remote_server)
+    .bind(body)
+    .bind(&activity_id)
+    .fetch_one(&state.pool)
+    .await?;
+
+    deliver_issue_comment_activity(&state, &repo, &issue, &comment, &activity_id).await?;
+    Ok(Json(comment))
+}
+
+struct IssueAuthor {
+    handle: String,
+    actor_url: Option<String>,
+    display_name: String,
+    avatar_url: Option<String>,
+    remote_server: Option<String>,
+}
+
+async fn issue_author(state: &AppState, auth: &RepoActionAuth) -> ApiResult<IssueAuthor> {
+    match auth {
+        RepoActionAuth::Local(auth) => {
+            let user = get_user_by_id(&state.pool, auth.id).await?;
+            Ok(IssueAuthor {
+                handle: local_handle(&user.username, &state.config),
+                actor_url: Some(user.actor_url),
+                display_name: user.display_name,
+                avatar_url: user.avatar_url,
+                remote_server: None,
+            })
+        }
+        RepoActionAuth::Federated(auth) => Ok(IssueAuthor {
+            handle: format!(
+                "{}@{}",
+                auth.username,
+                auth.home_server
+                    .trim_start_matches("https://")
+                    .trim_start_matches("http://")
+            ),
+            actor_url: Some(auth.actor_url.clone()),
+            display_name: auth.display_name.clone(),
+            avatar_url: auth.avatar_url.clone(),
+            remote_server: Some(auth.home_server.clone()),
+        }),
+    }
+}
+
+fn pagination_input(page: Option<i64>, limit: Option<i64>) -> (i64, i64, i64) {
+    let page = page.unwrap_or(1).max(1);
+    let limit = limit.unwrap_or(25).clamp(1, 100);
+    let offset = (page - 1) * limit;
+    (page, limit, offset)
+}
+
+fn pagination(page: i64, limit: i64, total: i64) -> Pagination {
+    Pagination {
+        page,
+        limit,
+        total,
+        total_pages: if total == 0 {
+            0
+        } else {
+            (total + limit - 1) / limit
+        },
+    }
+}
+
+async fn issue_count(
+    state: &AppState,
+    repository_id: Uuid,
+    status: Option<&str>,
+) -> ApiResult<i64> {
+    let total: (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM issues WHERE repository_id = $1 AND ($2::TEXT IS NULL OR status = $2)",
+    )
+    .bind(repository_id)
+    .bind(status)
+    .fetch_one(&state.pool)
+    .await?;
+    Ok(total.0)
+}
+
+fn normalize_issue_status_filter(status: Option<String>) -> ApiResult<Option<String>> {
+    match status
+        .as_deref()
+        .map(str::trim)
+        .filter(|status| !status.is_empty())
+    {
+        Some("all") => Ok(None),
+        Some(status) => Ok(Some(normalize_issue_status(status)?)),
+        None => Ok(Some("open".to_string())),
+    }
+}
+
+fn normalize_issue_status(status: &str) -> ApiResult<String> {
+    match status.trim() {
+        "open" => Ok("open".to_string()),
+        "closed" => Ok("closed".to_string()),
+        _ => Err(ApiError::BadRequest("invalid issue status".to_string())),
+    }
+}
+
+fn validate_issue_title(title: &str) -> ApiResult<String> {
+    let title = title.trim();
+    if title.is_empty() {
+        return Err(ApiError::BadRequest("issue title is required".to_string()));
+    }
+    Ok(title.to_string())
+}
+
+fn validate_comment_body(body: &str) -> ApiResult<String> {
+    let body = body.trim();
+    if body.is_empty() {
+        return Err(ApiError::BadRequest("comment body is required".to_string()));
+    }
+    Ok(body.to_string())
+}
+
+async fn find_issue(state: &AppState, repository_id: Uuid, number: i32) -> ApiResult<Issue> {
+    Ok(
+        sqlx::query_as::<_, Issue>("SELECT * FROM issues WHERE repository_id = $1 AND number = $2")
+            .bind(repository_id)
+            .bind(number)
+            .fetch_one(&state.pool)
+            .await?,
+    )
+}
+
+async fn ensure_issue_updatable(
+    state: &AppState,
+    repo: &Repository,
+    issue: &Issue,
+    auth: &RepoActionAuth,
+) -> ApiResult<()> {
+    match auth {
+        RepoActionAuth::Local(auth) => {
+            if resolve_writable_namespace(&state.pool, auth, &repo.owner_handle)
+                .await
+                .is_ok()
+            {
+                return Ok(());
+            }
+            let actor_url = state.config.actor_url(&auth.username);
+            if issue.author_actor_url.as_deref() == Some(actor_url.as_str()) {
+                return Ok(());
+            }
+        }
+        RepoActionAuth::Federated(auth) => {
+            if issue.author_actor_url.as_deref() == Some(auth.actor_url.as_str()) {
+                return Ok(());
+            }
+        }
+    }
+    Err(ApiError::Unauthorized)
+}
+
+async fn deliver_issue_activity(
+    state: &AppState,
+    repo: &Repository,
+    issue: &Issue,
+    activity_id: &str,
+    activity_type: &str,
+) -> ApiResult<()> {
+    let actor = issue
+        .author_actor_url
+        .as_deref()
+        .unwrap_or(&issue.author_handle);
+    let activity = json!({
+        "@context": "https://www.w3.org/ns/activitystreams",
+        "id": activity_id,
+        "type": activity_type,
+        "actor": actor,
+        "object": {
+            "type": "Issue",
+            "id": issue_activity_url(&state.config, repo, issue.number),
+            "target": repo_activity_url(&state.config, repo),
+            "number": issue.number,
+            "title": issue.title,
+            "body": issue.body,
+            "status": issue.status,
+            "attributedTo": actor,
+            "name": issue.author_display_name,
+            "icon": issue.author_avatar_url
+        }
+    });
+    record_activity(
+        &state.pool,
+        "outbound",
+        repo.remote_server.as_deref(),
+        &activity,
+        "queued",
+    )
+    .await?;
+    if let Some(remote_url) = repo.remote_url.as_deref() {
+        deliver_activity(state, remote_url, &activity).await;
+    }
+    Ok(())
+}
+
+async fn deliver_issue_comment_activity(
+    state: &AppState,
+    repo: &Repository,
+    issue: &Issue,
+    comment: &IssueComment,
+    activity_id: &str,
+) -> ApiResult<()> {
+    let actor = comment
+        .author_actor_url
+        .as_deref()
+        .unwrap_or(&comment.author_handle);
+    let activity = json!({
+        "@context": "https://www.w3.org/ns/activitystreams",
+        "id": activity_id,
+        "type": "Create",
+        "actor": actor,
+        "object": {
+            "type": "Note",
+            "id": format!("{}/comments/{}", issue_activity_url(&state.config, repo, issue.number), comment.id),
+            "target": issue_activity_url(&state.config, repo, issue.number),
+            "content": comment.body,
+            "attributedTo": actor,
+            "name": comment.author_display_name,
+            "icon": comment.author_avatar_url
+        }
+    });
+    record_activity(
+        &state.pool,
+        "outbound",
+        repo.remote_server.as_deref(),
+        &activity,
+        "queued",
+    )
+    .await?;
+    if let Some(remote_url) = repo.remote_url.as_deref() {
+        deliver_activity(state, remote_url, &activity).await;
+    }
+    Ok(())
+}
+
+pub(crate) fn issue_activity_url(
+    config: &crate::config::Config,
+    repo: &Repository,
+    number: i32,
+) -> String {
+    format!(
+        "{}/{}/{}/issues/{}",
+        config.app_base_url.trim_end_matches('/'),
+        repo.owner_handle,
+        repo.name,
+        number
+    )
+}

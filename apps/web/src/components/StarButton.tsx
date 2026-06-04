@@ -14,6 +14,7 @@ type StarButtonProps = {
 
 export function StarButton({ owner, name, initialStars }: StarButtonProps) {
   const [stars, setStars] = useState(initialStars);
+  const [starred, setStarred] = useState(false);
   const [message, setMessage] = useState("");
 
   async function star() {
@@ -35,13 +36,22 @@ export function StarButton({ owner, name, initialStars }: StarButtonProps) {
 
     const repo = (await response.json()) as { stars_count: number };
     setStars(repo.stars_count);
+    setStarred(true);
     setMessage("");
   }
 
   return (
     <div className="flex items-center gap-2">
-      <button className="cursor-pointer rounded-md border border-[#d0d7de] bg-[#f6f8fa] px-2.5 py-1 font-semibold hover:border-[#0969da] hover:text-[#0969da]" type="button" onClick={star}>
-        Star
+      <button
+        className={`cursor-pointer rounded-md border px-2.5 py-1 font-semibold ${
+          starred
+            ? "border-[#1a7f37] bg-[#dafbe1] text-[#116329]"
+            : "border-[#d0d7de] bg-[#f6f8fa] hover:border-[#0969da] hover:text-[#0969da]"
+        }`}
+        type="button"
+        onClick={star}
+      >
+        {starred ? "✓ Starred" : "Star"}
       </button>
       <span className="text-[#59636e]">{stars}</span>
       {message ? <span className="text-xs text-[#59636e]">{message}</span> : null}

@@ -95,7 +95,7 @@ export function AuthPanel() {
       federated_client_id: window.location.origin,
       federated_redirect_uri: redirectUri,
       federated_audience: API_URL,
-      federated_scope: "repo:star repo:fork",
+      federated_scope: "repo:star repo:fork repo:issue repo:comment",
       federated_state: nextState,
       federated_nonce: nonce,
       federated_code_challenge: challenge,

@@ -267,6 +267,8 @@ pub(crate) fn current_user_response(config: &Config, user: User) -> CurrentUserR
         capabilities: vec![
             "repo:star".to_string(),
             "repo:fork".to_string(),
+            "repo:issue".to_string(),
+            "repo:comment".to_string(),
             "repo:create".to_string(),
             "settings:local".to_string(),
         ],

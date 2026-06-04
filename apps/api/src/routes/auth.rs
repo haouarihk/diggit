@@ -314,7 +314,12 @@ pub(crate) async fn federated_exchange(
         return Err(ApiError::Unauthorized);
     }
     let scopes = scopes(&token.scope);
-    if !scopes.iter().any(|scope| scope == "repo:star") {
+    let allowed_scopes = ["repo:star", "repo:fork", "repo:issue", "repo:comment"];
+    if scopes.is_empty()
+        || scopes
+            .iter()
+            .any(|scope| !allowed_scopes.contains(&scope.as_str()))
+    {
         return Err(ApiError::Unauthorized);
     }
 

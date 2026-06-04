@@ -2,8 +2,8 @@
 
 import { apiBaseUrl } from "@/lib/runtime-config";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { FormEvent, useEffect, useRef, useState } from "react";
+import { usePathname, useRouter } from "next/navigation";
+import { FormEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import type { CurrentUser } from "@/lib/api";
 import { clearAuthSession, getAuthToken } from "@/lib/auth-session";
@@ -12,6 +12,7 @@ const API_URL = apiBaseUrl();
 
 export function NavBar() {
   const router = useRouter();
+  const pathname = usePathname();
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [user, setUser] = useState<CurrentUser | null>(null);
 
@@ -65,13 +66,39 @@ export function NavBar() {
       });
     }
 
+    function closeDropdownsOnOutsideClick(event: PointerEvent) {
+      const target = event.target;
+      if (!(target instanceof Node)) {
+        return;
+      }
+
+      document.querySelectorAll("details[open]").forEach((details) => {
+        if (!details.contains(target)) {
+          details.removeAttribute("open");
+        }
+      });
+    }
+
+    function closeDropdownsOnEscape(event: KeyboardEvent) {
+      if (event.key !== "Escape") {
+        return;
+      }
+      document.querySelectorAll("details[open]").forEach((details) => {
+        details.removeAttribute("open");
+      });
+    }
+
     window.addEventListener("keydown", focusSearch);
+    window.addEventListener("keydown", closeDropdownsOnEscape);
     window.addEventListener("diggit-auth-changed", loadUser);
+    document.addEventListener("pointerdown", closeDropdownsOnOutsideClick);
     document.addEventListener("toggle", closeOtherDropdowns, true);
     return () => {
       window.clearTimeout(timeout);
       window.removeEventListener("keydown", focusSearch);
+      window.removeEventListener("keydown", closeDropdownsOnEscape);
       window.removeEventListener("diggit-auth-changed", loadUser);
+      document.removeEventListener("pointerdown", closeDropdownsOnOutsideClick);
       document.removeEventListener("toggle", closeOtherDropdowns, true);
     };
   }, []);
@@ -140,16 +167,16 @@ export function NavBar() {
         </div>
 
         <nav aria-label="Primary" className="hidden items-center gap-1 md:flex">
-          <Link className="rounded-md px-3 py-2 font-semibold text-[#1f2328] hover:bg-[#f6f8fa] hover:text-[#0969da]" href="/">
+          <NavLink active={pathname === "/" || isRepoCodePath(pathname)} href="/">
             Repositories
-          </Link>
-          <Link className="rounded-md px-3 py-2 font-semibold text-[#1f2328] hover:bg-[#f6f8fa] hover:text-[#0969da]" href="/organizations">
+          </NavLink>
+          <NavLink active={pathname.startsWith("/organizations")} href="/organizations">
             Organizations
-          </Link>
+          </NavLink>
           {user ? (
-            <Link className="rounded-md px-3 py-2 font-semibold text-[#1f2328] hover:bg-[#f6f8fa] hover:text-[#0969da]" href={runnersHref}>
+            <NavLink active={pathname.startsWith("/settings/runners")} href={runnersHref}>
               Runners
-            </Link>
+            </NavLink>
           ) : null}
         </nav>
 
@@ -171,7 +198,11 @@ export function NavBar() {
             </details>
           ) : null}
           {user?.is_admin ? (
-            <Link className="hidden rounded-md border border-[#d0d7de] bg-[#f6f8fa] px-3 py-1.5 font-semibold text-[#1f2328] hover:border-[#0969da] hover:text-[#0969da] sm:inline-flex" href="/admin">
+            <Link className={`hidden rounded-md border px-3 py-1.5 font-semibold sm:inline-flex ${
+              pathname.startsWith("/admin")
+                ? "border-[#0969da] bg-[#ddf4ff] text-[#0969da]"
+                : "border-[#d0d7de] bg-[#f6f8fa] text-[#1f2328] hover:border-[#0969da] hover:text-[#0969da]"
+            }`} href="/admin">
               Admin
             </Link>
           ) : null}
@@ -238,23 +269,83 @@ export function NavBar() {
       </div>
 
       <div className="flex gap-2 overflow-x-auto border-t border-[#d8dee4] px-6 py-2 md:hidden">
-        <Link className="whitespace-nowrap rounded-md px-3 py-1.5 font-semibold text-[#1f2328] hover:bg-[#f6f8fa]" href="/">
+        <MobileNavLink active={pathname === "/" || isRepoCodePath(pathname)} href="/">
           Repositories
-        </Link>
-        <Link className="whitespace-nowrap rounded-md px-3 py-1.5 font-semibold text-[#1f2328] hover:bg-[#f6f8fa]" href="/organizations">
+        </MobileNavLink>
+        <MobileNavLink active={pathname.startsWith("/organizations")} href="/organizations">
           Organizations
-        </Link>
+        </MobileNavLink>
         {user ? (
-          <Link className="whitespace-nowrap rounded-md px-3 py-1.5 font-semibold text-[#1f2328] hover:bg-[#f6f8fa]" href={runnersHref}>
+          <MobileNavLink active={pathname.startsWith("/settings/runners")} href={runnersHref}>
             Runners
-          </Link>
+          </MobileNavLink>
         ) : null}
         {user?.is_admin ? (
-          <Link className="whitespace-nowrap rounded-md px-3 py-1.5 font-semibold text-[#1f2328] hover:bg-[#f6f8fa]" href="/admin">
+          <MobileNavLink active={pathname.startsWith("/admin")} href="/admin">
             Admin
-          </Link>
+          </MobileNavLink>
         ) : null}
       </div>
     </header>
   );
+}
+
+function NavLink({
+  active,
+  children,
+  href,
+}: {
+  active: boolean;
+  children: ReactNode;
+  href: string;
+}) {
+  return (
+    <Link
+      className={`rounded-md px-3 py-2 font-semibold ${
+        active
+          ? "bg-[#ddf4ff] text-[#0969da]"
+          : "text-[#1f2328] hover:bg-[#f6f8fa] hover:text-[#0969da]"
+      }`}
+      href={href}
+    >
+      {children}
+    </Link>
+  );
+}
+
+function MobileNavLink({
+  active,
+  children,
+  href,
+}: {
+  active: boolean;
+  children: ReactNode;
+  href: string;
+}) {
+  return (
+    <Link
+      className={`whitespace-nowrap rounded-md px-3 py-1.5 font-semibold ${
+        active ? "bg-[#ddf4ff] text-[#0969da]" : "text-[#1f2328] hover:bg-[#f6f8fa]"
+      }`}
+      href={href}
+    >
+      {children}
+    </Link>
+  );
+}
+
+function isRepoCodePath(pathname: string) {
+  if (
+    pathname.startsWith("/admin") ||
+    pathname.startsWith("/auth") ||
+    pathname.startsWith("/new") ||
+    pathname.startsWith("/organizations") ||
+    pathname.startsWith("/search") ||
+    pathname.startsWith("/settings") ||
+    pathname.startsWith("/users")
+  ) {
+    return false;
+  }
+
+  return pathname.split("/").filter(Boolean).length >= 2;
 }
