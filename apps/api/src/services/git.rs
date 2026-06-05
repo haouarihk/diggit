@@ -7,6 +7,7 @@ const MAX_RAW_FILE_BYTES: i64 = 10 * 1024 * 1024;
 
 pub(crate) async fn create_bare_repo(path: &PathBuf) -> ApiResult<()> {
     if fs::try_exists(path).await? {
+        ensure_bare_repo_head(path, "main").await?;
         return Ok(());
     }
     if let Some(parent) = path.parent() {
@@ -25,6 +26,33 @@ pub(crate) async fn create_bare_repo(path: &PathBuf) -> ApiResult<()> {
             String::from_utf8_lossy(&output.stderr).to_string(),
         ));
     }
+    ensure_bare_repo_head(path, "main").await?;
+    Ok(())
+}
+
+pub(crate) async fn ensure_repo_head(repo: &Repository) -> ApiResult<()> {
+    ensure_bare_repo_head(&PathBuf::from(&repo.local_path), &repo.default_branch).await
+}
+
+async fn ensure_bare_repo_head(path: &PathBuf, branch: &str) -> ApiResult<()> {
+    if branch.trim().is_empty() || branch.contains('\0') || branch.starts_with('-') {
+        return Err(ApiError::BadRequest("invalid default branch".to_string()));
+    }
+
+    let output = Command::new("git")
+        .arg("--git-dir")
+        .arg(path)
+        .arg("symbolic-ref")
+        .arg("HEAD")
+        .arg(format!("refs/heads/{branch}"))
+        .output()
+        .await?;
+    if !output.status.success() {
+        return Err(ApiError::BadRequest(
+            String::from_utf8_lossy(&output.stderr).to_string(),
+        ));
+    }
+
     Ok(())
 }
 
