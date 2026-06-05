@@ -141,9 +141,16 @@ export type Issue = {
   remote_server: string | null;
   remote_url: string | null;
   status: "open" | "closed";
+  labels: IssueLabel[];
   activity_id: string | null;
   created_at: string;
   updated_at: string;
+};
+
+export type IssueLabel = {
+  id: string;
+  name: string;
+  color: string;
 };
 
 export type IssueComment = {
@@ -173,6 +180,11 @@ export type RepositoryCommit = {
 export type RepositoryBranch = {
   name: string;
   is_default: boolean;
+  commit_sha: string | null;
+};
+
+export type RepositoryTag = {
+  name: string;
   commit_sha: string | null;
 };
 
@@ -347,10 +359,13 @@ export function getRepository(owner: string, name: string) {
   return apiFetch<Repository>(`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`);
 }
 
-export function getRepositoryTree(owner: string, name: string, refName?: string) {
+export function getRepositoryTree(owner: string, name: string, refName?: string, path?: string) {
   const searchParams = new URLSearchParams();
   if (refName) {
     searchParams.set("ref", refName);
+  }
+  if (path) {
+    searchParams.set("path", path);
   }
   const query = searchParams.toString();
   return apiFetch<RepositoryTree>(
@@ -362,6 +377,10 @@ export function listRepositoryBranches(owner: string, name: string) {
   return apiFetch<Collection<RepositoryBranch>>(
     `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/branches`,
   );
+}
+
+export function listRepositoryTags(owner: string, name: string) {
+  return apiFetch<Collection<RepositoryTag>>(`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/tags`);
 }
 
 export function listRepositoryCollaborators(owner: string, name: string) {
@@ -400,7 +419,7 @@ export function getCommit(owner: string, name: string, sha: string) {
 export function listRepositoryIssues(
   owner: string,
   name: string,
-  params?: { page?: number; limit?: number; status?: "open" | "closed" | "all" },
+  params?: { labels?: string; limit?: number; page?: number; q?: string; status?: "open" | "closed" | "all" },
 ) {
   const searchParams = new URLSearchParams();
   if (params?.page) {
@@ -412,6 +431,12 @@ export function listRepositoryIssues(
   if (params?.status) {
     searchParams.set("status", params.status);
   }
+  if (params?.q) {
+    searchParams.set("q", params.q);
+  }
+  if (params?.labels) {
+    searchParams.set("labels", params.labels);
+  }
   const query = searchParams.toString();
   return apiFetch<PaginatedCollection<Issue>>(
     `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/issues${query ? `?${query}` : ""}`,
@@ -420,6 +445,10 @@ export function listRepositoryIssues(
 
 export function getRepositoryIssue(owner: string, name: string, number: number) {
   return apiFetch<Issue>(`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/issues/${number}`);
+}
+
+export function listIssueLabels(owner: string, name: string) {
+  return apiFetch<Collection<IssueLabel>>(`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/issue-labels`);
 }
 
 export function listPullRequests(owner: string, name: string) {

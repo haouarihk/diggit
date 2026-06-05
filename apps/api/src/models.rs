@@ -126,8 +126,19 @@ pub(crate) struct RepositoryBranchResponse {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub(crate) struct RepositoryTagResponse {
+    pub(crate) name: String,
+    pub(crate) commit_sha: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct RepositoryBranchListResponse {
     pub(crate) data: Vec<RepositoryBranchResponse>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub(crate) struct RepositoryTagListResponse {
+    pub(crate) data: Vec<RepositoryTagResponse>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -254,6 +265,7 @@ pub(crate) struct Issue {
     pub(crate) remote_server: Option<String>,
     pub(crate) remote_url: Option<String>,
     pub(crate) status: String,
+    pub(crate) labels: Value,
     pub(crate) activity_id: Option<String>,
     pub(crate) created_at: DateTime<Utc>,
     pub(crate) updated_at: DateTime<Utc>,
@@ -615,6 +627,7 @@ pub(crate) struct CreatePullRequestRequest {
 pub(crate) struct CreateIssueRequest {
     pub(crate) title: String,
     pub(crate) body: Option<String>,
+    pub(crate) labels: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -622,6 +635,13 @@ pub(crate) struct UpdateIssueRequest {
     pub(crate) title: Option<String>,
     pub(crate) body: Option<String>,
     pub(crate) status: Option<String>,
+    pub(crate) labels: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct UpsertIssueLabelRequest {
+    pub(crate) name: String,
+    pub(crate) color: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -653,6 +673,7 @@ pub(crate) struct RepoListQuery {
 pub(crate) struct RepoTreeQuery {
     #[serde(rename = "ref")]
     pub(crate) ref_name: Option<String>,
+    pub(crate) path: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -667,6 +688,8 @@ pub(crate) struct IssueListQuery {
     pub(crate) page: Option<i64>,
     pub(crate) limit: Option<i64>,
     pub(crate) status: Option<String>,
+    pub(crate) q: Option<String>,
+    pub(crate) labels: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

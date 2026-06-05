@@ -10,15 +10,16 @@ import {
 } from "@/lib/api";
 
 type Props = {
-  params: Promise<{ owner: string; name: string }>;
+  params: Promise<{ owner: string; name: string; path?: string[] }>;
   searchParams: Promise<{ q?: string; ref?: string }>;
 };
 
-export default async function RepoPage({ params, searchParams }: Props) {
-  const { owner, name } = await params;
+export default async function RepositoryTreePage({ params, searchParams }: Props) {
+  const { owner, name, path = [] } = await params;
   const { q, ref } = await searchParams;
   const decodedOwner = decodeURIComponent(owner);
   const decodedName = decodeURIComponent(name);
+  const currentPath = path.map(decodeURIComponent).join("/");
   const repo = await getRepository(decodedOwner, decodedName);
   const selectedRef = ref || repo.default_branch;
   const baseHref = repoHref(decodedOwner, decodedName);
@@ -28,7 +29,7 @@ export default async function RepoPage({ params, searchParams }: Props) {
       data: [{ name: repo.default_branch, is_default: true, commit_sha: null }],
     })),
     listRepositoryTags(decodedOwner, decodedName).catch(() => ({ data: [] })),
-    getRepositoryTree(decodedOwner, decodedName, selectedRef).catch(
+    getRepositoryTree(decodedOwner, decodedName, selectedRef, currentPath || undefined).catch(
       (): RepositoryTree => ({ ref_name: selectedRef, last_commit: null, entries: [] }),
     ),
   ]);
@@ -39,6 +40,7 @@ export default async function RepoPage({ params, searchParams }: Props) {
       <RepositoryCodeBrowser
         baseHref={baseHref}
         branches={branches.data}
+        currentPath={currentPath || undefined}
         mode="tree"
         owner={decodedOwner}
         query={q}

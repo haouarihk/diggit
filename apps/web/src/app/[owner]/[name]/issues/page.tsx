@@ -1,6 +1,6 @@
 import { RepoHeader, repoHref } from "@/components/RepoHeader";
 import { RepositoryIssuesPanel } from "@/components/RepositoryIssuesPanel";
-import { getRepository, listPullRequests, listRepositoryIssues, type Issue } from "@/lib/api";
+import { getRepository, listIssueLabels, listPullRequests, listRepositoryIssues, type Issue } from "@/lib/api";
 
 type Props = {
   params: Promise<{
@@ -9,25 +9,28 @@ type Props = {
   }>;
   searchParams: Promise<{
     page?: string;
+    q?: string;
+    labels?: string;
     status?: string;
   }>;
 };
 
 export default async function RepositoryIssuesPage({ params, searchParams }: Props) {
   const { owner, name } = await params;
-  const { page, status: rawStatus } = await searchParams;
+  const { labels, page, q, status: rawStatus } = await searchParams;
   const decodedOwner = decodeURIComponent(owner);
   const decodedName = decodeURIComponent(name);
   const baseHref = repoHref(decodedOwner, decodedName);
   const status = issueStatus(rawStatus);
   const selectedPage = Number.parseInt(page ?? "1", 10) || 1;
-  const [repo, pullRequests, issues, issueCount] = await Promise.all([
+  const [repo, pullRequests, issues, issueCount, issueLabels] = await Promise.all([
     getRepository(decodedOwner, decodedName),
     listPullRequests(decodedOwner, decodedName).catch(() => ({ data: [] })),
-    listRepositoryIssues(decodedOwner, decodedName, { page: selectedPage, limit: 25, status }).catch(
+    listRepositoryIssues(decodedOwner, decodedName, { labels, page: selectedPage, limit: 25, q, status }).catch(
       () => emptyIssues(selectedPage),
     ),
     listRepositoryIssues(decodedOwner, decodedName, { page: 1, limit: 1, status: "open" }).catch(() => emptyIssues(1)),
+    listIssueLabels(decodedOwner, decodedName).catch(() => ({ data: [] })),
   ]);
 
   return (
@@ -42,9 +45,12 @@ export default async function RepositoryIssuesPage({ params, searchParams }: Pro
       <RepositoryIssuesPanel
         baseHref={baseHref}
         issues={issues.data}
+        labels={issueLabels.data}
         name={decodedName}
         owner={decodedOwner}
         pagination={issues.pagination}
+        query={q ?? ""}
+        selectedLabels={labels ?? ""}
         status={status}
       />
     </div>

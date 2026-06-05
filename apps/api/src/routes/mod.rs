@@ -153,6 +153,10 @@ pub(crate) fn router(state: AppState) -> Router {
             get(repositories::list_repo_branches),
         )
         .route(
+            "/repos/{owner}/{name}/tags",
+            get(repositories::list_repo_tags),
+        )
+        .route(
             "/repos/{owner}/{name}/collaborators",
             get(repositories::list_repo_collaborators).post(repositories::upsert_repo_collaborator),
         )
@@ -194,6 +198,14 @@ pub(crate) fn router(state: AppState) -> Router {
         .route(
             "/repos/{owner}/{name}/pull-requests",
             get(repositories::list_pull_requests).post(repositories::create_pull_request),
+        )
+        .route(
+            "/repos/{owner}/{name}/issue-labels",
+            get(repositories::list_issue_labels).post(repositories::upsert_issue_label),
+        )
+        .route(
+            "/repos/{owner}/{name}/issue-labels/{label}",
+            delete(repositories::delete_issue_label),
         )
         .route(
             "/repos/{owner}/{name}/issues",

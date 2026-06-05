@@ -431,21 +431,29 @@ pub(crate) async fn list_repo_tree(
         };
         return Ok(Json(response));
     };
-    let tree = run_git_command(
-        &repo,
-        &["ls-tree".to_string(), "-l".to_string(), commit_sha.clone()],
-    )
-    .await?;
+    let path = query
+        .path
+        .as_deref()
+        .map(normalize_repo_file_path)
+        .transpose()?;
+    let treeish = path
+        .as_ref()
+        .map(|path| format!("{commit_sha}:{path}"))
+        .unwrap_or_else(|| commit_sha.clone());
+    let tree = run_git_command(&repo, &["ls-tree".to_string(), "-l".to_string(), treeish]).await?;
     let mut entries = Vec::new();
 
     for line in tree.lines() {
         if let Some((name, kind, size)) = parse_ls_tree_line(line) {
-            let path = name.clone();
-            let last_commit = git_last_commit(&repo, &commit_sha, Some(&path)).await?;
+            let entry_path = path
+                .as_ref()
+                .map(|base| format!("{base}/{name}"))
+                .unwrap_or_else(|| name.clone());
+            let last_commit = git_last_commit(&repo, &commit_sha, Some(&entry_path)).await?;
             entries.push(RepositoryTreeEntryResponse {
                 extension: file_extension(&name),
                 name,
-                path,
+                path: entry_path,
                 kind,
                 size,
                 last_commit,
@@ -459,6 +467,46 @@ pub(crate) async fn list_repo_tree(
         entries,
     };
     Ok(Json(response))
+}
+
+pub(crate) async fn list_repo_tags(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((owner, name)): Path<(String, String)>,
+) -> ApiResult<Json<RepositoryTagListResponse>> {
+    let auth = optional_auth(&state, &headers)?;
+    enforce_rate_limit(&state, "repo-tags", &format!("{owner}/{name}"), 120, 60).await?;
+    let repo = find_repo(&state.pool, &owner, &name).await?;
+    ensure_repo_visible(&state.pool, auth.as_ref(), &repo).await?;
+    let output = run_git_command(
+        &repo,
+        &[
+            "for-each-ref".to_string(),
+            "--format=%(refname:short)%00%(objectname)".to_string(),
+            "refs/tags".to_string(),
+        ],
+    )
+    .await?;
+    let data = output
+        .lines()
+        .filter_map(|line| {
+            let mut parts = line.split('\0');
+            let name = parts.next()?.trim();
+            let sha = parts.next()?.trim();
+            if name.is_empty() {
+                return None;
+            }
+            Some(RepositoryTagResponse {
+                name: name.to_string(),
+                commit_sha: if sha.is_empty() {
+                    None
+                } else {
+                    Some(sha.to_string())
+                },
+            })
+        })
+        .collect();
+    Ok(Json(RepositoryTagListResponse { data }))
 }
 
 pub(crate) async fn list_repo_branches(
@@ -1000,6 +1048,59 @@ pub(crate) async fn list_pull_requests(
     Ok(Json(json!({ "data": prs })))
 }
 
+pub(crate) async fn list_issue_labels(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((owner, name)): Path<(String, String)>,
+) -> ApiResult<Json<Value>> {
+    let auth = optional_auth(&state, &headers)?;
+    let repo = find_repo(&state.pool, &owner, &name).await?;
+    ensure_repo_visible(&state.pool, auth.as_ref(), &repo).await?;
+    Ok(Json(
+        json!({ "data": issue_labels(&state, repo.id).await? }),
+    ))
+}
+
+pub(crate) async fn upsert_issue_label(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((owner, name)): Path<(String, String)>,
+    Json(input): Json<UpsertIssueLabelRequest>,
+) -> ApiResult<Json<Value>> {
+    let auth = require_auth(&state, &headers)?;
+    let repo = find_repo(&state.pool, &owner, &name).await?;
+    ensure_repo_admin(&state.pool, &auth, &repo).await?;
+    let label = upsert_issue_label_row(
+        &state,
+        repo.id,
+        &normalize_issue_label_name(&input.name)?,
+        input.color.as_deref().unwrap_or("#59636e"),
+    )
+    .await?;
+    Ok(Json(label))
+}
+
+pub(crate) async fn delete_issue_label(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((owner, name, label)): Path<(String, String, String)>,
+) -> ApiResult<Json<Value>> {
+    let auth = require_auth(&state, &headers)?;
+    let repo = find_repo(&state.pool, &owner, &name).await?;
+    ensure_repo_admin(&state.pool, &auth, &repo).await?;
+    let result = sqlx::query(
+        "DELETE FROM issue_labels WHERE repository_id = $1 AND lower(name) = lower($2)",
+    )
+    .bind(repo.id)
+    .bind(normalize_issue_label_name(&label)?)
+    .execute(&state.pool)
+    .await?;
+    if result.rows_affected() == 0 {
+        return Err(ApiError::NotFound);
+    }
+    Ok(Json(json!({ "status": "deleted" })))
+}
+
 pub(crate) async fn list_issues(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1011,18 +1112,53 @@ pub(crate) async fn list_issues(
     ensure_repo_visible(&state.pool, auth.as_ref(), &repo).await?;
     let (page, limit, offset) = pagination_input(query.page, query.limit);
     let status = normalize_issue_status_filter(query.status)?;
-    let total = issue_count(&state, repo.id, status.as_deref()).await?;
+    let labels = issue_label_filter(query.labels.as_deref())?;
+    let search = query
+        .q
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| format!("%{}%", value));
+    let total = issue_count(
+        &state,
+        repo.id,
+        status.as_deref(),
+        search.as_deref(),
+        &labels,
+    )
+    .await?;
     let issues = sqlx::query_as::<_, Issue>(
         r#"
-        SELECT *
+        SELECT issues.*,
+          COALESCE((
+            SELECT jsonb_agg(jsonb_build_object('id', issue_labels.id, 'name', issue_labels.name, 'color', issue_labels.color) ORDER BY issue_labels.name)
+            FROM issue_label_assignments
+            JOIN issue_labels ON issue_labels.id = issue_label_assignments.label_id
+            WHERE issue_label_assignments.issue_id = issues.id
+          ), '[]'::jsonb) AS labels
         FROM issues
-        WHERE repository_id = $1 AND ($2::TEXT IS NULL OR status = $2)
+        WHERE repository_id = $1
+          AND ($2::TEXT IS NULL OR status = $2)
+          AND ($3::TEXT IS NULL OR title ILIKE $3 OR body ILIKE $3)
+          AND NOT EXISTS (
+            SELECT 1
+            FROM unnest($4::TEXT[]) AS requested_label(name)
+            WHERE NOT EXISTS (
+              SELECT 1
+              FROM issue_label_assignments
+              JOIN issue_labels ON issue_labels.id = issue_label_assignments.label_id
+              WHERE issue_label_assignments.issue_id = issues.id
+                AND lower(issue_labels.name) = lower(requested_label.name)
+            )
+          )
         ORDER BY created_at DESC
-        LIMIT $3 OFFSET $4
+        LIMIT $5 OFFSET $6
         "#,
     )
     .bind(repo.id)
     .bind(status)
+    .bind(search)
+    .bind(labels)
     .bind(limit)
     .bind(offset)
     .fetch_all(&state.pool)
@@ -1056,7 +1192,7 @@ pub(crate) async fn create_issue(
         Uuid::now_v7()
     );
 
-    let issue = sqlx::query_as::<_, Issue>(
+    let issue_id: (Uuid,) = sqlx::query_as(
         r#"
         INSERT INTO issues
           (id, repository_id, number, title, body, author_handle, author_actor_url,
@@ -1064,7 +1200,7 @@ pub(crate) async fn create_issue(
         SELECT $1, $2, COALESCE(MAX(number), 0) + 1, $3, $4, $5, $6, $7, $8, $9, 'open', $10
         FROM issues
         WHERE repository_id = $2
-        RETURNING *
+        RETURNING id
         "#,
     )
     .bind(Uuid::now_v7())
@@ -1080,6 +1216,10 @@ pub(crate) async fn create_issue(
     .fetch_one(&state.pool)
     .await?;
 
+    if let Some(labels) = input.labels {
+        replace_issue_labels(&state, repo.id, issue_id.0, &labels).await?;
+    }
+    let issue = find_issue_by_id(&state, issue_id.0).await?;
     deliver_issue_activity(&state, &repo, &issue, &activity_id, "Create").await?;
     Ok(Json(issue))
 }
@@ -1115,7 +1255,7 @@ pub(crate) async fn update_issue(
         None => None,
     };
 
-    let issue = sqlx::query_as::<_, Issue>(
+    let issue_id: (Uuid,) = sqlx::query_as(
         r#"
         UPDATE issues
         SET title = COALESCE($3, title),
@@ -1123,7 +1263,7 @@ pub(crate) async fn update_issue(
             status = COALESCE($5, status),
             updated_at = now()
         WHERE repository_id = $1 AND number = $2
-        RETURNING *
+        RETURNING id
         "#,
     )
     .bind(repo.id)
@@ -1134,6 +1274,10 @@ pub(crate) async fn update_issue(
     .fetch_one(&state.pool)
     .await?;
 
+    if let Some(labels) = input.labels {
+        replace_issue_labels(&state, repo.id, issue_id.0, &labels).await?;
+    }
+    let issue = find_issue_by_id(&state, issue_id.0).await?;
     let activity_id = format!(
         "{}/activities/{}",
         state.config.app_base_url.trim_end_matches('/'),
@@ -1312,12 +1456,33 @@ async fn issue_count(
     state: &AppState,
     repository_id: Uuid,
     status: Option<&str>,
+    search: Option<&str>,
+    labels: &[String],
 ) -> ApiResult<i64> {
     let total: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM issues WHERE repository_id = $1 AND ($2::TEXT IS NULL OR status = $2)",
+        r#"
+        SELECT COUNT(*)
+        FROM issues
+        WHERE repository_id = $1
+          AND ($2::TEXT IS NULL OR status = $2)
+          AND ($3::TEXT IS NULL OR title ILIKE $3 OR body ILIKE $3)
+          AND NOT EXISTS (
+            SELECT 1
+            FROM unnest($4::TEXT[]) AS requested_label(name)
+            WHERE NOT EXISTS (
+              SELECT 1
+              FROM issue_label_assignments
+              JOIN issue_labels ON issue_labels.id = issue_label_assignments.label_id
+              WHERE issue_label_assignments.issue_id = issues.id
+                AND lower(issue_labels.name) = lower(requested_label.name)
+            )
+          )
+        "#,
     )
     .bind(repository_id)
     .bind(status)
+    .bind(search)
+    .bind(labels)
     .fetch_one(&state.pool)
     .await?;
     Ok(total.0)
@@ -1369,13 +1534,155 @@ fn validate_comment_body(body: &str) -> ApiResult<String> {
 }
 
 async fn find_issue(state: &AppState, repository_id: Uuid, number: i32) -> ApiResult<Issue> {
-    Ok(
-        sqlx::query_as::<_, Issue>("SELECT * FROM issues WHERE repository_id = $1 AND number = $2")
-            .bind(repository_id)
-            .bind(number)
-            .fetch_one(&state.pool)
-            .await?,
+    Ok(sqlx::query_as::<_, Issue>(
+        r#"
+        SELECT issues.*,
+          COALESCE((
+            SELECT jsonb_agg(jsonb_build_object('id', issue_labels.id, 'name', issue_labels.name, 'color', issue_labels.color) ORDER BY issue_labels.name)
+            FROM issue_label_assignments
+            JOIN issue_labels ON issue_labels.id = issue_label_assignments.label_id
+            WHERE issue_label_assignments.issue_id = issues.id
+          ), '[]'::jsonb) AS labels
+        FROM issues
+        WHERE repository_id = $1 AND number = $2
+        "#,
     )
+    .bind(repository_id)
+    .bind(number)
+    .fetch_one(&state.pool)
+    .await?)
+}
+
+async fn find_issue_by_id(state: &AppState, issue_id: Uuid) -> ApiResult<Issue> {
+    Ok(sqlx::query_as::<_, Issue>(
+        r#"
+        SELECT issues.*,
+          COALESCE((
+            SELECT jsonb_agg(jsonb_build_object('id', issue_labels.id, 'name', issue_labels.name, 'color', issue_labels.color) ORDER BY issue_labels.name)
+            FROM issue_label_assignments
+            JOIN issue_labels ON issue_labels.id = issue_label_assignments.label_id
+            WHERE issue_label_assignments.issue_id = issues.id
+          ), '[]'::jsonb) AS labels
+        FROM issues
+        WHERE id = $1
+        "#,
+    )
+    .bind(issue_id)
+    .fetch_one(&state.pool)
+    .await?)
+}
+
+async fn issue_labels(state: &AppState, repository_id: Uuid) -> ApiResult<Vec<Value>> {
+    Ok(sqlx::query(
+        "SELECT id, name, color FROM issue_labels WHERE repository_id = $1 ORDER BY name ASC",
+    )
+    .bind(repository_id)
+    .fetch_all(&state.pool)
+    .await?
+    .into_iter()
+    .map(|row| {
+        json!({
+            "id": row.get::<Uuid, _>("id"),
+            "name": row.get::<String, _>("name"),
+            "color": row.get::<String, _>("color"),
+        })
+    })
+    .collect())
+}
+
+async fn upsert_issue_label_row(
+    state: &AppState,
+    repository_id: Uuid,
+    name: &str,
+    color: &str,
+) -> ApiResult<Value> {
+    let row = sqlx::query(
+        r#"
+        INSERT INTO issue_labels (id, repository_id, name, color)
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT (repository_id, lower(name)) DO UPDATE
+        SET name = EXCLUDED.name, color = EXCLUDED.color
+        RETURNING id, name, color
+        "#,
+    )
+    .bind(Uuid::now_v7())
+    .bind(repository_id)
+    .bind(name)
+    .bind(normalize_issue_label_color(color))
+    .fetch_one(&state.pool)
+    .await?;
+    Ok(json!({
+        "id": row.get::<Uuid, _>("id"),
+        "name": row.get::<String, _>("name"),
+        "color": row.get::<String, _>("color"),
+    }))
+}
+
+async fn replace_issue_labels(
+    state: &AppState,
+    repository_id: Uuid,
+    issue_id: Uuid,
+    labels: &[String],
+) -> ApiResult<()> {
+    sqlx::query("DELETE FROM issue_label_assignments WHERE issue_id = $1")
+        .bind(issue_id)
+        .execute(&state.pool)
+        .await?;
+    for label in labels {
+        let name = normalize_issue_label_name(label)?;
+        let row = sqlx::query(
+            r#"
+            INSERT INTO issue_labels (id, repository_id, name)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (repository_id, lower(name)) DO UPDATE
+            SET name = EXCLUDED.name
+            RETURNING id
+            "#,
+        )
+        .bind(Uuid::now_v7())
+        .bind(repository_id)
+        .bind(name)
+        .fetch_one(&state.pool)
+        .await?;
+        sqlx::query(
+            "INSERT INTO issue_label_assignments (issue_id, label_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+        )
+        .bind(issue_id)
+        .bind(row.get::<Uuid, _>("id"))
+        .execute(&state.pool)
+        .await?;
+    }
+    Ok(())
+}
+
+fn issue_label_filter(value: Option<&str>) -> ApiResult<Vec<String>> {
+    value
+        .unwrap_or_default()
+        .split(',')
+        .map(str::trim)
+        .filter(|label| !label.is_empty())
+        .map(normalize_issue_label_name)
+        .collect()
+}
+
+fn normalize_issue_label_name(value: &str) -> ApiResult<String> {
+    let value = value.trim();
+    if value.is_empty() || value.len() > 40 {
+        return Err(ApiError::BadRequest("invalid issue label".to_string()));
+    }
+    Ok(value.to_string())
+}
+
+fn normalize_issue_label_color(value: &str) -> String {
+    let value = value.trim();
+    if value.len() == 7
+        && value.starts_with('#')
+        && value.chars().skip(1).all(|char| char.is_ascii_hexdigit())
+    {
+        value.to_string()
+    } else {
+        "#59636e".to_string()
+    }
 }
 
 async fn ensure_issue_updatable(
