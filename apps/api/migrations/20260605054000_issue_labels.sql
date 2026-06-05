@@ -3,9 +3,11 @@ CREATE TABLE IF NOT EXISTS issue_labels (
   repository_id UUID NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
   color TEXT NOT NULL DEFAULT '#59636e',
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE(repository_id, lower(name))
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS issue_labels_repository_name_unique_idx
+ON issue_labels (repository_id, lower(name));
 
 CREATE TABLE IF NOT EXISTS issue_label_assignments (
   issue_id UUID NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
