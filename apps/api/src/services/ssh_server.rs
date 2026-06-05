@@ -82,6 +82,7 @@ impl server::Server for GitSshServer {
             state: self.state.clone(),
             auth: None,
             channels: HashMap::new(),
+            git_protocol: HashMap::new(),
         }
     }
 
@@ -94,6 +95,7 @@ pub(crate) struct GitSshSession {
     state: AppState,
     auth: Option<AuthUser>,
     channels: HashMap<ChannelId, Channel<server::Msg>>,
+    git_protocol: HashMap<ChannelId, String>,
 }
 
 impl Handler for GitSshSession {
@@ -181,6 +183,23 @@ impl Handler for GitSshSession {
         Ok(())
     }
 
+    async fn env_request(
+        &mut self,
+        channel: ChannelId,
+        variable_name: &str,
+        variable_value: &str,
+        session: &mut Session,
+    ) -> Result<(), Self::Error> {
+        if variable_name == "GIT_PROTOCOL" && is_safe_git_protocol(variable_value) {
+            self.git_protocol
+                .insert(channel, variable_value.to_string());
+            session.channel_success(channel)?;
+        } else {
+            session.channel_failure(channel)?;
+        }
+        Ok(())
+    }
+
     async fn exec_request(
         &mut self,
         channel_id: ChannelId,
@@ -197,6 +216,7 @@ impl Handler for GitSshSession {
             session.close(channel_id)?;
             return Ok(());
         };
+        let git_protocol = self.git_protocol.remove(&channel_id);
         let command = String::from_utf8_lossy(data).to_string();
         let state = self.state.clone();
         let handle = session.handle();
@@ -206,7 +226,8 @@ impl Handler for GitSshSession {
                 session.channel_success(channel_id)?;
                 tokio::spawn(async move {
                     if let Err(error) =
-                        run_git_ssh_command(channel, handle, channel_id, prepared).await
+                        run_git_ssh_command(channel, handle, channel_id, prepared, git_protocol)
+                            .await
                     {
                         warn!(%error, "SSH Git command failed");
                     }
@@ -292,10 +313,13 @@ async fn run_git_ssh_command(
     handle: server::Handle,
     channel_id: ChannelId,
     prepared: PreparedGitSshCommand,
+    git_protocol: Option<String>,
 ) -> anyhow::Result<()> {
-    let mut child = git_ssh_service_command(&prepared.repo, prepared.service)
-        .spawn()
-        .context("failed to start Git service")?;
+    let mut command = git_ssh_service_command(&prepared.repo, prepared.service);
+    if let Some(git_protocol) = git_protocol {
+        command.env("GIT_PROTOCOL", git_protocol);
+    }
+    let mut child = command.spawn().context("failed to start Git service")?;
     let mut child_stdin = child.stdin.take().context("missing Git stdin")?;
     let mut child_stdout = child.stdout.take().context("missing Git stdout")?;
     let mut child_stderr = child.stderr.take().context("missing Git stderr")?;
@@ -342,6 +366,14 @@ async fn run_git_ssh_command(
     let _ = handle.eof(channel_id).await;
     let _ = handle.close(channel_id).await;
     Ok(())
+}
+
+fn is_safe_git_protocol(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && value.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_' | b'=' | b':')
+        })
 }
 
 pub(crate) fn parse_git_ssh_command(command: &str) -> anyhow::Result<ParsedGitSshCommand> {

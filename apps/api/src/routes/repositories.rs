@@ -6,6 +6,8 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use serde_json::{Value, json};
+use std::path::PathBuf;
+use tokio::fs;
 use uuid::Uuid;
 
 use crate::{
@@ -68,6 +70,30 @@ pub(crate) async fn create_repo(
     Ok(Json(
         repository_response(&state.pool, &state.config, repo).await?,
     ))
+}
+
+pub(crate) async fn delete_repo(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((owner, name)): Path<(String, String)>,
+) -> ApiResult<StatusCode> {
+    let auth = require_auth(&state, &headers)?;
+    let repo = find_repo(&state.pool, &owner, &name).await?;
+    ensure_repo_admin(&state.pool, &auth, &repo).await?;
+    let local_path = PathBuf::from(&repo.local_path);
+
+    sqlx::query("DELETE FROM repositories WHERE id = $1")
+        .bind(repo.id)
+        .execute(&state.pool)
+        .await?;
+
+    invalidate_repo_cache(&state, &repo.owner_handle, &repo.name).await;
+
+    if fs::try_exists(&local_path).await? {
+        fs::remove_dir_all(&local_path).await?;
+    }
+
+    Ok(StatusCode::NO_CONTENT)
 }
 
 pub(crate) async fn list_repos(State(state): State<AppState>) -> ApiResult<Json<Value>> {

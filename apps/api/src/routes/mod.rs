@@ -91,7 +91,10 @@ pub(crate) fn router(state: AppState) -> Router {
             "/organizations/{name}/members",
             get(organizations::list_organization_members),
         )
-        .route("/repos/{owner}/{name}", get(repositories::get_repo))
+        .route(
+            "/repos/{owner}/{name}",
+            get(repositories::get_repo).delete(repositories::delete_repo),
+        )
         .route(
             "/repos/{owner}/{name}/tree",
             get(repositories::list_repo_tree),

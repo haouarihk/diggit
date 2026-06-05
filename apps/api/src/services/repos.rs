@@ -130,6 +130,26 @@ pub(crate) async fn resolve_writable_namespace(
     }
 }
 
+pub(crate) async fn ensure_repo_admin(
+    pool: &PgPool,
+    auth: &AuthUser,
+    repo: &Repository,
+) -> ApiResult<()> {
+    let namespace = sqlx::query_as::<_, Namespace>("SELECT * FROM namespaces WHERE name = $1")
+        .bind(&repo.owner_handle)
+        .fetch_one(pool)
+        .await?;
+
+    match namespace.kind.as_str() {
+        "user" if namespace.user_id == Some(auth.id) => Ok(()),
+        "organization" => {
+            let organization_id = namespace.organization_id.ok_or(ApiError::Unauthorized)?;
+            ensure_org_admin(pool, organization_id, auth.id).await
+        }
+        _ => Err(ApiError::Unauthorized),
+    }
+}
+
 pub(crate) async fn find_repo(pool: &PgPool, owner: &str, name: &str) -> ApiResult<Repository> {
     Ok(sqlx::query_as::<_, Repository>(
         "SELECT * FROM repositories WHERE owner_handle = $1 AND name = $2",

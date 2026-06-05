@@ -51,7 +51,7 @@ export function RepoHeader({ activeTab, issuesCount = 0, pullRequestsCount = 0, 
           count={pullRequestsCount}
         />
         <RepoTab active={activeTab === "actions"} href={`${baseHref}/actions`} label="Actions" />
-        <RepoTab active={activeTab === "settings"} href={`${baseHref}/settings/runners`} label="Settings" />
+        <RepoTab active={activeTab === "settings"} href={`${baseHref}/settings`} label="Settings" />
       </nav>
     </section>
   );
