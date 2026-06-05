@@ -29,6 +29,19 @@ pub(crate) async fn create_repo(
 
     let owner_name = input.owner.as_deref().unwrap_or(&auth.username);
     let namespace = resolve_writable_namespace(&state.pool, &auth, owner_name).await?;
+    let existing: Option<(Uuid,)> =
+        sqlx::query_as("SELECT id FROM repositories WHERE owner_handle = $1 AND name = $2")
+            .bind(&namespace.name)
+            .bind(&name)
+            .fetch_optional(&state.pool)
+            .await?;
+    if existing.is_some() {
+        return Err(ApiError::Conflict(format!(
+            "repository {}/{} already exists",
+            namespace.name, name
+        )));
+    }
+
     let local_path = repo_path(&state.config, &namespace.name, &name);
     create_bare_repo(&local_path).await?;
 

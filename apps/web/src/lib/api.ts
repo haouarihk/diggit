@@ -246,11 +246,13 @@ export type PaginatedCollection<T> = Collection<T> & {
 };
 
 export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
+  const authHeaders = await serverAuthHeaders(init?.headers);
   const response = await fetch(`${API_URL}${path}`, {
     ...init,
     cache: "no-store",
     headers: {
       "content-type": "application/json",
+      ...authHeaders,
       ...init?.headers,
     },
   });
@@ -260,6 +262,33 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
   }
 
   return response.json() as Promise<T>;
+}
+
+async function serverAuthHeaders(headers?: HeadersInit): Promise<Record<string, string>> {
+  if (typeof window !== "undefined" || hasAuthorizationHeader(headers)) {
+    return {};
+  }
+
+  try {
+    const { cookies } = await import("next/headers");
+    const token = (await cookies()).get("diggit_token")?.value;
+    return token ? { authorization: `Bearer ${token}` } : {};
+  } catch {
+    return {};
+  }
+}
+
+function hasAuthorizationHeader(headers?: HeadersInit) {
+  if (!headers) {
+    return false;
+  }
+  if (headers instanceof Headers) {
+    return headers.has("authorization");
+  }
+  if (Array.isArray(headers)) {
+    return headers.some(([key]) => key.toLowerCase() === "authorization");
+  }
+  return Object.keys(headers).some((key) => key.toLowerCase() === "authorization");
 }
 
 export function listRepositories() {

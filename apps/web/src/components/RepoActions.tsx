@@ -34,7 +34,7 @@ export function CreateRepoForm({ initialOwner = "" }: { initialOwner?: string })
       router.push(`/${encodeURIComponent(repo.owner_handle)}/${encodeURIComponent(repo.name)}`);
       return;
     }
-    setMessage(`Failed: ${response.status}`);
+    setMessage(await responseErrorMessage(response));
   }
 
   return (
@@ -285,6 +285,19 @@ export function PullRequestForm({ owner, name, redirectTo }: { owner: string; na
       {message ? <p className="text-[#59636e]">{message}</p> : null}
     </form>
   );
+}
+
+async function responseErrorMessage(response: Response) {
+  try {
+    const payload = (await response.json()) as { error?: string };
+    if (payload.error) {
+      return payload.error;
+    }
+  } catch {
+    // Fall through to the status fallback when the API did not return JSON.
+  }
+
+  return `Failed: ${response.status}`;
 }
 
 async function fetchRepositoryBranches(repo: { baseUrl?: string; owner: string; name: string }) {
