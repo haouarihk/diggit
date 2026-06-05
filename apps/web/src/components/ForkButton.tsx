@@ -1,11 +1,12 @@
 "use client";
 
-import { apiBaseUrl } from "@/lib/runtime-config";
+import { apiBaseUrl, publicApiBaseUrl } from "@/lib/runtime-config";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { getAuthSession } from "@/lib/auth-session";
 
 const API_URL = apiBaseUrl();
+const PUBLIC_API_URL = publicApiBaseUrl();
 
 type ForkButtonProps = {
   owner: string;
@@ -33,7 +34,7 @@ export function ForkButton({ owner, name, initialForks }: ForkButtonProps) {
           "content-type": "application/json",
         },
         body: JSON.stringify({
-          source_repo_url: `${API_URL}/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`,
+          source_repo_url: `${PUBLIC_API_URL}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`,
         }),
       });
 

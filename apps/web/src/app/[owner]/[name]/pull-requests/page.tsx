@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { RepoHeader, repoHref } from "@/components/RepoHeader";
-import { apiFetch, type PullRequest, type Repository } from "@/lib/api";
+import { getRepository, listPullRequests } from "@/lib/api";
 
 type Props = {
   params: Promise<{
@@ -14,8 +14,8 @@ export default async function RepositoryPullRequestsPage({ params }: Props) {
   const decodedOwner = decodeURIComponent(owner);
   const decodedName = decodeURIComponent(name);
   const baseHref = repoHref(decodedOwner, decodedName);
-  const repo = await apiFetch<Repository>(baseHref);
-  const pullRequests = await apiFetch<{ data: PullRequest[] }>(`${baseHref}/pull-requests`).catch(() => ({
+  const repo = await getRepository(decodedOwner, decodedName);
+  const pullRequests = await listPullRequests(decodedOwner, decodedName).catch(() => ({
     data: [],
   }));
 

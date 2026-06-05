@@ -2,7 +2,7 @@ import Link from "next/link";
 import { CodeDiff } from "@/components/CodeDiff";
 import { RepoHeader, repoHref } from "@/components/RepoHeader";
 import { SyncForkButton } from "@/components/SyncForkButton";
-import { apiFetch, compareUpstream, type PullRequest, type Repository, type RepositoryCommit } from "@/lib/api";
+import { compareUpstream, getRepository, listPullRequests, type RepositoryCommit } from "@/lib/api";
 
 type Props = {
   params: Promise<{
@@ -17,8 +17,8 @@ export default async function CompareUpstreamPage({ params }: Props) {
   const decodedName = decodeURIComponent(name);
   const baseHref = repoHref(decodedOwner, decodedName);
   const [repo, pullRequests, compare] = await Promise.all([
-    apiFetch<Repository>(baseHref),
-    apiFetch<{ data: PullRequest[] }>(`${baseHref}/pull-requests`).catch(() => ({ data: [] })),
+    getRepository(decodedOwner, decodedName),
+    listPullRequests(decodedOwner, decodedName).catch(() => ({ data: [] })),
     compareUpstream(decodedOwner, decodedName),
   ]);
 

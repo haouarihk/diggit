@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { RepoHeader, repoHref } from "@/components/RepoHeader";
-import { apiFetch, listCommits, type PullRequest, type Repository } from "@/lib/api";
+import { getRepository, listCommits, listPullRequests } from "@/lib/api";
 
 type Props = {
   params: Promise<{
@@ -18,10 +18,10 @@ export default async function CommitsPage({ params, searchParams }: Props) {
   const decodedOwner = decodeURIComponent(owner);
   const decodedName = decodeURIComponent(name);
   const baseHref = repoHref(decodedOwner, decodedName);
-  const repo = await apiFetch<Repository>(baseHref);
+  const repo = await getRepository(decodedOwner, decodedName);
   const selectedBranch = branch || repo.default_branch;
   const [pullRequests, commits] = await Promise.all([
-    apiFetch<{ data: PullRequest[] }>(`${baseHref}/pull-requests`).catch(() => ({ data: [] })),
+    listPullRequests(decodedOwner, decodedName).catch(() => ({ data: [] })),
     listCommits(decodedOwner, decodedName, selectedBranch).catch(() => ({ data: [] })),
   ]);
 

@@ -1,6 +1,6 @@
 import { RunnerPanel } from "@/components/RunnerPanel";
 import { RepoHeader, repoHref } from "@/components/RepoHeader";
-import { apiFetch, type PullRequest, type Repository } from "@/lib/api";
+import { getRepository, listPullRequests } from "@/lib/api";
 
 type Props = {
   params: Promise<{ owner: string; name: string }>;
@@ -12,8 +12,8 @@ export default async function RepositoryRunnersPage({ params }: Props) {
   const decodedName = decodeURIComponent(name);
   const baseHref = repoHref(decodedOwner, decodedName);
   const [repo, pullRequests] = await Promise.all([
-    apiFetch<Repository>(baseHref),
-    apiFetch<{ data: PullRequest[] }>(`${baseHref}/pull-requests`).catch(() => ({ data: [] })),
+    getRepository(decodedOwner, decodedName),
+    listPullRequests(decodedOwner, decodedName).catch(() => ({ data: [] })),
   ]);
 
   return (

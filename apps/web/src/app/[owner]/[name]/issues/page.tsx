@@ -1,6 +1,6 @@
 import { RepoHeader, repoHref } from "@/components/RepoHeader";
 import { RepositoryIssuesPanel } from "@/components/RepositoryIssuesPanel";
-import { apiFetch, listRepositoryIssues, type Issue, type PullRequest, type Repository } from "@/lib/api";
+import { getRepository, listPullRequests, listRepositoryIssues, type Issue } from "@/lib/api";
 
 type Props = {
   params: Promise<{
@@ -22,8 +22,8 @@ export default async function RepositoryIssuesPage({ params, searchParams }: Pro
   const status = issueStatus(rawStatus);
   const selectedPage = Number.parseInt(page ?? "1", 10) || 1;
   const [repo, pullRequests, issues, issueCount] = await Promise.all([
-    apiFetch<Repository>(baseHref),
-    apiFetch<{ data: PullRequest[] }>(`${baseHref}/pull-requests`).catch(() => ({ data: [] })),
+    getRepository(decodedOwner, decodedName),
+    listPullRequests(decodedOwner, decodedName).catch(() => ({ data: [] })),
     listRepositoryIssues(decodedOwner, decodedName, { page: selectedPage, limit: 25, status }).catch(
       () => emptyIssues(selectedPage),
     ),

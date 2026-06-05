@@ -1,12 +1,13 @@
 "use client";
 
-import { apiBaseUrl } from "@/lib/runtime-config";
+import { apiBaseUrl, publicApiBaseUrl } from "@/lib/runtime-config";
 import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { authHeaders, getAuthSession } from "@/lib/auth-session";
 import type { RepositoryBranch } from "@/lib/api";
 
 const API_URL = apiBaseUrl();
+const PUBLIC_API_URL = publicApiBaseUrl();
 
 export function CreateRepoForm({ initialOwner = "" }: { initialOwner?: string }) {
   const router = useRouter();
@@ -81,7 +82,7 @@ export function ForkRepoForm({ owner, name }: { owner: string; name: string }) {
           "content-type": "application/json",
         },
         body: JSON.stringify({
-          source_repo_url: `${API_URL}/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`,
+          source_repo_url: `${PUBLIC_API_URL}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`,
           name: form.get("name") || undefined,
         }),
       });
@@ -90,7 +91,7 @@ export function ForkRepoForm({ owner, name }: { owner: string; name: string }) {
     }
 
     const response = await fetch(
-      `${API_URL}/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/fork`,
+      `${API_URL}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/fork`,
       {
         method: "POST",
         headers: {
@@ -180,7 +181,7 @@ export function PullRequestForm({ owner, name, redirectTo }: { owner: string; na
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     const response = await fetch(
-      `${API_URL}/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pull-requests`,
+      `${API_URL}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pull-requests`,
       {
         method: "POST",
         headers: {

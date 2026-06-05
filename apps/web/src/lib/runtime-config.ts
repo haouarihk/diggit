@@ -17,7 +17,24 @@ export function apiBaseUrl() {
     return normalizeApiUrl(window.__DIGGIT_CONFIG__?.apiUrl);
   }
 
-  return normalizeApiUrl(process.env["API_URL"] ?? process.env["NEXT_PUBLIC_API_URL"]);
+  return normalizeApiUrl(
+    process.env["API_INTERNAL_URL"] ??
+      process.env["INTERNAL_API_URL"] ??
+      process.env["API_URL"] ??
+      process.env["NEXT_PUBLIC_API_URL"],
+  );
+}
+
+export function publicApiBaseUrl() {
+  if (typeof window !== "undefined") {
+    return normalizeApiUrl(window.__DIGGIT_CONFIG__?.apiUrl);
+  }
+
+  return normalizeApiUrl(
+    process.env["PUBLIC_API_URL"] ??
+      process.env["NEXT_PUBLIC_API_URL"] ??
+      process.env["API_URL"],
+  );
 }
 
 export function apiUrl(path: string) {
@@ -25,7 +42,7 @@ export function apiUrl(path: string) {
 }
 
 export function runtimeConfigScript() {
-  return `window.__DIGGIT_CONFIG__=${JSON.stringify({ apiUrl: apiBaseUrl() })};`;
+  return `window.__DIGGIT_CONFIG__=${JSON.stringify({ apiUrl: publicApiBaseUrl() })};`;
 }
 
 function normalizeApiUrl(value: string | undefined) {

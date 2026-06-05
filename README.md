@@ -16,7 +16,7 @@ Diggit is a federated Git hosting MVP. It uses a Next.js web app, a Rust API, lo
 3. Run the API with `cargo run --manifest-path apps/api/Cargo.toml`.
 4. Run the web app with `pnpm install` then `pnpm dev`.
 
-The API listens on `http://localhost:3001` by default and the web app expects it at `NEXT_PUBLIC_API_URL`.
+The API listens on `http://localhost:3001` by default. For Docker deployments, set `API_INTERNAL_URL` to the API service URL that the web container can reach and `PUBLIC_API_URL` to the browser-facing API URL.
 
 ## Run From GHCR Images
 ```yaml
@@ -67,7 +67,10 @@ services:
     depends_on:
       - api
     environment:
-      API_URL: http://localhost:3001
+      # Used by server-rendered pages inside Docker.
+      API_INTERNAL_URL: http://api:3001
+      # Used by browser-side requests and rendered asset URLs.
+      PUBLIC_API_URL: http://localhost:3001
       PORT: "3000"
     ports:
       - "3000:3000"

@@ -4,15 +4,15 @@ import { MarkdownViewer } from "@/components/MarkdownViewer";
 import { RepoHeader } from "@/components/RepoHeader";
 import { SyncForkButton } from "@/components/SyncForkButton";
 import {
-  apiFetch,
   compareUpstream,
+  getRepository,
   getRepositoryFile,
   getRepositoryTree,
   listRepositoryBranches,
+  listPullRequests,
   repositoryRawFileUrl,
   type RepositoryCompare,
   type RepositoryBranch,
-  type PullRequest,
   type Repository,
   type RepositoryCommit,
   type RepositoryFile,
@@ -37,10 +37,10 @@ export default async function RepoPage({ params, searchParams }: Props) {
   const decodedOwner = decodeURIComponent(owner);
   const decodedName = decodeURIComponent(name);
   const baseHref = `/${encodeURIComponent(decodedOwner)}/${encodeURIComponent(decodedName)}`;
-  const repo = await apiFetch<Repository>(baseHref);
+  const repo = await getRepository(decodedOwner, decodedName);
   const selectedBranch = branch || repo.default_branch;
   const [pullRequests, branches, tree, upstreamCompare] = await Promise.all([
-    apiFetch<{ data: PullRequest[] }>(`${baseHref}/pull-requests`).catch(() => ({ data: [] })),
+    listPullRequests(decodedOwner, decodedName).catch(() => ({ data: [] })),
     listRepositoryBranches(decodedOwner, decodedName).catch(() => ({
       data: [{ name: repo.default_branch, is_default: true, commit_sha: null }],
     })),

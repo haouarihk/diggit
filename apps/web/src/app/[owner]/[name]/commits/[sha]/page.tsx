@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { CodeDiff } from "@/components/CodeDiff";
 import { RepoHeader, repoHref } from "@/components/RepoHeader";
-import { apiFetch, getCommit, type PullRequest, type Repository } from "@/lib/api";
+import { getCommit, getRepository, listPullRequests } from "@/lib/api";
 
 type Props = {
   params: Promise<{
@@ -18,8 +18,8 @@ export default async function CommitDetailPage({ params }: Props) {
   const decodedSha = decodeURIComponent(sha);
   const baseHref = repoHref(decodedOwner, decodedName);
   const [repo, pullRequests, detail] = await Promise.all([
-    apiFetch<Repository>(baseHref),
-    apiFetch<{ data: PullRequest[] }>(`${baseHref}/pull-requests`).catch(() => ({ data: [] })),
+    getRepository(decodedOwner, decodedName),
+    listPullRequests(decodedOwner, decodedName).catch(() => ({ data: [] })),
     getCommit(decodedOwner, decodedName, decodedSha),
   ]);
 

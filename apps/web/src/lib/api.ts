@@ -1,4 +1,4 @@
-import { apiBaseUrl } from "@/lib/runtime-config";
+import { apiBaseUrl, publicApiBaseUrl } from "@/lib/runtime-config";
 const API_URL = apiBaseUrl();
 
 export type Repository = {
@@ -284,6 +284,10 @@ export function getOrganization(org: string) {
   return apiFetch<Organization>(`/organizations/${encodeURIComponent(org)}`);
 }
 
+export function getRepository(owner: string, name: string) {
+  return apiFetch<Repository>(`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`);
+}
+
 export function getRepositoryTree(owner: string, name: string, refName?: string) {
   const searchParams = new URLSearchParams();
   if (refName) {
@@ -353,6 +357,12 @@ export function getRepositoryIssue(owner: string, name: string, number: number) 
   return apiFetch<Issue>(`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/issues/${number}`);
 }
 
+export function listPullRequests(owner: string, name: string) {
+  return apiFetch<Collection<PullRequest>>(
+    `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pull-requests`,
+  );
+}
+
 export function listRepositoryIssueComments(owner: string, name: string, number: number, page = 1, limit = 100) {
   const searchParams = new URLSearchParams({ page: String(page), limit: String(limit) });
   return apiFetch<PaginatedCollection<IssueComment>>(
@@ -371,7 +381,7 @@ export function repositoryRawFileUrl(owner: string, name: string, path: string, 
   if (refName) {
     searchParams.set("ref", refName);
   }
-  return `${API_URL}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/raw?${searchParams.toString()}`;
+  return `${publicApiBaseUrl()}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/raw?${searchParams.toString()}`;
 }
 
 export function listServers() {

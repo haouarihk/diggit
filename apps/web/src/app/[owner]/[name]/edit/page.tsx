@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { FileEditor } from "@/components/FileEditor";
 import { RepoHeader, repoHref } from "@/components/RepoHeader";
-import { apiFetch, getRepositoryFile, type PullRequest, type Repository } from "@/lib/api";
+import { getRepository, getRepositoryFile, listPullRequests } from "@/lib/api";
 
 type Props = {
   params: Promise<{
@@ -20,8 +20,8 @@ export default async function EditRepositoryFilePage({ params, searchParams }: P
   const decodedName = decodeURIComponent(name);
   const baseHref = repoHref(decodedOwner, decodedName);
   const [repo, pullRequests] = await Promise.all([
-    apiFetch<Repository>(baseHref),
-    apiFetch<{ data: PullRequest[] }>(`${baseHref}/pull-requests`).catch(() => ({ data: [] })),
+    getRepository(decodedOwner, decodedName),
+    listPullRequests(decodedOwner, decodedName).catch(() => ({ data: [] })),
   ]);
   const selectedFile = file
     ? await getRepositoryFile(decodedOwner, decodedName, file).catch(() => null)
