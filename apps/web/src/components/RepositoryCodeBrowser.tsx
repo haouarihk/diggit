@@ -1,5 +1,6 @@
 import Link from "next/link";
 import moment from "moment";
+import type { ReactNode } from "react";
 import { FileDeleteButton } from "@/components/FileDeleteButton";
 import { MarkdownViewer } from "@/components/MarkdownViewer";
 import {
@@ -46,7 +47,7 @@ export function RepositoryCodeBrowser({
     : tree.entries;
 
   return (
-    <div className={`grid items-start gap-6 ${currentPath ? "xl:grid-cols-[minmax(0,1fr)_280px]" : ""}`}>
+    <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_280px]">
       <main className="grid min-w-0 gap-6">
         <RepositoryCodeToolbar
           baseHref={baseHref}
@@ -96,7 +97,35 @@ export function RepositoryCodeBrowser({
           )}
         </section>
       </main>
-      {currentPath ? <RepositoryTreeSidebar baseHref={baseHref} entries={tree.entries} selectedPath={currentPath} selectedRef={selectedRef} /> : null}
+      <aside className="grid gap-4">
+        <RepositoryAboutCard repo={repo} selectedRef={selectedRef} />
+        {currentPath ? <RepositoryTreeSidebar baseHref={baseHref} entries={tree.entries} selectedPath={currentPath} selectedRef={selectedRef} /> : null}
+      </aside>
+    </div>
+  );
+}
+
+function RepositoryAboutCard({ repo, selectedRef }: { repo: Repository; selectedRef: string }) {
+  return (
+    <section className="grid gap-3 rounded-md border border-[#d0d7de] bg-white p-4">
+      <h2 className="text-base font-semibold">About</h2>
+      <p className="text-[#59636e]">{repo.description || "No description provided."}</p>
+      <div className="grid gap-2 border-t border-[#d8dee4] pt-3 text-sm">
+        <RepoFact label="Branch" value={selectedRef} />
+        <RepoFact label="Language" value={repo.dominant_language || "Unknown"} />
+        <RepoFact label="Stars" value={String(repo.stars_count)} />
+        <RepoFact label="Updated" value={<RelativeTime value={repo.updated_at} />} />
+        {repo.source_repository_id || repo.source_remote_url ? <RepoFact label="Type" value="Fork" /> : null}
+      </div>
+    </section>
+  );
+}
+
+function RepoFact({ label, value }: { label: string; value: ReactNode }) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <span className="text-[#59636e]">{label}</span>
+      <span className="truncate font-medium">{value}</span>
     </div>
   );
 }
