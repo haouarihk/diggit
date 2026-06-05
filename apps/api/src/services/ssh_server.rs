@@ -324,11 +324,12 @@ async fn run_git_ssh_command(
     let mut child_stdout = child.stdout.take().context("missing Git stdout")?;
     let mut child_stderr = child.stderr.take().context("missing Git stderr")?;
 
-    let stream = channel.into_stream();
-    let (mut ssh_reader, mut ssh_writer) = io::split(stream);
+    let (mut channel_read, channel_write) = channel.split();
+    let mut ssh_writer = channel_write.make_writer();
     let stderr_handle = handle.clone();
 
     let stdin_task = tokio::spawn(async move {
+        let mut ssh_reader = channel_read.make_reader();
         let result = io::copy(&mut ssh_reader, &mut child_stdin).await;
         let _ = child_stdin.shutdown().await;
         result
@@ -362,9 +363,8 @@ async fn run_git_ssh_command(
     let _ = stderr_task.await;
 
     let code = status.code().unwrap_or(1).max(0) as u32;
-    let _ = handle.exit_status_request(channel_id, code).await;
-    let _ = handle.eof(channel_id).await;
-    let _ = handle.close(channel_id).await;
+    let _ = channel_write.exit_status(code).await;
+    let _ = channel_write.close().await;
     Ok(())
 }
 
