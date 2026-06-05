@@ -40,6 +40,10 @@ pub(crate) struct Repository {
     pub(crate) description: String,
     pub(crate) visibility: String,
     pub(crate) default_branch: String,
+    pub(crate) issues_enabled: bool,
+    pub(crate) pull_requests_enabled: bool,
+    pub(crate) pull_request_policy: String,
+    pub(crate) archived_at: Option<DateTime<Utc>>,
     pub(crate) dominant_language: String,
     pub(crate) stars_count: i32,
     pub(crate) local_path: String,
@@ -79,6 +83,10 @@ pub(crate) struct RepositoryResponse {
     pub(crate) description: String,
     pub(crate) visibility: String,
     pub(crate) default_branch: String,
+    pub(crate) issues_enabled: bool,
+    pub(crate) pull_requests_enabled: bool,
+    pub(crate) pull_request_policy: String,
+    pub(crate) archived_at: Option<DateTime<Utc>>,
     pub(crate) dominant_language: String,
     pub(crate) stars_count: i32,
     pub(crate) forks_count: i64,
@@ -212,14 +220,6 @@ pub(crate) struct Namespace {
     pub(crate) kind: String,
     pub(crate) user_id: Option<Uuid>,
     pub(crate) organization_id: Option<Uuid>,
-    pub(crate) created_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Serialize, Deserialize, FromRow)]
-pub(crate) struct OrganizationMember {
-    pub(crate) organization_id: Uuid,
-    pub(crate) user_id: Uuid,
-    pub(crate) role: String,
     pub(crate) created_at: DateTime<Utc>,
 }
 
@@ -543,10 +543,57 @@ pub(crate) struct CreateRepoRequest {
 }
 
 #[derive(Debug, Deserialize)]
+pub(crate) struct UpdateRepoSettingsRequest {
+    pub(crate) name: Option<String>,
+    pub(crate) default_branch: Option<String>,
+    pub(crate) visibility: Option<String>,
+    pub(crate) issues_enabled: Option<bool>,
+    pub(crate) pull_requests_enabled: Option<bool>,
+    pub(crate) pull_request_policy: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct TransferRepoRequest {
+    pub(crate) owner: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct ArchiveRepoRequest {
+    pub(crate) archived: bool,
+}
+
+#[derive(Debug, Deserialize)]
 pub(crate) struct CreateOrganizationRequest {
     pub(crate) name: String,
     pub(crate) display_name: Option<String>,
     pub(crate) description: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct UpdateOrganizationRequest {
+    pub(crate) display_name: Option<String>,
+    pub(crate) description: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct UpsertCollaboratorRequest {
+    pub(crate) username: String,
+    pub(crate) role: Option<String>,
+    pub(crate) permission: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct UpsertRunnerSecretRequest {
+    pub(crate) name: String,
+    pub(crate) value: String,
+    pub(crate) environment: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct UpsertRunnerVariableRequest {
+    pub(crate) name: String,
+    pub(crate) value: String,
+    pub(crate) environment: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -627,6 +674,7 @@ pub(crate) struct RepoFileQuery {
     pub(crate) path: String,
     #[serde(rename = "ref")]
     pub(crate) ref_name: Option<String>,
+    pub(crate) message: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

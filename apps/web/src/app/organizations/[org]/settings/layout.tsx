@@ -18,7 +18,8 @@ export default async function OrganizationSettingsLayout({ children, params }: O
       <aside className="self-start rounded-md border border-[#d0d7de] bg-white">
         <nav aria-label="Organization settings" className="grid p-2">
           <SettingsLink href={settingsHref} label="General" />
-          <SettingsLink href={`${settingsHref}/runners`} label="Runners" />
+          <SettingsLink href={`${settingsHref}/collaborators`} label="Collaborators" />
+          <SettingsLink href={`${settingsHref}/secrets`} label="Secrets and variables" />
         </nav>
       </aside>
       {children}

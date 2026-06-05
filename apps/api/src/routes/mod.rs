@@ -57,12 +57,44 @@ pub(crate) fn router(state: AppState) -> Router {
             get(runners::list_org_runners),
         )
         .route(
+            "/orgs/{org}/actions/secrets",
+            get(runners::list_org_runner_secrets).post(runners::upsert_org_runner_secret),
+        )
+        .route(
+            "/orgs/{org}/actions/secrets/{name}",
+            delete(runners::delete_org_runner_secret),
+        )
+        .route(
+            "/orgs/{org}/actions/variables",
+            get(runners::list_org_runner_variables).post(runners::upsert_org_runner_variable),
+        )
+        .route(
+            "/orgs/{org}/actions/variables/{name}",
+            delete(runners::delete_org_runner_variable),
+        )
+        .route(
             "/repos/{owner}/{name}/actions/runners/registration-token",
             post(runners::create_repo_runner_token),
         )
         .route(
             "/repos/{owner}/{name}/actions/runners",
             get(runners::list_repo_runners),
+        )
+        .route(
+            "/repos/{owner}/{name}/actions/secrets",
+            get(runners::list_repo_runner_secrets).post(runners::upsert_repo_runner_secret),
+        )
+        .route(
+            "/repos/{owner}/{name}/actions/secrets/{secret}",
+            delete(runners::delete_repo_runner_secret),
+        )
+        .route(
+            "/repos/{owner}/{name}/actions/variables",
+            get(runners::list_repo_runner_variables).post(runners::upsert_repo_runner_variable),
+        )
+        .route(
+            "/repos/{owner}/{name}/actions/variables/{variable}",
+            delete(runners::delete_repo_runner_variable),
         )
         .route("/api/actions/register", post(runners::register_runner))
         .route(
@@ -81,7 +113,9 @@ pub(crate) fn router(state: AppState) -> Router {
         )
         .route(
             "/organizations/{name}",
-            get(organizations::get_organization).delete(organizations::delete_organization),
+            get(organizations::get_organization)
+                .patch(organizations::update_organization)
+                .delete(organizations::delete_organization),
         )
         .route(
             "/organizations/{name}/repos",
@@ -89,11 +123,26 @@ pub(crate) fn router(state: AppState) -> Router {
         )
         .route(
             "/organizations/{name}/members",
-            get(organizations::list_organization_members),
+            get(organizations::list_organization_members)
+                .post(organizations::upsert_organization_member),
+        )
+        .route(
+            "/organizations/{name}/members/{username}",
+            delete(organizations::delete_organization_member),
         )
         .route(
             "/repos/{owner}/{name}",
-            get(repositories::get_repo).delete(repositories::delete_repo),
+            get(repositories::get_repo)
+                .patch(repositories::update_repo_settings)
+                .delete(repositories::delete_repo),
+        )
+        .route(
+            "/repos/{owner}/{name}/transfer",
+            post(repositories::transfer_repo),
+        )
+        .route(
+            "/repos/{owner}/{name}/archive",
+            post(repositories::archive_repo),
         )
         .route(
             "/repos/{owner}/{name}/tree",
@@ -102,6 +151,14 @@ pub(crate) fn router(state: AppState) -> Router {
         .route(
             "/repos/{owner}/{name}/branches",
             get(repositories::list_repo_branches),
+        )
+        .route(
+            "/repos/{owner}/{name}/collaborators",
+            get(repositories::list_repo_collaborators).post(repositories::upsert_repo_collaborator),
+        )
+        .route(
+            "/repos/{owner}/{name}/collaborators/{username}",
+            delete(repositories::delete_repo_collaborator),
         )
         .route(
             "/repos/{owner}/{name}/contents",

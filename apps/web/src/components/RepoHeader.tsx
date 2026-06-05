@@ -43,13 +43,15 @@ export function RepoHeader({ activeTab, issuesCount = 0, pullRequestsCount = 0, 
 
       <nav aria-label="Repository" className="flex gap-1 overflow-x-auto">
         <RepoTab active={activeTab === "code"} href={baseHref} label="Code" />
-        <RepoTab active={activeTab === "issues"} href={`${baseHref}/issues`} label="Issues" count={issuesCount} />
-        <RepoTab
-          active={activeTab === "pull-requests"}
-          href={`${baseHref}/pull-requests`}
-          label="Pull requests"
-          count={pullRequestsCount}
-        />
+        {repo.issues_enabled ? <RepoTab active={activeTab === "issues"} href={`${baseHref}/issues`} label="Issues" count={issuesCount} /> : null}
+        {repo.pull_requests_enabled ? (
+          <RepoTab
+            active={activeTab === "pull-requests"}
+            href={`${baseHref}/pull-requests`}
+            label="Pull requests"
+            count={pullRequestsCount}
+          />
+        ) : null}
         <RepoTab active={activeTab === "actions"} href={`${baseHref}/actions`} label="Actions" />
         <RepoTab active={activeTab === "settings"} href={`${baseHref}/settings`} label="Settings" />
       </nav>

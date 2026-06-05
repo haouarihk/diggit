@@ -111,11 +111,8 @@ export default async function RepoPage({ params, searchParams }: Props) {
             </div>
             <FileTable
               baseHref={baseHref}
-              canModify={canModifySelectedBranch}
               branch={selectedBranch}
-              name={decodedName}
               entries={tree.entries}
-              owner={decodedOwner}
               selectedPath={selectedPath}
             />
           </section>
@@ -177,15 +174,6 @@ export default async function RepoPage({ params, searchParams }: Props) {
             <CloneUrl label="HTTP" value={cloneCommand(repo.http_url, selectedBranch, selectedBranchExists)} />
           </section>
 
-          <section className="grid gap-3 rounded-md border border-[#d0d7de] bg-white p-4">
-            <h2 className="text-base font-semibold">Repository actions</h2>
-            <Link className="inline-flex justify-center rounded-md border border-black/15 bg-white px-3 py-1.5 font-bold text-[#1f2328]" href={`${baseHref}/actions`}>
-              View actions
-            </Link>
-            <Link className="inline-flex justify-center rounded-md border border-black/15 bg-white px-3 py-1.5 font-bold text-[#1f2328]" href={`${baseHref}/settings/runners`}>
-              Manage runners
-            </Link>
-          </section>
         </aside>
       </div>
     </div>
@@ -243,18 +231,12 @@ function ForkStatusBanner({
 function FileTable({
   baseHref,
   branch,
-  canModify,
-  name,
   entries,
-  owner,
   selectedPath,
 }: {
   baseHref: string;
   branch: string;
-  canModify: boolean;
-  name: string;
   entries: RepositoryTreeEntry[];
-  owner: string;
   selectedPath?: string;
 }) {
   if (entries.length === 0) {
@@ -267,17 +249,16 @@ function FileTable({
 
   return (
     <div className="overflow-hidden rounded-b-md border border-t-0 border-[#d0d7de] bg-white">
-      <div className="hidden grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)_150px_92px] gap-4 border-b border-[#d8dee4] bg-[#f6f8fa] px-4 py-2 text-xs font-semibold uppercase tracking-wide text-[#59636e] md:grid">
+      <div className="hidden grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)_150px] gap-4 border-b border-[#d8dee4] bg-[#f6f8fa] px-4 py-2 text-xs font-semibold uppercase tracking-wide text-[#59636e] md:grid">
         <span>Name</span>
         <span>Last commit</span>
         <span>Last edit</span>
-        <span>Actions</span>
       </div>
       {entries.map((entry) => {
         const isSelected = entry.path === selectedPath;
         return (
           <div
-            className={`grid gap-2 border-b border-[#d8dee4] px-4 py-3 last:border-b-0 md:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)_150px_92px] md:gap-4 ${
+            className={`grid gap-2 border-b border-[#d8dee4] px-4 py-3 last:border-b-0 md:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)_150px] md:gap-4 ${
               isSelected ? "bg-[#ddf4ff]" : "bg-white"
             }`}
             key={entry.path}
@@ -296,11 +277,6 @@ function FileTable({
               {entry.last_commit?.message ?? "No commit message"}
             </div>
             <div className="text-[#59636e]">{formatDate(entry.last_commit?.created_at)}</div>
-            {canModify ? (
-              <FileDeleteButton name={name} owner={owner} path={entry.path} redirectTo={baseHref} />
-            ) : (
-              <span className="text-xs text-[#59636e]">View only</span>
-            )}
           </div>
         );
       })}

@@ -16,6 +16,10 @@ export type Repository = {
   description: string;
   visibility: string;
   default_branch: string;
+  issues_enabled: boolean;
+  pull_requests_enabled: boolean;
+  pull_request_policy: "anyone" | "collaborators" | string;
+  archived_at: string | null;
   dominant_language: string;
   stars_count: number;
   forks_count?: number;
@@ -88,6 +92,28 @@ export type Organization = {
   created_by: string;
   created_at: string;
   updated_at: string;
+};
+
+export type RunnerSecret = {
+  id: string;
+  name: string;
+  environment: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type RunnerVariable = RunnerSecret & {
+  value: string;
+};
+
+export type Collaborator = {
+  id: string;
+  username: string;
+  display_name: string;
+  avatar_url: string | null;
+  permission?: string;
+  role?: string;
+  created_at: string;
 };
 
 export type PullRequest = {
@@ -313,6 +339,10 @@ export function getOrganization(org: string) {
   return apiFetch<Organization>(`/organizations/${encodeURIComponent(org)}`);
 }
 
+export function listOrganizationMembers(org: string) {
+  return apiFetch<Collection<Collaborator>>(`/organizations/${encodeURIComponent(org)}/members`);
+}
+
 export function getRepository(owner: string, name: string) {
   return apiFetch<Repository>(`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`);
 }
@@ -331,6 +361,12 @@ export function getRepositoryTree(owner: string, name: string, refName?: string)
 export function listRepositoryBranches(owner: string, name: string) {
   return apiFetch<Collection<RepositoryBranch>>(
     `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/branches`,
+  );
+}
+
+export function listRepositoryCollaborators(owner: string, name: string) {
+  return apiFetch<Collection<Collaborator>>(
+    `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/collaborators`,
   );
 }
 
@@ -390,6 +426,26 @@ export function listPullRequests(owner: string, name: string) {
   return apiFetch<Collection<PullRequest>>(
     `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pull-requests`,
   );
+}
+
+export function listRepositoryRunnerSecrets(owner: string, name: string) {
+  return apiFetch<Collection<RunnerSecret>>(
+    `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/actions/secrets`,
+  );
+}
+
+export function listRepositoryRunnerVariables(owner: string, name: string) {
+  return apiFetch<Collection<RunnerVariable>>(
+    `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/actions/variables`,
+  );
+}
+
+export function listOrganizationRunnerSecrets(org: string) {
+  return apiFetch<Collection<RunnerSecret>>(`/orgs/${encodeURIComponent(org)}/actions/secrets`);
+}
+
+export function listOrganizationRunnerVariables(org: string) {
+  return apiFetch<Collection<RunnerVariable>>(`/orgs/${encodeURIComponent(org)}/actions/variables`);
 }
 
 export function listRepositoryIssueComments(owner: string, name: string, number: number, page = 1, limit = 100) {

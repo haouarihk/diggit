@@ -4,9 +4,15 @@ use axum::{
     http::HeaderMap,
 };
 use serde_json::{Value, json};
+use sqlx::Row;
 use uuid::Uuid;
 
-use crate::{error::ApiResult, models::*, services::*, state::AppState};
+use crate::{
+    error::{ApiError, ApiResult},
+    models::*,
+    services::*,
+    state::AppState,
+};
 
 pub(crate) async fn create_server_runner_token(
     State(state): State<AppState>,
@@ -111,6 +117,200 @@ pub(crate) async fn list_repo_runners(
     list_runners(&state.pool, "repository", None, None, Some(repo.id)).await
 }
 
+pub(crate) async fn list_org_runner_secrets(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(org): Path<String>,
+) -> ApiResult<Json<Value>> {
+    let auth = require_auth(&state, &headers)?;
+    let organization = get_organization_by_name(&state.pool, &org).await?;
+    ensure_org_admin(&state.pool, organization.id, auth.id).await?;
+    list_runner_config(&state, "runner_secrets", None, Some(organization.id)).await
+}
+
+pub(crate) async fn upsert_org_runner_secret(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(org): Path<String>,
+    Json(input): Json<UpsertRunnerSecretRequest>,
+) -> ApiResult<Json<Value>> {
+    let auth = require_auth(&state, &headers)?;
+    let organization = get_organization_by_name(&state.pool, &org).await?;
+    ensure_org_admin(&state.pool, organization.id, auth.id).await?;
+    upsert_runner_config(
+        &state,
+        "runner_secrets",
+        "organization",
+        None,
+        Some(organization.id),
+        &input.name,
+        &input.value,
+        input.environment.as_deref(),
+        false,
+    )
+    .await
+}
+
+pub(crate) async fn delete_org_runner_secret(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((org, name)): Path<(String, String)>,
+) -> ApiResult<Json<Value>> {
+    let auth = require_auth(&state, &headers)?;
+    let organization = get_organization_by_name(&state.pool, &org).await?;
+    ensure_org_admin(&state.pool, organization.id, auth.id).await?;
+    delete_runner_config(&state, "runner_secrets", None, Some(organization.id), &name).await
+}
+
+pub(crate) async fn list_repo_runner_secrets(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((owner, name)): Path<(String, String)>,
+) -> ApiResult<Json<Value>> {
+    let auth = require_auth(&state, &headers)?;
+    let repo = find_repo(&state.pool, &owner, &name).await?;
+    ensure_repo_admin(&state.pool, &auth, &repo).await?;
+    list_runner_config(&state, "runner_secrets", Some(repo.id), None).await
+}
+
+pub(crate) async fn upsert_repo_runner_secret(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((owner, name)): Path<(String, String)>,
+    Json(input): Json<UpsertRunnerSecretRequest>,
+) -> ApiResult<Json<Value>> {
+    let auth = require_auth(&state, &headers)?;
+    let repo = find_repo(&state.pool, &owner, &name).await?;
+    ensure_repo_admin(&state.pool, &auth, &repo).await?;
+    upsert_runner_config(
+        &state,
+        "runner_secrets",
+        "repository",
+        Some(repo.id),
+        None,
+        &input.name,
+        &input.value,
+        input.environment.as_deref(),
+        false,
+    )
+    .await
+}
+
+pub(crate) async fn delete_repo_runner_secret(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((owner, repo_name, secret_name)): Path<(String, String, String)>,
+) -> ApiResult<Json<Value>> {
+    let auth = require_auth(&state, &headers)?;
+    let repo = find_repo(&state.pool, &owner, &repo_name).await?;
+    ensure_repo_admin(&state.pool, &auth, &repo).await?;
+    delete_runner_config(&state, "runner_secrets", Some(repo.id), None, &secret_name).await
+}
+
+pub(crate) async fn list_org_runner_variables(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(org): Path<String>,
+) -> ApiResult<Json<Value>> {
+    let auth = require_auth(&state, &headers)?;
+    let organization = get_organization_by_name(&state.pool, &org).await?;
+    ensure_org_admin(&state.pool, organization.id, auth.id).await?;
+    list_runner_config(&state, "runner_variables", None, Some(organization.id)).await
+}
+
+pub(crate) async fn upsert_org_runner_variable(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(org): Path<String>,
+    Json(input): Json<UpsertRunnerVariableRequest>,
+) -> ApiResult<Json<Value>> {
+    let auth = require_auth(&state, &headers)?;
+    let organization = get_organization_by_name(&state.pool, &org).await?;
+    ensure_org_admin(&state.pool, organization.id, auth.id).await?;
+    upsert_runner_config(
+        &state,
+        "runner_variables",
+        "organization",
+        None,
+        Some(organization.id),
+        &input.name,
+        &input.value,
+        input.environment.as_deref(),
+        true,
+    )
+    .await
+}
+
+pub(crate) async fn delete_org_runner_variable(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((org, name)): Path<(String, String)>,
+) -> ApiResult<Json<Value>> {
+    let auth = require_auth(&state, &headers)?;
+    let organization = get_organization_by_name(&state.pool, &org).await?;
+    ensure_org_admin(&state.pool, organization.id, auth.id).await?;
+    delete_runner_config(
+        &state,
+        "runner_variables",
+        None,
+        Some(organization.id),
+        &name,
+    )
+    .await
+}
+
+pub(crate) async fn list_repo_runner_variables(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((owner, name)): Path<(String, String)>,
+) -> ApiResult<Json<Value>> {
+    let auth = require_auth(&state, &headers)?;
+    let repo = find_repo(&state.pool, &owner, &name).await?;
+    ensure_repo_admin(&state.pool, &auth, &repo).await?;
+    list_runner_config(&state, "runner_variables", Some(repo.id), None).await
+}
+
+pub(crate) async fn upsert_repo_runner_variable(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((owner, name)): Path<(String, String)>,
+    Json(input): Json<UpsertRunnerVariableRequest>,
+) -> ApiResult<Json<Value>> {
+    let auth = require_auth(&state, &headers)?;
+    let repo = find_repo(&state.pool, &owner, &name).await?;
+    ensure_repo_admin(&state.pool, &auth, &repo).await?;
+    upsert_runner_config(
+        &state,
+        "runner_variables",
+        "repository",
+        Some(repo.id),
+        None,
+        &input.name,
+        &input.value,
+        input.environment.as_deref(),
+        true,
+    )
+    .await
+}
+
+pub(crate) async fn delete_repo_runner_variable(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((owner, repo_name, variable_name)): Path<(String, String, String)>,
+) -> ApiResult<Json<Value>> {
+    let auth = require_auth(&state, &headers)?;
+    let repo = find_repo(&state.pool, &owner, &repo_name).await?;
+    ensure_repo_admin(&state.pool, &auth, &repo).await?;
+    delete_runner_config(
+        &state,
+        "runner_variables",
+        Some(repo.id),
+        None,
+        &variable_name,
+    )
+    .await
+}
+
 pub(crate) async fn register_runner(
     State(state): State<AppState>,
     Json(input): Json<RegisterRunnerRequest>,
@@ -176,4 +376,243 @@ pub(crate) async fn fetch_runner_task(
         "message": "no task available",
         "nextPollSeconds": 5
     })))
+}
+
+async fn list_runner_config(
+    state: &AppState,
+    table: &str,
+    repository_id: Option<Uuid>,
+    organization_id: Option<Uuid>,
+) -> ApiResult<Json<Value>> {
+    let rows = if table == "runner_variables" {
+        sqlx::query(
+            r#"
+            SELECT id, name, environment, value, created_at, updated_at
+            FROM runner_variables
+            WHERE ($1::UUID IS NULL OR repository_id = $1)
+              AND ($2::UUID IS NULL OR organization_id = $2)
+            ORDER BY environment NULLS FIRST, name ASC
+            "#,
+        )
+        .bind(repository_id)
+        .bind(organization_id)
+        .fetch_all(&state.pool)
+        .await?
+        .into_iter()
+        .map(|row| {
+            json!({
+                "id": row.get::<Uuid, _>("id"),
+                "name": row.get::<String, _>("name"),
+                "environment": row.get::<Option<String>, _>("environment"),
+                "value": row.get::<String, _>("value"),
+                "created_at": row.get::<chrono::DateTime<chrono::Utc>, _>("created_at"),
+                "updated_at": row.get::<chrono::DateTime<chrono::Utc>, _>("updated_at"),
+            })
+        })
+        .collect::<Vec<_>>()
+    } else {
+        sqlx::query(
+            r#"
+            SELECT id, name, environment, created_at, updated_at
+            FROM runner_secrets
+            WHERE ($1::UUID IS NULL OR repository_id = $1)
+              AND ($2::UUID IS NULL OR organization_id = $2)
+            ORDER BY environment NULLS FIRST, name ASC
+            "#,
+        )
+        .bind(repository_id)
+        .bind(organization_id)
+        .fetch_all(&state.pool)
+        .await?
+        .into_iter()
+        .map(|row| {
+            json!({
+                "id": row.get::<Uuid, _>("id"),
+                "name": row.get::<String, _>("name"),
+                "environment": row.get::<Option<String>, _>("environment"),
+                "created_at": row.get::<chrono::DateTime<chrono::Utc>, _>("created_at"),
+                "updated_at": row.get::<chrono::DateTime<chrono::Utc>, _>("updated_at"),
+            })
+        })
+        .collect::<Vec<_>>()
+    };
+
+    Ok(Json(json!({ "data": rows })))
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn upsert_runner_config(
+    state: &AppState,
+    table: &str,
+    scope_kind: &str,
+    repository_id: Option<Uuid>,
+    organization_id: Option<Uuid>,
+    name: &str,
+    value: &str,
+    environment: Option<&str>,
+    returns_value: bool,
+) -> ApiResult<Json<Value>> {
+    let name = normalize_config_name(name)?;
+    let environment = normalize_environment(environment);
+    if value.is_empty() {
+        return Err(ApiError::BadRequest("value is required".to_string()));
+    }
+
+    let existing: Option<(Uuid,)> = if table == "runner_variables" {
+        sqlx::query_as(
+            r#"
+            SELECT id
+            FROM runner_variables
+            WHERE ($1::UUID IS NULL OR repository_id = $1)
+              AND ($2::UUID IS NULL OR organization_id = $2)
+              AND COALESCE(environment, '') = COALESCE($3, '')
+              AND lower(name) = lower($4)
+            "#,
+        )
+        .bind(repository_id)
+        .bind(organization_id)
+        .bind(&environment)
+        .bind(&name)
+        .fetch_optional(&state.pool)
+        .await?
+    } else {
+        sqlx::query_as(
+            r#"
+            SELECT id
+            FROM runner_secrets
+            WHERE ($1::UUID IS NULL OR repository_id = $1)
+              AND ($2::UUID IS NULL OR organization_id = $2)
+              AND COALESCE(environment, '') = COALESCE($3, '')
+              AND lower(name) = lower($4)
+            "#,
+        )
+        .bind(repository_id)
+        .bind(organization_id)
+        .bind(&environment)
+        .bind(&name)
+        .fetch_optional(&state.pool)
+        .await?
+    };
+
+    let id = existing.map(|(id,)| id).unwrap_or_else(Uuid::now_v7);
+    if table == "runner_variables" {
+        sqlx::query(
+            r#"
+            INSERT INTO runner_variables
+              (id, scope_kind, repository_id, organization_id, environment, name, value)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            ON CONFLICT (id) DO UPDATE
+            SET environment = EXCLUDED.environment,
+                name = EXCLUDED.name,
+                value = EXCLUDED.value,
+                updated_at = now()
+            "#,
+        )
+        .bind(id)
+        .bind(scope_kind)
+        .bind(repository_id)
+        .bind(organization_id)
+        .bind(&environment)
+        .bind(&name)
+        .bind(value)
+        .execute(&state.pool)
+        .await?;
+    } else {
+        sqlx::query(
+            r#"
+            INSERT INTO runner_secrets
+              (id, scope_kind, repository_id, organization_id, environment, name, value)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            ON CONFLICT (id) DO UPDATE
+            SET environment = EXCLUDED.environment,
+                name = EXCLUDED.name,
+                value = EXCLUDED.value,
+                updated_at = now()
+            "#,
+        )
+        .bind(id)
+        .bind(scope_kind)
+        .bind(repository_id)
+        .bind(organization_id)
+        .bind(&environment)
+        .bind(&name)
+        .bind(value)
+        .execute(&state.pool)
+        .await?;
+    }
+
+    Ok(Json(json!({
+        "id": id,
+        "name": name,
+        "environment": environment,
+        "value": if returns_value { Some(value) } else { None::<&str> },
+    })))
+}
+
+async fn delete_runner_config(
+    state: &AppState,
+    table: &str,
+    repository_id: Option<Uuid>,
+    organization_id: Option<Uuid>,
+    name: &str,
+) -> ApiResult<Json<Value>> {
+    let name = normalize_config_name(name)?;
+    let rows_affected = if table == "runner_variables" {
+        sqlx::query(
+            r#"
+            DELETE FROM runner_variables
+            WHERE ($1::UUID IS NULL OR repository_id = $1)
+              AND ($2::UUID IS NULL OR organization_id = $2)
+              AND lower(name) = lower($3)
+            "#,
+        )
+        .bind(repository_id)
+        .bind(organization_id)
+        .bind(&name)
+        .execute(&state.pool)
+        .await?
+        .rows_affected()
+    } else {
+        sqlx::query(
+            r#"
+            DELETE FROM runner_secrets
+            WHERE ($1::UUID IS NULL OR repository_id = $1)
+              AND ($2::UUID IS NULL OR organization_id = $2)
+              AND lower(name) = lower($3)
+            "#,
+        )
+        .bind(repository_id)
+        .bind(organization_id)
+        .bind(&name)
+        .execute(&state.pool)
+        .await?
+        .rows_affected()
+    };
+
+    if rows_affected == 0 {
+        return Err(ApiError::NotFound);
+    }
+    Ok(Json(json!({ "status": "deleted" })))
+}
+
+fn normalize_config_name(value: &str) -> ApiResult<String> {
+    let normalized = value.trim().to_ascii_uppercase();
+    let valid = !normalized.is_empty()
+        && normalized
+            .chars()
+            .all(|char| char.is_ascii_alphanumeric() || char == '_');
+    if valid {
+        Ok(normalized)
+    } else {
+        Err(ApiError::BadRequest(
+            "name must contain only letters, numbers, and underscores".to_string(),
+        ))
+    }
+}
+
+fn normalize_environment(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
 }

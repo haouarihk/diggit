@@ -6,6 +6,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use serde_json::{Value, json};
+use sqlx::Row;
 use std::path::PathBuf;
 use tokio::fs;
 use uuid::Uuid;
@@ -94,6 +95,288 @@ pub(crate) async fn delete_repo(
     }
 
     Ok(StatusCode::NO_CONTENT)
+}
+
+pub(crate) async fn update_repo_settings(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((owner, name)): Path<(String, String)>,
+    Json(input): Json<UpdateRepoSettingsRequest>,
+) -> ApiResult<Json<RepositoryResponse>> {
+    let auth = require_auth(&state, &headers)?;
+    let repo = find_repo(&state.pool, &owner, &name).await?;
+    ensure_repo_admin(&state.pool, &auth, &repo).await?;
+
+    let old_owner = repo.owner_handle.clone();
+    let old_name = repo.name.clone();
+    let next_name = match input.name.as_deref() {
+        Some(value) => normalize_name(value)?,
+        None => repo.name.clone(),
+    };
+    let next_visibility = match input.visibility.as_deref() {
+        Some("public" | "private") => input.visibility.clone().unwrap(),
+        Some(_) => return Err(ApiError::BadRequest("invalid visibility".to_string())),
+        None => repo.visibility.clone(),
+    };
+    let next_policy = match input.pull_request_policy.as_deref() {
+        Some("anyone" | "collaborators") => input.pull_request_policy.clone().unwrap(),
+        Some(_) => {
+            return Err(ApiError::BadRequest(
+                "invalid pull request policy".to_string(),
+            ));
+        }
+        None => repo.pull_request_policy.clone(),
+    };
+    let next_default_branch = input
+        .default_branch
+        .as_ref()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| repo.default_branch.clone());
+
+    if next_name != repo.name {
+        let existing: Option<(Uuid,)> =
+            sqlx::query_as("SELECT id FROM repositories WHERE owner_handle = $1 AND name = $2")
+                .bind(&repo.owner_handle)
+                .bind(&next_name)
+                .fetch_optional(&state.pool)
+                .await?;
+        if existing.is_some() {
+            return Err(ApiError::Conflict(format!(
+                "repository {}/{} already exists",
+                repo.owner_handle, next_name
+            )));
+        }
+    }
+
+    validate_default_branch(&repo, &next_default_branch).await?;
+
+    let next_local_path = repo_path(&state.config, &repo.owner_handle, &next_name);
+    if next_name != repo.name {
+        move_repo_storage(&repo.local_path, &next_local_path).await?;
+    }
+
+    let updated = sqlx::query_as::<_, Repository>(
+        r#"
+        UPDATE repositories
+        SET name = $2,
+            visibility = $3,
+            default_branch = $4,
+            issues_enabled = $5,
+            pull_requests_enabled = $6,
+            pull_request_policy = $7,
+            local_path = $8,
+            updated_at = now()
+        WHERE id = $1
+        RETURNING *
+        "#,
+    )
+    .bind(repo.id)
+    .bind(next_name)
+    .bind(next_visibility)
+    .bind(next_default_branch)
+    .bind(input.issues_enabled.unwrap_or(repo.issues_enabled))
+    .bind(
+        input
+            .pull_requests_enabled
+            .unwrap_or(repo.pull_requests_enabled),
+    )
+    .bind(next_policy)
+    .bind(next_local_path.to_string_lossy().to_string())
+    .fetch_one(&state.pool)
+    .await?;
+
+    invalidate_repo_cache(&state, &old_owner, &old_name).await;
+    invalidate_repo_cache(&state, &updated.owner_handle, &updated.name).await;
+    Ok(Json(
+        repository_response(&state.pool, &state.config, updated).await?,
+    ))
+}
+
+pub(crate) async fn transfer_repo(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((owner, name)): Path<(String, String)>,
+    Json(input): Json<TransferRepoRequest>,
+) -> ApiResult<Json<RepositoryResponse>> {
+    let auth = require_auth(&state, &headers)?;
+    let repo = find_repo(&state.pool, &owner, &name).await?;
+    ensure_repo_admin(&state.pool, &auth, &repo).await?;
+    let namespace = resolve_writable_namespace(&state.pool, &auth, &input.owner).await?;
+
+    if namespace.name == repo.owner_handle {
+        return Ok(Json(
+            repository_response(&state.pool, &state.config, repo).await?,
+        ));
+    }
+
+    let existing: Option<(Uuid,)> =
+        sqlx::query_as("SELECT id FROM repositories WHERE owner_handle = $1 AND name = $2")
+            .bind(&namespace.name)
+            .bind(&repo.name)
+            .fetch_optional(&state.pool)
+            .await?;
+    if existing.is_some() {
+        return Err(ApiError::Conflict(format!(
+            "repository {}/{} already exists",
+            namespace.name, repo.name
+        )));
+    }
+
+    let old_owner = repo.owner_handle.clone();
+    let old_name = repo.name.clone();
+    let next_local_path = repo_path(&state.config, &namespace.name, &repo.name);
+    move_repo_storage(&repo.local_path, &next_local_path).await?;
+
+    let updated = sqlx::query_as::<_, Repository>(
+        r#"
+        UPDATE repositories
+        SET namespace_id = $2,
+            owner_id = $3,
+            owner_handle = $4,
+            local_path = $5,
+            updated_at = now()
+        WHERE id = $1
+        RETURNING *
+        "#,
+    )
+    .bind(repo.id)
+    .bind(namespace.id)
+    .bind(namespace.user_id)
+    .bind(&namespace.name)
+    .bind(next_local_path.to_string_lossy().to_string())
+    .fetch_one(&state.pool)
+    .await?;
+
+    invalidate_repo_cache(&state, &old_owner, &old_name).await;
+    invalidate_repo_cache(&state, &updated.owner_handle, &updated.name).await;
+    Ok(Json(
+        repository_response(&state.pool, &state.config, updated).await?,
+    ))
+}
+
+pub(crate) async fn archive_repo(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((owner, name)): Path<(String, String)>,
+    Json(input): Json<ArchiveRepoRequest>,
+) -> ApiResult<Json<RepositoryResponse>> {
+    let auth = require_auth(&state, &headers)?;
+    let repo = find_repo(&state.pool, &owner, &name).await?;
+    ensure_repo_admin(&state.pool, &auth, &repo).await?;
+    let updated = sqlx::query_as::<_, Repository>(
+        r#"
+        UPDATE repositories
+        SET archived_at = CASE WHEN $2 THEN now() ELSE NULL END,
+            updated_at = now()
+        WHERE id = $1
+        RETURNING *
+        "#,
+    )
+    .bind(repo.id)
+    .bind(input.archived)
+    .fetch_one(&state.pool)
+    .await?;
+
+    invalidate_repo_cache(&state, &updated.owner_handle, &updated.name).await;
+    Ok(Json(
+        repository_response(&state.pool, &state.config, updated).await?,
+    ))
+}
+
+pub(crate) async fn list_repo_collaborators(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((owner, name)): Path<(String, String)>,
+) -> ApiResult<Json<Value>> {
+    let auth = require_auth(&state, &headers)?;
+    let repo = find_repo(&state.pool, &owner, &name).await?;
+    ensure_repo_admin(&state.pool, &auth, &repo).await?;
+    let collaborators = sqlx::query(
+        r#"
+        SELECT users.id, users.username, users.display_name, users.avatar_url,
+               repository_collaborators.permission, repository_collaborators.created_at
+        FROM repository_collaborators
+        JOIN users ON users.id = repository_collaborators.user_id
+        WHERE repository_collaborators.repository_id = $1
+        ORDER BY users.username ASC
+        "#,
+    )
+    .bind(repo.id)
+    .fetch_all(&state.pool)
+    .await?;
+
+    let data = collaborators
+        .into_iter()
+        .map(|row| {
+            json!({
+                "id": row.get::<Uuid, _>("id"),
+                "username": row.get::<String, _>("username"),
+                "display_name": row.get::<String, _>("display_name"),
+                "avatar_url": row.get::<Option<String>, _>("avatar_url"),
+                "permission": row.get::<String, _>("permission"),
+                "created_at": row.get::<chrono::DateTime<chrono::Utc>, _>("created_at"),
+            })
+        })
+        .collect::<Vec<_>>();
+
+    Ok(Json(json!({ "data": data })))
+}
+
+pub(crate) async fn upsert_repo_collaborator(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((owner, name)): Path<(String, String)>,
+    Json(input): Json<UpsertCollaboratorRequest>,
+) -> ApiResult<Json<Value>> {
+    let auth = require_auth(&state, &headers)?;
+    let repo = find_repo(&state.pool, &owner, &name).await?;
+    ensure_repo_admin(&state.pool, &auth, &repo).await?;
+    let user = get_user_by_username(&state.pool, &normalize_name(&input.username)?).await?;
+    let permission = normalize_repo_permission(input.permission.as_deref().unwrap_or("write"))?;
+
+    sqlx::query(
+        r#"
+        INSERT INTO repository_collaborators (repository_id, user_id, permission)
+        VALUES ($1, $2, $3)
+        ON CONFLICT (repository_id, user_id) DO UPDATE
+        SET permission = EXCLUDED.permission
+        "#,
+    )
+    .bind(repo.id)
+    .bind(user.id)
+    .bind(&permission)
+    .execute(&state.pool)
+    .await?;
+
+    Ok(Json(json!({
+        "username": user.username,
+        "display_name": user.display_name,
+        "permission": permission,
+    })))
+}
+
+pub(crate) async fn delete_repo_collaborator(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((owner, name, username)): Path<(String, String, String)>,
+) -> ApiResult<Json<Value>> {
+    let auth = require_auth(&state, &headers)?;
+    let repo = find_repo(&state.pool, &owner, &name).await?;
+    ensure_repo_admin(&state.pool, &auth, &repo).await?;
+    let user = get_user_by_username(&state.pool, &normalize_name(&username)?).await?;
+    let result = sqlx::query(
+        "DELETE FROM repository_collaborators WHERE repository_id = $1 AND user_id = $2",
+    )
+    .bind(repo.id)
+    .bind(user.id)
+    .execute(&state.pool)
+    .await?;
+
+    if result.rows_affected() == 0 {
+        return Err(ApiError::NotFound);
+    }
+    Ok(Json(json!({ "status": "deleted" })))
 }
 
 pub(crate) async fn list_repos(State(state): State<AppState>) -> ApiResult<Json<Value>> {
@@ -431,7 +714,11 @@ pub(crate) async fn delete_repo_path(
         &auth,
         &path,
         RepoFileChange::Delete,
-        format!("Delete {}", repo_path_name(&path)),
+        query
+            .message
+            .map(|message| message.trim().to_string())
+            .filter(|message| !message.is_empty())
+            .unwrap_or_else(|| format!("Deleting {}", repo_path_name(&path))),
     )
     .await?;
     sqlx::query("UPDATE repositories SET updated_at = now() WHERE id = $1")
@@ -624,6 +911,12 @@ pub(crate) async fn create_pull_request(
     let auth = require_auth(&state, &headers)?;
     let target = find_repo(&state.pool, &owner, &name).await?;
     ensure_repo_visible(&state.pool, Some(&auth), &target).await?;
+    if !target.pull_requests_enabled {
+        return Err(ApiError::Forbidden(
+            "pull requests are disabled for this repository".to_string(),
+        ));
+    }
+    ensure_pull_request_allowed(&state, &auth, &target).await?;
     let source_repo_url = validate_remote_url(&input.source_repo_url)?.to_string();
     let activity_id = format!(
         "{}/activities/{}",
@@ -750,6 +1043,11 @@ pub(crate) async fn create_issue(
     let auth = require_repo_action_auth(&state, &headers, "repo:issue")?;
     let repo = find_repo(&state.pool, &owner, &name).await?;
     ensure_repo_action_visible(&state.pool, &auth, &repo).await?;
+    if !repo.issues_enabled {
+        return Err(ApiError::Forbidden(
+            "issues are disabled for this repository".to_string(),
+        ));
+    }
     let title = validate_issue_title(&input.title)?;
     let author = issue_author(&state, &auth).await?;
     let activity_id = format!(
@@ -933,6 +1231,35 @@ struct IssueAuthor {
     remote_server: Option<String>,
 }
 
+async fn validate_default_branch(repo: &Repository, branch: &str) -> ApiResult<()> {
+    let branches = list_branches(repo).await?;
+    if branches.is_empty() || branches.iter().any(|item| item.name == branch) {
+        return Ok(());
+    }
+    Err(ApiError::BadRequest(
+        "default branch must exist in the repository".to_string(),
+    ))
+}
+
+async fn move_repo_storage(current_path: &str, next_path: &PathBuf) -> ApiResult<()> {
+    let current_path = PathBuf::from(current_path);
+    if current_path == *next_path {
+        return Ok(());
+    }
+    if fs::try_exists(next_path).await? {
+        return Err(ApiError::Conflict(
+            "repository storage path already exists".to_string(),
+        ));
+    }
+    if let Some(parent) = next_path.parent() {
+        fs::create_dir_all(parent).await?;
+    }
+    if fs::try_exists(&current_path).await? {
+        fs::rename(current_path, next_path).await?;
+    }
+    Ok(())
+}
+
 async fn issue_author(state: &AppState, auth: &RepoActionAuth) -> ApiResult<IssueAuthor> {
     match auth {
         RepoActionAuth::Local(auth) => {
@@ -1016,6 +1343,15 @@ fn normalize_issue_status(status: &str) -> ApiResult<String> {
     }
 }
 
+fn normalize_repo_permission(permission: &str) -> ApiResult<String> {
+    match permission.trim() {
+        "read" | "write" | "admin" => Ok(permission.trim().to_string()),
+        _ => Err(ApiError::BadRequest(
+            "invalid collaborator permission".to_string(),
+        )),
+    }
+}
+
 fn validate_issue_title(title: &str) -> ApiResult<String> {
     let title = title.trim();
     if title.is_empty() {
@@ -1068,6 +1404,36 @@ async fn ensure_issue_updatable(
         }
     }
     Err(ApiError::Unauthorized)
+}
+
+async fn ensure_pull_request_allowed(
+    state: &AppState,
+    auth: &AuthUser,
+    repo: &Repository,
+) -> ApiResult<()> {
+    if repo.pull_request_policy != "collaborators" {
+        return Ok(());
+    }
+    if resolve_writable_namespace(&state.pool, auth, &repo.owner_handle)
+        .await
+        .is_ok()
+    {
+        return Ok(());
+    }
+    let collaborator: Option<(Uuid,)> = sqlx::query_as(
+        "SELECT user_id FROM repository_collaborators WHERE repository_id = $1 AND user_id = $2",
+    )
+    .bind(repo.id)
+    .bind(auth.id)
+    .fetch_optional(&state.pool)
+    .await?;
+    if collaborator.is_some() {
+        Ok(())
+    } else {
+        Err(ApiError::Forbidden(
+            "only collaborators can open pull requests for this repository".to_string(),
+        ))
+    }
 }
 
 async fn deliver_issue_activity(
