@@ -34,7 +34,12 @@ export function RepositoryList({ repositories, emptyLabel }: RepositoryListProps
                 </div>
                 <p className="text-[#59636e]">{repo.description || "No description provided."}</p>
               </div>
-              <StarButton initialStars={repo.stars_count} name={repo.name} owner={repo.owner_handle} />
+              <StarButton
+                initialStarred={repo.viewer_has_starred}
+                initialStars={repo.stars_count}
+                name={repo.name}
+                owner={repo.owner_handle}
+              />
             </div>
 
             <div className="flex flex-wrap items-center gap-3 text-sm text-[#59636e]">

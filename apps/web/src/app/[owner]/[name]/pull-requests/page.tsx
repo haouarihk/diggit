@@ -47,7 +47,12 @@ export default async function RepositoryPullRequestsPage({ params }: Props) {
             {pullRequests.data.map((pullRequest) => (
               <article className="grid gap-2 border-b border-[#d8dee4] p-4 last:border-b-0" key={pullRequest.id}>
                 <div className="flex flex-wrap items-center gap-2">
-                  <strong>{pullRequest.title}</strong>
+                  <Link
+                    className="font-semibold text-[#0969da] hover:underline"
+                    href={`${baseHref}/pull-requests/${encodeURIComponent(pullRequest.id)}`}
+                  >
+                    {pullRequest.title}
+                  </Link>
                   <span className="rounded-full border border-[#d0d7de] bg-[#f6f8fa] px-2 py-0.5 text-xs font-semibold text-[#59636e]">
                     {pullRequest.status}
                   </span>

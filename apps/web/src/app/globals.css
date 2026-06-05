@@ -19,8 +19,10 @@
   --color-accent-subtle: #ddf4ff;
   --color-success-emphasis: #1a7f37;
   --color-success-emphasis-hover: #116329;
+  --color-success-subtle: #dafbe1;
   --color-danger-fg: #cf222e;
   --color-danger-subtle: #fff8f8;
+  --color-diff-deletion-subtle: #ffebe9;
   --color-attention-muted: #fd8c73;
   --color-code-bg: #0d1117;
   --color-code-fg: #f0f6fc;
@@ -47,8 +49,10 @@
   --color-accent-subtle: #0c2d6b;
   --color-success-emphasis: #238636;
   --color-success-emphasis-hover: #2ea043;
+  --color-success-subtle: #0f2f1d;
   --color-danger-fg: #ff7b72;
   --color-danger-subtle: #2d1517;
+  --color-diff-deletion-subtle: #3d191d;
   --color-attention-muted: #f78166;
   --color-code-bg: #010409;
   --color-code-fg: #e6edf3;
@@ -127,6 +131,14 @@ textarea {
 [class~="bg-[#fff8f8]"],
 [class~="hover:bg-[#fff8f8]"]:hover {
   background-color: var(--color-danger-subtle) !important;
+}
+
+[class~="bg-[#dafbe1]"] {
+  background-color: var(--color-success-subtle) !important;
+}
+
+[class~="bg-[#ffebe9]"] {
+  background-color: var(--color-diff-deletion-subtle) !important;
 }
 
 [class~="bg-[#0d1117]"] {

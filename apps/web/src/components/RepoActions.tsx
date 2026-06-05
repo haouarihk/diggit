@@ -3,8 +3,8 @@
 import { apiBaseUrl, publicApiBaseUrl } from "@/lib/runtime-config";
 import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { authHeaders, getAuthSession } from "@/lib/auth-session";
-import type { RepositoryBranch } from "@/lib/api";
+import { authHeaders, getAuthSession, normalizeServerUrl } from "@/lib/auth-session";
+import type { PullRequest, PullRequestOptions, PullRequestSourceOption, Repository, RepositoryBranch } from "@/lib/api";
 
 const API_URL = apiBaseUrl();
 const PUBLIC_API_URL = publicApiBaseUrl();
@@ -119,55 +119,67 @@ export function ForkRepoForm({ owner, name }: { owner: string; name: string }) {
   );
 }
 
-export function PullRequestForm({ owner, name, redirectTo }: { owner: string; name: string; redirectTo?: string }) {
+type PullRequestFormProps = {
+  name: string;
+  options: PullRequestOptions;
+  owner: string;
+  redirectTo?: string;
+  repo: Repository;
+};
+
+type SourceMode = "local" | "server" | "upstream";
+
+type SourceSelection = {
+  branch: string;
+  repositoryId: string | null;
+  url: string;
+};
+
+export function PullRequestForm({ owner, name, options, redirectTo, repo }: PullRequestFormProps) {
   const router = useRouter();
   const [message, setMessage] = useState("");
-  const [sourceRepoUrl, setSourceRepoUrl] = useState("");
-  const [sourceBranches, setSourceBranches] = useState<RepositoryBranch[]>([]);
-  const [targetBranches, setTargetBranches] = useState<RepositoryBranch[]>([]);
-  const [loadingSourceBranches, setLoadingSourceBranches] = useState(false);
-  const [loadingTargetBranches, setLoadingTargetBranches] = useState(true);
+  const [sourceMode, setSourceMode] = useState<SourceMode>("local");
+  const [serverName, setServerName] = useState("");
+  const [remoteBranches, setRemoteBranches] = useState<RepositoryBranch[]>([]);
+  const [upstreamBranches, setUpstreamBranches] = useState<RepositoryBranch[]>(options.upstream?.branches ?? []);
+  const [loadingRemoteBranches, setLoadingRemoteBranches] = useState(false);
+  const [loadingUpstreamBranches, setLoadingUpstreamBranches] = useState(false);
+  const [sourceValue, setSourceValue] = useState("");
+  const [targetBranch, setTargetBranch] = useState(defaultBranch(options.repository.branches, repo.default_branch));
 
-  useEffect(() => {
-    let cancelled = false;
-    async function loadTargetBranches() {
-      setLoadingTargetBranches(true);
-      const branches = await fetchRepositoryBranches({ owner, name });
-      if (!cancelled) {
-        setTargetBranches(branches);
-        setLoadingTargetBranches(false);
-      }
+  function selectSourceMode(nextMode: SourceMode) {
+    setSourceMode(nextMode);
+    setSourceValue("");
+    if (nextMode !== "server") {
+      setRemoteBranches([]);
     }
+  }
 
-    void loadTargetBranches();
-    return () => {
-      cancelled = true;
-    };
-  }, [owner, name]);
+  function updateServerName(value: string) {
+    setServerName(value);
+    setSourceValue("");
+    if (!value.trim()) {
+      setRemoteBranches([]);
+    }
+  }
 
   useEffect(() => {
-    const trimmedUrl = sourceRepoUrl.trim();
-    if (!trimmedUrl) {
-      setSourceBranches([]);
-      setLoadingSourceBranches(false);
+    if (sourceMode !== "server") {
       return;
     }
 
+    const trimmedServer = serverName.trim();
+    if (!trimmedServer) {
+      return;
+    }
     let cancelled = false;
     const timeout = window.setTimeout(async () => {
-      const parsed = parseRepositoryUrl(trimmedUrl);
-      if (!parsed) {
-        setSourceBranches([]);
-        setLoadingSourceBranches(false);
-        return;
-      }
-
-      setLoadingSourceBranches(true);
-      setSourceBranches([]);
-      const branches = await fetchRepositoryBranches(parsed);
+      setLoadingRemoteBranches(true);
+      setRemoteBranches([]);
+      const branches = await fetchRepositoryBranches({ baseUrl: normalizeServerUrl(trimmedServer), owner, name });
       if (!cancelled) {
-        setSourceBranches(branches);
-        setLoadingSourceBranches(false);
+        setRemoteBranches(branches);
+        setLoadingRemoteBranches(false);
       }
     }, 350);
 
@@ -175,11 +187,44 @@ export function PullRequestForm({ owner, name, redirectTo }: { owner: string; na
       cancelled = true;
       window.clearTimeout(timeout);
     };
-  }, [sourceRepoUrl]);
+  }, [sourceMode, serverName, owner, name]);
+
+  useEffect(() => {
+    if (sourceMode !== "upstream" || !options.upstream || options.upstream.branches.length > 0) {
+      return;
+    }
+
+    const parsed = parseRepositoryUrl(options.upstream.url);
+    if (!parsed) {
+      return;
+    }
+    const upstreamRepo = parsed;
+
+    let cancelled = false;
+    async function loadUpstreamBranches() {
+      setLoadingUpstreamBranches(true);
+      const branches = await fetchRepositoryBranches(upstreamRepo);
+      if (!cancelled) {
+        setUpstreamBranches(branches);
+        setLoadingUpstreamBranches(false);
+      }
+    }
+
+    void loadUpstreamBranches();
+    return () => {
+      cancelled = true;
+    };
+  }, [sourceMode, options.upstream]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
+    const source = selectedSource();
+    if (!source) {
+      setMessage("Choose a source branch first.");
+      return;
+    }
+
     const response = await fetch(
       `${API_URL}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pull-requests`,
       {
@@ -191,100 +236,305 @@ export function PullRequestForm({ owner, name, redirectTo }: { owner: string; na
         body: JSON.stringify({
           title: form.get("title"),
           body: form.get("body"),
-          source_repo_url: form.get("sourceRepoUrl"),
-          source_branch: form.get("sourceBranch"),
-          target_branch: form.get("targetBranch"),
+          source_repo_url: source.url,
+          source_branch: source.branch,
+          source_repository_id: source.repositoryId,
+          target_branch: targetBranch,
         }),
       },
     );
     if (response.ok) {
+      const pullRequest = (await response.json()) as PullRequest;
       setMessage("Pull request opened and activity queued.");
       if (redirectTo) {
-        router.push(redirectTo);
+        router.push(`${redirectTo}/${encodeURIComponent(pullRequest.id)}`);
       }
       return;
     }
 
-    setMessage(`Failed: ${response.status}`);
+    setMessage(await responseErrorMessage(response));
   }
 
-  const targetFallbackBranch = targetBranches.find((branch) => branch.is_default)?.name ?? targetBranches[0]?.name ?? "main";
+  function selectedSource(): SourceSelection | null {
+    if (sourceMode === "local") {
+      return decodeSourceSelection(sourceValue);
+    }
+    if (sourceMode === "server") {
+      if (!serverName.trim() || !sourceValue) {
+        return null;
+      }
+      return {
+        branch: sourceValue,
+        repositoryId: null,
+        url: remoteRepositoryGitUrl(serverName, owner, name),
+      };
+    }
+    if (!options.upstream || !sourceValue) {
+      return null;
+    }
+    return {
+      branch: sourceValue,
+      repositoryId: options.upstream.repository_id,
+      url: options.upstream.url,
+    };
+  }
+
+  const targetBranches = options.repository.branches.length > 0 ? options.repository.branches : fallbackBranches(repo.default_branch);
+  const localBranches = options.repository.branches.length > 0 ? options.repository.branches : fallbackBranches(repo.default_branch);
+  const upstreamSourceBranches = upstreamBranches.length > 0 ? upstreamBranches : options.upstream?.branches ?? [];
+  const selectedSourceLabel = sourceModeLabel(sourceMode, options.upstream);
 
   return (
-    <form className="grid gap-3.5 rounded-md border border-[#d0d7de] bg-white p-4" onSubmit={submit}>
-      <h2>Open federated pull request</h2>
-      <label className="grid gap-1.5">
-        Title
-        <input className="w-full rounded-md border border-[#d0d7de] bg-white px-3 py-2 text-[#1f2328]" name="title" required />
-      </label>
-      <label className="grid gap-1.5">
-        Source repo URL
-        <input
-          className="w-full rounded-md border border-[#d0d7de] bg-white px-3 py-2 text-[#1f2328]"
-          name="sourceRepoUrl"
-          required
-          value={sourceRepoUrl}
-          onChange={(event) => setSourceRepoUrl(event.target.value)}
-        />
-      </label>
-      <div className="grid grid-cols-[repeat(auto-fit,minmax(260px,1fr))] gap-4">
-        <label className="grid gap-1.5">
-          Source branch
-          <select
-            className="w-full rounded-md border border-[#d0d7de] bg-white px-3 py-2 text-[#1f2328] disabled:bg-[#f6f8fa] disabled:text-[#59636e]"
-            name="sourceBranch"
-            required
-            disabled={loadingSourceBranches || sourceBranches.length === 0}
-            defaultValue=""
-          >
-            <option value="" disabled>
-              {loadingSourceBranches ? "Loading branches..." : "Enter a source repo URL first"}
-            </option>
-            {sourceBranches.map((branch) => (
-              <option key={branch.name} value={branch.name}>
-                {branch.name}
-                {branch.is_default ? " (default)" : ""}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="grid gap-1.5">
-          Target branch
-          <select
-            className="w-full rounded-md border border-[#d0d7de] bg-white px-3 py-2 text-[#1f2328] disabled:bg-[#f6f8fa] disabled:text-[#59636e]"
-            name="targetBranch"
-            disabled={loadingTargetBranches}
-            defaultValue={targetFallbackBranch}
-            key={targetFallbackBranch}
-          >
-            {loadingTargetBranches ? <option value={targetFallbackBranch}>Loading branches...</option> : null}
-            {targetBranches.length === 0 && !loadingTargetBranches ? (
-              <option value="main">main</option>
+    <form className="grid gap-5 rounded-2xl border border-[#d0d7de] bg-white p-4 shadow-sm sm:p-6" onSubmit={submit}>
+      <section className="grid gap-3">
+        <StepHeading number={1} title="Where are the changes?" />
+        <div className="grid gap-3 lg:grid-cols-3">
+          <SourceCard
+            checked={sourceMode === "local"}
+            description="Pick a branch from this repository or one of its local forks."
+            label="This server"
+            value="local"
+            onChange={selectSourceMode}
+          />
+          <SourceCard
+            checked={sourceMode === "server"}
+            description="Compare against the same repository name on another Diggit server."
+            label="Another server"
+            value="server"
+            onChange={selectSourceMode}
+          />
+          {options.upstream ? (
+            <SourceCard
+              checked={sourceMode === "upstream"}
+              description={`Use the original repository: ${options.upstream.owner_handle}/${options.upstream.name}.`}
+              label="Original server repo"
+              value="upstream"
+              onChange={selectSourceMode}
+            />
+          ) : null}
+        </div>
+        {sourceMode === "server" ? (
+          <label className="grid gap-1.5">
+            Server name
+            <input
+              className="w-full rounded-lg border border-[#d0d7de] bg-white px-3 py-2 text-[#1f2328]"
+              placeholder="https://git.example.com"
+              value={serverName}
+              onChange={(event) => updateServerName(event.target.value)}
+            />
+          </label>
+        ) : null}
+      </section>
+
+      <section className="grid gap-3 rounded-xl border border-[#d8dee4] bg-[#f6f8fa] p-4">
+        <StepHeading number={2} title="Compare changes between branches" />
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] lg:items-end">
+          <label className="grid gap-1.5">
+            From
+            {sourceMode === "local" ? (
+              <select
+                className="w-full rounded-lg border border-[#d0d7de] bg-white px-3 py-2 text-[#1f2328]"
+                required
+                value={sourceValue}
+                onChange={(event) => setSourceValue(event.target.value)}
+              >
+                <option value="" disabled>
+                  Select a source branch
+                </option>
+                <optgroup label="Branches in this repository">
+                  {localBranches.map((branch) => (
+                    <option key={branch.name} value={encodeSourceSelection(options.repository, branch.name)}>
+                      {branchLabel(branch)}
+                    </option>
+                  ))}
+                </optgroup>
+                {options.forks.length > 0 ? (
+                  <optgroup label="Branches from forks">
+                    {options.forks.flatMap((fork) =>
+                      fork.branches.map((branch) => (
+                        <option key={`${fork.repository_id}:${branch.name}`} value={encodeSourceSelection(fork, branch.name)}>
+                          {fork.owner_handle}/{fork.name}:{branchLabel(branch)}
+                        </option>
+                      )),
+                    )}
+                  </optgroup>
+                ) : null}
+              </select>
             ) : null}
-            {targetBranches.map((branch) => (
-              <option key={branch.name} value={branch.name}>
-                {branch.name}
-                {branch.is_default ? " (default)" : ""}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
-      {sourceRepoUrl && !loadingSourceBranches && sourceBranches.length === 0 ? (
+            {sourceMode === "server" ? (
+              <select
+                className="w-full rounded-lg border border-[#d0d7de] bg-white px-3 py-2 text-[#1f2328] disabled:bg-white/60 disabled:text-[#59636e]"
+                disabled={loadingRemoteBranches || remoteBranches.length === 0}
+                required
+                value={sourceValue}
+                onChange={(event) => setSourceValue(event.target.value)}
+              >
+                <option value="" disabled>
+                  {loadingRemoteBranches ? "Loading branches..." : "Select a branch from that server"}
+                </option>
+                {remoteBranches.map((branch) => (
+                  <option key={branch.name} value={branch.name}>
+                    {branchLabel(branch)}
+                  </option>
+                ))}
+              </select>
+            ) : null}
+            {sourceMode === "upstream" ? (
+              <select
+                className="w-full rounded-lg border border-[#d0d7de] bg-white px-3 py-2 text-[#1f2328] disabled:bg-white/60 disabled:text-[#59636e]"
+                disabled={loadingUpstreamBranches || upstreamSourceBranches.length === 0}
+                required
+                value={sourceValue}
+                onChange={(event) => setSourceValue(event.target.value)}
+              >
+                <option value="" disabled>
+                  {loadingUpstreamBranches ? "Loading upstream branches..." : "Select an upstream branch"}
+                </option>
+                {upstreamSourceBranches.map((branch) => (
+                  <option key={branch.name} value={branch.name}>
+                    {branchLabel(branch)}
+                  </option>
+                ))}
+              </select>
+            ) : null}
+          </label>
+
+          <div className="hidden h-10 items-center rounded-full border border-[#d0d7de] bg-white px-3 text-sm font-semibold text-[#59636e] lg:flex">
+            into
+          </div>
+
+          <label className="grid gap-1.5">
+            To
+            <select
+              className="w-full rounded-lg border border-[#d0d7de] bg-white px-3 py-2 text-[#1f2328]"
+              required
+              value={targetBranch}
+              onChange={(event) => setTargetBranch(event.target.value)}
+            >
+              {targetBranches.map((branch) => (
+                <option key={branch.name} value={branch.name}>
+                  {branchLabel(branch)}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
         <p className="text-sm text-[#59636e]">
-          Could not load branches for that source repository URL. Use a Diggit repository URL that this server can read.
+          Comparing {selectedSourceLabel} into {owner}/{name}. The pull request will target <strong>{targetBranch}</strong>.
         </p>
-      ) : null}
-      <label className="grid gap-1.5">
-        Body
-        <textarea className="w-full rounded-md border border-[#d0d7de] bg-white px-3 py-2 text-[#1f2328]" name="body" rows={4} />
-      </label>
-      <button className="cursor-pointer rounded-md border border-black/15 bg-[#1a7f37] px-3 py-1.5 font-bold text-white" type="submit">
-        Open PR
-      </button>
-      {message ? <p className="text-[#59636e]">{message}</p> : null}
+        {sourceMode === "server" && serverName && !loadingRemoteBranches && remoteBranches.length === 0 ? (
+          <p className="rounded-lg border border-[#d0d7de] bg-white px-3 py-2 text-sm text-[#59636e]">
+            Could not load branches from that server. Check the server name and that {owner}/{name} exists there.
+          </p>
+        ) : null}
+      </section>
+
+      <section className="grid gap-3">
+        <StepHeading number={3} title="Create pull request" />
+        <label className="grid gap-1.5">
+          Title
+          <input className="w-full rounded-lg border border-[#d0d7de] bg-white px-3 py-2 text-[#1f2328]" name="title" required />
+        </label>
+        <label className="grid gap-1.5">
+          Body
+          <textarea className="min-h-32 w-full rounded-lg border border-[#d0d7de] bg-white px-3 py-2 text-[#1f2328]" name="body" />
+        </label>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          {message ? <p className="text-sm text-[#59636e]">{message}</p> : <span />}
+          <button className="cursor-pointer rounded-lg border border-black/15 bg-[#1a7f37] px-4 py-2 font-bold text-white hover:bg-[#116329]" type="submit">
+            Create pull request
+          </button>
+        </div>
+      </section>
     </form>
   );
+}
+
+function StepHeading({ number, title }: { number: number; title: string }) {
+  return (
+    <div className="flex items-center gap-2">
+      <span className="grid h-7 w-7 place-items-center rounded-full bg-[#0969da] text-sm font-bold text-white">{number}</span>
+      <h3 className="text-lg font-semibold">{title}</h3>
+    </div>
+  );
+}
+
+function SourceCard({
+  checked,
+  description,
+  label,
+  onChange,
+  value,
+}: {
+  checked: boolean;
+  description: string;
+  label: string;
+  onChange: (value: SourceMode) => void;
+  value: SourceMode;
+}) {
+  return (
+    <label
+      className={`grid cursor-pointer gap-2 rounded-xl border p-4 transition ${
+        checked ? "border-[#0969da] bg-[#ddf4ff]" : "border-[#d0d7de] bg-[#f6f8fa] hover:bg-white"
+      }`}
+    >
+      <span className="flex items-center gap-2 font-semibold">
+        <input checked={checked} name="sourceMode" type="radio" value={value} onChange={() => onChange(value)} />
+        {label}
+      </span>
+      <span className="text-sm text-[#59636e]">{description}</span>
+    </label>
+  );
+}
+
+function encodeSourceSelection(option: PullRequestSourceOption, branch: string) {
+  return JSON.stringify({
+    branch,
+    repositoryId: option.repository_id,
+    url: option.url,
+  } satisfies SourceSelection);
+}
+
+function decodeSourceSelection(value: string): SourceSelection | null {
+  if (!value) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(value) as SourceSelection;
+    if (!parsed.branch || !parsed.url) {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function sourceModeLabel(sourceMode: SourceMode, upstream: PullRequestSourceOption | null) {
+  if (sourceMode === "server") {
+    return "another server";
+  }
+  if (sourceMode === "upstream" && upstream) {
+    return `${upstream.owner_handle}/${upstream.name}`;
+  }
+  return "this server";
+}
+
+function branchLabel(branch: RepositoryBranch) {
+  return `${branch.name}${branch.is_default ? " (default)" : ""}`;
+}
+
+function defaultBranch(branches: RepositoryBranch[], preferred: string) {
+  return branches.find((branch) => branch.name === preferred)?.name ?? branches.find((branch) => branch.is_default)?.name ?? branches[0]?.name ?? preferred ?? "main";
+}
+
+function fallbackBranches(name: string): RepositoryBranch[] {
+  return [{ name: name || "main", is_default: true, commit_sha: null }];
+}
+
+function remoteRepositoryGitUrl(serverName: string, owner: string, name: string) {
+  return `${normalizeServerUrl(serverName)}/${encodeURIComponent(owner)}/${encodeURIComponent(name)}.git`;
 }
 
 async function responseErrorMessage(response: Response) {

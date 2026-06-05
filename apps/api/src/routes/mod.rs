@@ -157,6 +157,18 @@ pub(crate) fn router(state: AppState) -> Router {
             get(repositories::list_repo_tags),
         )
         .route(
+            "/repos/{owner}/{name}/stats",
+            get(repositories::get_repo_stats),
+        )
+        .route(
+            "/repos/{owner}/{name}/languages",
+            get(repositories::list_repo_languages),
+        )
+        .route(
+            "/repos/{owner}/{name}/contributors",
+            get(repositories::list_repo_contributors),
+        )
+        .route(
             "/repos/{owner}/{name}/collaborators",
             get(repositories::list_repo_collaborators).post(repositories::upsert_repo_collaborator),
         )
@@ -200,6 +212,22 @@ pub(crate) fn router(state: AppState) -> Router {
             get(repositories::list_pull_requests).post(repositories::create_pull_request),
         )
         .route(
+            "/repos/{owner}/{name}/pull-requests/options",
+            get(repositories::pull_request_options),
+        )
+        .route(
+            "/repos/{owner}/{name}/pull-requests/compare",
+            post(repositories::compare_pull_request),
+        )
+        .route(
+            "/repos/{owner}/{name}/pull-requests/{id}",
+            get(repositories::get_pull_request).patch(repositories::update_pull_request),
+        )
+        .route(
+            "/repos/{owner}/{name}/pull-requests/{id}/merge",
+            post(repositories::merge_pull_request),
+        )
+        .route(
             "/repos/{owner}/{name}/issue-labels",
             get(repositories::list_issue_labels).post(repositories::upsert_issue_label),
         )
@@ -233,6 +261,22 @@ pub(crate) fn router(state: AppState) -> Router {
         .route(
             "/{owner}/{name}/pull-requests",
             get(repositories::list_pull_requests).post(repositories::create_pull_request),
+        )
+        .route(
+            "/{owner}/{name}/pull-requests/options",
+            get(repositories::pull_request_options),
+        )
+        .route(
+            "/{owner}/{name}/pull-requests/compare",
+            post(repositories::compare_pull_request),
+        )
+        .route(
+            "/{owner}/{name}/pull-requests/{id}",
+            get(repositories::get_pull_request).patch(repositories::update_pull_request),
+        )
+        .route(
+            "/{owner}/{name}/pull-requests/{id}/merge",
+            post(repositories::merge_pull_request),
         )
         .route(
             "/{owner}/{name}/issues",

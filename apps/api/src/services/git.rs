@@ -1,5 +1,6 @@
 use super::*;
-use std::process::Stdio;
+use sqlx::Row;
+use std::{collections::HashMap, process::Stdio};
 
 const GIT_COMMAND_TIMEOUT_SECONDS: u64 = 30;
 const MAX_GIT_OUTPUT_BYTES: usize = 2 * 1024 * 1024;
@@ -167,7 +168,7 @@ pub(crate) async fn commit_repo_file_change(
     path: &str,
     change: RepoFileChange,
     message: String,
-) -> ApiResult<()> {
+) -> ApiResult<String> {
     let worktree = env::temp_dir().join(format!("diggit-worktree-{}", Uuid::now_v7()));
     fs::create_dir_all(&worktree).await?;
 
@@ -184,7 +185,7 @@ pub(crate) async fn commit_repo_file_change_in_worktree(
     change: RepoFileChange,
     message: String,
     worktree: &PathBuf,
-) -> ApiResult<()> {
+) -> ApiResult<String> {
     run_git_worktree_command(
         repo,
         worktree,
@@ -261,7 +262,15 @@ pub(crate) async fn commit_repo_file_change_in_worktree(
         ));
     }
 
-    Ok(())
+    let sha = run_git_worktree_command(
+        repo,
+        worktree,
+        &["rev-parse".to_string(), "HEAD".to_string()],
+    )
+    .await?
+    .trim()
+    .to_string();
+    Ok(sha)
 }
 
 pub(crate) async fn resolve_git_ref(
@@ -324,21 +333,501 @@ pub(crate) async fn list_commits(
     let target = resolve_git_ref(repo, ref_name)
         .await?
         .unwrap_or_else(|| repo.default_branch.clone());
+    let mut args = vec![
+        "log".to_string(),
+        "--format=%H%x1f%s%x1f%cI%x1f%an%x1f%ae".to_string(),
+        target,
+    ];
+    if limit > 0 {
+        args.insert(1, format!("--max-count={}", limit.clamp(1, 1000)));
+    }
+    let output = try_run_git_command(repo, &args).await?;
+    Ok(output
+        .unwrap_or_default()
+        .lines()
+        .filter_map(parse_git_commit)
+        .collect())
+}
+
+pub(crate) async fn attach_commit_account_authors(
+    pool: &PgPool,
+    repo: &Repository,
+    commits: &mut [RepositoryCommitResponse],
+) -> ApiResult<()> {
+    if commits.is_empty() {
+        return Ok(());
+    }
+
+    let commit_author_users = sqlx::query(
+        r#"
+        SELECT repository_commit_authors.commit_sha, users.username, users.display_name, users.avatar_url
+        FROM repository_commit_authors
+        JOIN users ON users.id = repository_commit_authors.user_id
+        WHERE repository_commit_authors.repository_id = $1
+        "#,
+    )
+    .bind(repo.id)
+    .fetch_all(pool)
+    .await?
+    .into_iter()
+    .map(|row| {
+        (
+            row.get::<String, _>("commit_sha"),
+            CommitAccountAuthor {
+                avatar_url: row.get::<Option<String>, _>("avatar_url"),
+                display_name: row.get::<String, _>("display_name"),
+                username: row.get::<String, _>("username"),
+            },
+        )
+    })
+    .collect::<HashMap<_, _>>();
+
+    for commit in commits {
+        if let Some(author) = commit_author_users.get(&commit.sha) {
+            commit.author_name = author.display_name.clone();
+            commit.author_email = account_email(&author.username);
+            commit.author_username = Some(author.username.clone());
+            commit.author_avatar_url = author.avatar_url.clone();
+            commit.avatar_fallback = avatar_fallback(&author.display_name);
+        }
+    }
+
+    Ok(())
+}
+
+struct CommitAccountAuthor {
+    username: String,
+    display_name: String,
+    avatar_url: Option<String>,
+}
+
+pub(crate) async fn repository_stats(
+    state: &AppState,
+    repo: &Repository,
+    ref_name: Option<&str>,
+) -> ApiResult<RepositoryStatsResponse> {
+    let commit_sha = resolve_git_ref(repo, ref_name).await?;
+    let cache_suffix = commit_sha.as_deref().unwrap_or("empty");
+    let cache_key = cache_key(&[
+        "repo",
+        &repo.owner_handle,
+        &repo.name,
+        "stats",
+        cache_suffix,
+    ]);
+    if let Some(cached) = state
+        .cache
+        .get_json::<RepositoryStatsResponse>(&cache_key)
+        .await
+    {
+        return Ok(cached);
+    }
+
+    let commits_count = if let Some(commit_sha) = commit_sha {
+        count_git_output_lines(
+            try_run_git_command(
+                repo,
+                &["rev-list".to_string(), "--count".to_string(), commit_sha],
+            )
+            .await?
+            .as_deref(),
+        )
+    } else {
+        0
+    };
+    let branches_count = list_branches(repo).await?.len() as i64;
+    let tags_count = count_git_output_lines(
+        try_run_git_command(
+            repo,
+            &[
+                "for-each-ref".to_string(),
+                "--format=%(refname:short)".to_string(),
+                "refs/tags".to_string(),
+            ],
+        )
+        .await?
+        .as_deref(),
+    );
+    let response = RepositoryStatsResponse {
+        branches_count,
+        commits_count,
+        releases_count: 0,
+        tags_count,
+    };
+    state.cache.set_json(&cache_key, &response).await;
+    Ok(response)
+}
+
+pub(crate) async fn git_ref_tips(repo: &Repository) -> ApiResult<Vec<String>> {
     let output = try_run_git_command(
         repo,
         &[
-            "log".to_string(),
-            format!("--max-count={}", limit.clamp(1, 100)),
-            "--format=%H%x1f%s%x1f%cI%x1f%an%x1f%ae".to_string(),
-            target,
+            "for-each-ref".to_string(),
+            "--format=%(objectname)".to_string(),
+            "refs/heads".to_string(),
         ],
     )
     .await?;
     Ok(output
         .unwrap_or_default()
         .lines()
-        .filter_map(parse_git_commit)
+        .map(str::trim)
+        .filter(|line| is_full_sha(line))
+        .map(str::to_string)
         .collect())
+}
+
+pub(crate) async fn record_pushed_commit_authors(
+    state: &AppState,
+    repo: &Repository,
+    auth: &AuthUser,
+    before_tips: &[String],
+) -> ApiResult<()> {
+    let after_tips = git_ref_tips(repo).await?;
+    if after_tips.is_empty() {
+        return Ok(());
+    }
+
+    let mut args = vec!["rev-list".to_string()];
+    args.extend(after_tips);
+    if !before_tips.is_empty() {
+        args.push("--not".to_string());
+        args.extend(before_tips.iter().cloned());
+    }
+
+    let output = try_run_git_command(repo, &args).await?.unwrap_or_default();
+    for sha in output
+        .lines()
+        .map(str::trim)
+        .filter(|line| is_full_sha(line))
+    {
+        record_commit_author(state, repo, auth, sha).await?;
+    }
+
+    Ok(())
+}
+
+pub(crate) async fn record_commit_author(
+    state: &AppState,
+    repo: &Repository,
+    auth: &AuthUser,
+    sha: &str,
+) -> ApiResult<()> {
+    if !is_full_sha(sha) {
+        return Ok(());
+    }
+
+    sqlx::query(
+        r#"
+        INSERT INTO repository_commit_authors (repository_id, commit_sha, user_id, pushed_at)
+        VALUES ($1, $2, $3, now())
+        ON CONFLICT (repository_id, commit_sha) DO UPDATE
+        SET user_id = EXCLUDED.user_id,
+            pushed_at = EXCLUDED.pushed_at
+        "#,
+    )
+    .bind(repo.id)
+    .bind(sha)
+    .bind(auth.id)
+    .execute(&state.pool)
+    .await?;
+
+    Ok(())
+}
+
+pub(crate) async fn repository_languages(
+    state: &AppState,
+    repo: &Repository,
+    ref_name: Option<&str>,
+) -> ApiResult<RepositoryLanguageListResponse> {
+    let Some(commit_sha) = resolve_git_ref(repo, ref_name).await? else {
+        return Ok(RepositoryLanguageListResponse { data: Vec::new() });
+    };
+    let cache_key = cache_key(&[
+        "repo",
+        &repo.owner_handle,
+        &repo.name,
+        "languages",
+        &commit_sha,
+    ]);
+    if let Some(cached) = state
+        .cache
+        .get_json::<RepositoryLanguageListResponse>(&cache_key)
+        .await
+    {
+        return Ok(cached);
+    }
+
+    let output = run_git_command(
+        repo,
+        &[
+            "ls-tree".to_string(),
+            "-r".to_string(),
+            "-l".to_string(),
+            commit_sha,
+        ],
+    )
+    .await?;
+    let mut language_bytes: HashMap<&'static str, i64> = HashMap::new();
+
+    for line in output.lines() {
+        let Some((metadata, path)) = line.split_once('\t') else {
+            continue;
+        };
+        let Some(language) = language_for_path(path) else {
+            continue;
+        };
+        let size = metadata
+            .split_whitespace()
+            .nth(3)
+            .and_then(|value| value.parse::<i64>().ok())
+            .filter(|size| *size > 0)
+            .unwrap_or(1);
+        *language_bytes.entry(language).or_insert(0) += size;
+    }
+
+    let total_bytes: i64 = language_bytes.values().sum();
+    let mut data = language_bytes
+        .into_iter()
+        .map(|(language, bytes)| RepositoryLanguageResponse {
+            language: language.to_string(),
+            bytes,
+            percentage: if total_bytes > 0 {
+                ((bytes as f64 / total_bytes as f64) * 1000.0).round() / 10.0
+            } else {
+                0.0
+            },
+            color: language_color(language).to_string(),
+        })
+        .collect::<Vec<_>>();
+    data.sort_by(|left, right| {
+        right
+            .bytes
+            .cmp(&left.bytes)
+            .then_with(|| left.language.cmp(&right.language))
+    });
+
+    let response = RepositoryLanguageListResponse { data };
+    state.cache.set_json(&cache_key, &response).await;
+    Ok(response)
+}
+
+pub(crate) async fn repository_contributors(
+    pool: &PgPool,
+    repo: &Repository,
+    ref_name: Option<&str>,
+) -> ApiResult<RepositoryContributorListResponse> {
+    let Some(commit_sha) = resolve_git_ref(repo, ref_name).await? else {
+        return Ok(RepositoryContributorListResponse { data: Vec::new() });
+    };
+    let output = try_run_git_command(
+        repo,
+        &[
+            "log".to_string(),
+            "--format=%H%x1f%an%x1f%ae".to_string(),
+            commit_sha,
+        ],
+    )
+    .await?
+    .unwrap_or_default();
+    let mut contributors: HashMap<String, ContributorAccumulator> = HashMap::new();
+    let mut commit_author_users = HashMap::new();
+
+    for row in sqlx::query(
+        r#"
+        SELECT repository_commit_authors.commit_sha, users.id, users.username, users.display_name, users.avatar_url
+        FROM repository_commit_authors
+        JOIN users ON users.id = repository_commit_authors.user_id
+        WHERE repository_commit_authors.repository_id = $1
+        "#,
+    )
+    .bind(repo.id)
+    .fetch_all(pool)
+    .await?
+    {
+        commit_author_users.insert(
+            row.get::<String, _>("commit_sha"),
+            UserContributorMatch {
+                avatar_url: row.get::<Option<String>, _>("avatar_url"),
+                display_name: row.get::<String, _>("display_name"),
+                id: row.get::<Uuid, _>("id"),
+                username: row.get::<String, _>("username"),
+            },
+        );
+    }
+
+    let mut users = HashMap::new();
+    for row in sqlx::query("SELECT id, username, display_name, avatar_url FROM users")
+        .fetch_all(pool)
+        .await?
+    {
+        let id = row.get::<Uuid, _>("id");
+        let username = row.get::<String, _>("username");
+        let display_name = row.get::<String, _>("display_name");
+        let avatar_url = row.get::<Option<String>, _>("avatar_url");
+        let user = UserContributorMatch {
+            avatar_url,
+            display_name,
+            id,
+            username,
+        };
+        insert_user_match(&mut users, user.username.to_ascii_lowercase(), &user);
+        insert_user_match(&mut users, user.display_name.to_ascii_lowercase(), &user);
+        insert_user_match(
+            &mut users,
+            account_email(&user.username).to_ascii_lowercase(),
+            &user,
+        );
+    }
+
+    for line in output.lines() {
+        let mut parts = line.split('\x1f');
+        let sha = parts.next().unwrap_or_default().trim();
+        let name = parts.next().unwrap_or("Unknown author").trim();
+        let email = parts.next().unwrap_or_default().trim();
+        if let Some(user) = commit_author_users
+            .get(sha)
+            .or_else(|| matched_user_for_commit(&users, name, email))
+        {
+            add_user_contribution(&mut contributors, user);
+            continue;
+        }
+        if name.is_empty() && email.is_empty() {
+            continue;
+        }
+        let key = if email.is_empty() { name } else { email }.to_ascii_lowercase();
+        let entry = contributors
+            .entry(key)
+            .or_insert_with(|| ContributorAccumulator {
+                avatar_url: None,
+                name: if name.is_empty() {
+                    email.to_string()
+                } else {
+                    name.to_string()
+                },
+                email: email.to_string(),
+                username: None,
+                commits: 0,
+            });
+        entry.commits += 1;
+    }
+
+    let mut data = contributors
+        .into_values()
+        .map(|contributor| {
+            let email_username = contributor.email.split('@').next().unwrap_or_default();
+            let user_match = users
+                .get(&contributor.name.to_ascii_lowercase())
+                .or_else(|| users.get(&email_username.to_ascii_lowercase()));
+            let username = contributor
+                .username
+                .clone()
+                .or_else(|| user_match.map(|user| user.username.clone()));
+            let name = if contributor.username.is_some() {
+                contributor.name
+            } else {
+                user_match
+                    .map(|user| user.display_name.clone())
+                    .unwrap_or(contributor.name)
+            };
+            let avatar_url = contributor
+                .avatar_url
+                .or_else(|| user_match.and_then(|user| user.avatar_url.clone()));
+
+            RepositoryContributorResponse {
+                avatar_fallback: avatar_fallback(&name),
+                avatar_url,
+                commits: contributor.commits,
+                name,
+                username,
+            }
+        })
+        .collect::<Vec<_>>();
+    data.sort_by(|left, right| {
+        right
+            .commits
+            .cmp(&left.commits)
+            .then_with(|| left.name.cmp(&right.name))
+    });
+
+    Ok(RepositoryContributorListResponse { data })
+}
+
+struct ContributorAccumulator {
+    name: String,
+    email: String,
+    username: Option<String>,
+    avatar_url: Option<String>,
+    commits: i64,
+}
+
+#[derive(Clone)]
+struct UserContributorMatch {
+    id: Uuid,
+    username: String,
+    display_name: String,
+    avatar_url: Option<String>,
+}
+
+fn insert_user_match(
+    users: &mut HashMap<String, UserContributorMatch>,
+    key: String,
+    user: &UserContributorMatch,
+) {
+    if !key.trim().is_empty() {
+        users.entry(key).or_insert_with(|| user.clone());
+    }
+}
+
+fn matched_user_for_commit<'a>(
+    users: &'a HashMap<String, UserContributorMatch>,
+    name: &str,
+    email: &str,
+) -> Option<&'a UserContributorMatch> {
+    users
+        .get(&name.to_ascii_lowercase())
+        .or_else(|| users.get(&email.to_ascii_lowercase()))
+        .or_else(|| {
+            let email_username = email.split('@').next().unwrap_or_default();
+            users.get(&email_username.to_ascii_lowercase())
+        })
+}
+
+fn add_user_contribution(
+    contributors: &mut HashMap<String, ContributorAccumulator>,
+    user: &UserContributorMatch,
+) {
+    let entry = contributors
+        .entry(format!("user:{}", user.id))
+        .or_insert_with(|| ContributorAccumulator {
+            avatar_url: user.avatar_url.clone(),
+            email: account_email(&user.username),
+            name: user.display_name.clone(),
+            username: Some(user.username.clone()),
+            commits: 0,
+        });
+    entry.commits += 1;
+}
+
+fn count_git_output_lines(output: Option<&str>) -> i64 {
+    let Some(output) = output else {
+        return 0;
+    };
+    if let Ok(count) = output.trim().parse::<i64>() {
+        return count;
+    }
+    output
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .count() as i64
+}
+
+fn is_full_sha(value: &str) -> bool {
+    value.len() == 40 && value.chars().all(|char| char.is_ascii_hexdigit())
+}
+
+fn account_email(username: &str) -> String {
+    format!("{username}@diggit.local")
 }
 
 pub(crate) async fn commit_detail(
@@ -361,11 +850,11 @@ pub(crate) async fn commit_detail(
     .split_whitespace()
     .map(str::to_string)
     .collect::<Vec<_>>();
-    let base = parents
-        .first()
-        .cloned()
-        .unwrap_or_else(|| format!("{sha}^"));
-    let files = diff_between(repo, &base, sha).await.unwrap_or_default();
+    let files = if let Some(base) = parents.first() {
+        diff_between(repo, base, sha).await.unwrap_or_default()
+    } else {
+        diff_root_commit(repo, sha).await.unwrap_or_default()
+    };
 
     Ok(RepositoryCommitDetailResponse {
         commit,
@@ -393,6 +882,25 @@ pub(crate) async fn diff_between(
     Ok(parse_git_diff(&output.unwrap_or_default()))
 }
 
+pub(crate) async fn diff_root_commit(
+    repo: &Repository,
+    sha: &str,
+) -> ApiResult<Vec<RepositoryDiffFileResponse>> {
+    let output = try_run_git_command(
+        repo,
+        &[
+            "show".to_string(),
+            "--format=".to_string(),
+            "--find-renames".to_string(),
+            "--patch".to_string(),
+            "--root".to_string(),
+            sha.to_string(),
+        ],
+    )
+    .await?;
+    Ok(parse_git_diff(&output.unwrap_or_default()))
+}
+
 pub(crate) async fn fetch_upstream_ref(
     fork: &Repository,
     upstream_url: &str,
@@ -414,6 +922,31 @@ pub(crate) async fn fetch_upstream_ref(
     )
     .await?;
     Ok(upstream_ref)
+}
+
+pub(crate) async fn fetch_pull_request_ref(
+    target: &Repository,
+    source_url: &str,
+    source_branch: &str,
+    pull_request_id: Uuid,
+) -> ApiResult<String> {
+    validate_git_source(source_url)?;
+    let source_ref = format!(
+        "refs/remotes/diggit-prs/{}/{}",
+        pull_request_id,
+        normalize_path_segment(source_branch)
+    );
+    run_git_command(
+        target,
+        &[
+            "fetch".to_string(),
+            "--force".to_string(),
+            source_url.to_string(),
+            format!("refs/heads/{source_branch}:{source_ref}"),
+        ],
+    )
+    .await?;
+    Ok(source_ref)
 }
 
 pub(crate) async fn initialize_fork_from_source(
@@ -531,6 +1064,66 @@ pub(crate) async fn sync_from_upstream(
     let result = sync_from_upstream_in_worktree(fork, upstream_ref, author, &worktree).await;
     let _ = fs::remove_dir_all(&worktree).await;
     result
+}
+
+pub(crate) async fn merge_ref_into_branch(
+    repo: &Repository,
+    target_branch: &str,
+    source_ref: &str,
+    author: &AuthUser,
+) -> ApiResult<()> {
+    let worktree = env::temp_dir().join(format!("diggit-merge-{}", Uuid::now_v7()));
+    fs::create_dir_all(&worktree).await?;
+
+    let result =
+        merge_ref_into_branch_in_worktree(repo, target_branch, source_ref, author, &worktree).await;
+    let _ = fs::remove_dir_all(&worktree).await;
+    result
+}
+
+async fn merge_ref_into_branch_in_worktree(
+    repo: &Repository,
+    target_branch: &str,
+    source_ref: &str,
+    author: &AuthUser,
+    worktree: &PathBuf,
+) -> ApiResult<()> {
+    run_git_worktree_command(
+        repo,
+        worktree,
+        &[
+            "checkout".to_string(),
+            "-f".to_string(),
+            target_branch.to_string(),
+        ],
+    )
+    .await?;
+    let mut command = Command::new("git");
+    command
+        .arg("--git-dir")
+        .arg(&repo.local_path)
+        .arg("--work-tree")
+        .arg(worktree)
+        .arg("merge")
+        .arg("--no-edit")
+        .arg(source_ref)
+        .env("GIT_AUTHOR_NAME", &author.username)
+        .env(
+            "GIT_AUTHOR_EMAIL",
+            format!("{}@diggit.local", author.username),
+        )
+        .env("GIT_COMMITTER_NAME", &author.username)
+        .env(
+            "GIT_COMMITTER_EMAIL",
+            format!("{}@diggit.local", author.username),
+        );
+    let output = command.output().await?;
+    if !output.status.success() {
+        return Err(ApiError::BadRequest(
+            String::from_utf8_lossy(&output.stderr).trim().to_string(),
+        ));
+    }
+    Ok(())
 }
 
 async fn sync_from_upstream_in_worktree(
@@ -717,9 +1310,11 @@ pub(crate) fn parse_git_commit(output: &str) -> Option<RepositoryCommitResponse>
     Some(RepositoryCommitResponse {
         sha: sha.to_string(),
         message,
+        author_avatar_url: None,
         avatar_fallback: avatar_fallback(&author_name),
         author_name,
         author_email,
+        author_username: None,
         created_at,
     })
 }
@@ -854,8 +1449,9 @@ fn parse_diff_paths(line: &str) -> (Option<String>, Option<String>) {
 }
 
 fn trim_git_path(path: &str) -> String {
-    path.trim_start_matches("a/")
-        .trim_start_matches("b/")
+    path.strip_prefix("a/")
+        .or_else(|| path.strip_prefix("b/"))
+        .unwrap_or(path)
         .to_string()
 }
 
@@ -923,6 +1519,92 @@ pub(crate) fn file_extension(name: &str) -> Option<String> {
         .filter(|extension| !extension.is_empty())
 }
 
+fn language_for_path(path: &str) -> Option<&'static str> {
+    let name = repo_path_name(path).to_ascii_lowercase();
+    match name.as_str() {
+        "dockerfile" => return Some("Dockerfile"),
+        "makefile" => return Some("Makefile"),
+        "cmakelists.txt" => return Some("CMake"),
+        _ => {}
+    }
+
+    match file_extension(path).as_deref()? {
+        "astro" => Some("Astro"),
+        "c" => Some("C"),
+        "cc" | "cpp" | "cxx" | "hpp" | "hxx" => Some("C++"),
+        "clj" | "cljs" => Some("Clojure"),
+        "cs" => Some("C#"),
+        "css" => Some("CSS"),
+        "dart" => Some("Dart"),
+        "ex" | "exs" => Some("Elixir"),
+        "go" => Some("Go"),
+        "h" => Some("C"),
+        "html" | "htm" => Some("HTML"),
+        "java" => Some("Java"),
+        "js" | "mjs" | "cjs" | "jsx" => Some("JavaScript"),
+        "json" => Some("JSON"),
+        "kt" | "kts" => Some("Kotlin"),
+        "lua" => Some("Lua"),
+        "php" => Some("PHP"),
+        "pl" | "pm" => Some("Perl"),
+        "py" | "pyw" => Some("Python"),
+        "r" => Some("R"),
+        "rb" => Some("Ruby"),
+        "rs" => Some("Rust"),
+        "sass" | "scss" => Some("SCSS"),
+        "scala" => Some("Scala"),
+        "sh" | "bash" | "zsh" | "fish" => Some("Shell"),
+        "sql" => Some("SQL"),
+        "svelte" => Some("Svelte"),
+        "swift" => Some("Swift"),
+        "toml" => Some("TOML"),
+        "ts" | "tsx" | "mts" | "cts" => Some("TypeScript"),
+        "vue" => Some("Vue"),
+        "yaml" | "yml" => Some("YAML"),
+        _ => None,
+    }
+}
+
+fn language_color(language: &str) -> &'static str {
+    match language {
+        "Astro" => "#ff5d01",
+        "C" => "#555555",
+        "C#" => "#178600",
+        "C++" => "#f34b7d",
+        "Clojure" => "#db5855",
+        "CMake" => "#da3434",
+        "CSS" => "#563d7c",
+        "Dart" => "#00b4ab",
+        "Dockerfile" => "#384d54",
+        "Elixir" => "#6e4a7e",
+        "Go" => "#00add8",
+        "HTML" => "#e34c26",
+        "Java" => "#b07219",
+        "JavaScript" => "#f1e05a",
+        "JSON" => "#292929",
+        "Kotlin" => "#a97bff",
+        "Lua" => "#000080",
+        "Makefile" => "#427819",
+        "PHP" => "#4f5d95",
+        "Perl" => "#0298c3",
+        "Python" => "#3572a5",
+        "R" => "#198ce7",
+        "Ruby" => "#701516",
+        "Rust" => "#dea584",
+        "SCSS" => "#c6538c",
+        "SQL" => "#e38c00",
+        "Scala" => "#c22d40",
+        "Shell" => "#89e051",
+        "Svelte" => "#ff3e00",
+        "Swift" => "#f05138",
+        "TOML" => "#9c4221",
+        "TypeScript" => "#3178c6",
+        "Vue" => "#41b883",
+        "YAML" => "#cb171e",
+        _ => "#858585",
+    }
+}
+
 pub(crate) fn is_binary_extension(extension: Option<&str>) -> bool {
     matches!(
         extension,
@@ -981,6 +1663,12 @@ index 1111111..2222222 100644
         assert_eq!(files[0].deletions, 1);
         assert_eq!(files[0].hunks[0].lines[1].kind, "deletion");
         assert_eq!(files[0].hunks[0].lines[2].kind, "addition");
+    }
+
+    #[test]
+    fn trims_only_git_diff_prefix_from_paths() {
+        assert_eq!(trim_git_path("a/src/main.ts"), "src/main.ts");
+        assert_eq!(trim_git_path("b/a/nested.ts"), "a/nested.ts");
     }
 
     #[test]

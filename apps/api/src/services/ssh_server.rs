@@ -225,9 +225,15 @@ impl Handler for GitSshSession {
             Ok(prepared) => {
                 session.channel_success(channel_id)?;
                 tokio::spawn(async move {
-                    if let Err(error) =
-                        run_git_ssh_command(channel, handle, channel_id, prepared, git_protocol)
-                            .await
+                    if let Err(error) = run_git_ssh_command(
+                        state,
+                        channel,
+                        handle,
+                        channel_id,
+                        prepared,
+                        git_protocol,
+                    )
+                    .await
                     {
                         warn!(%error, "SSH Git command failed");
                     }
@@ -279,6 +285,7 @@ pub(crate) struct ParsedGitSshCommand {
 }
 
 struct PreparedGitSshCommand {
+    auth: AuthUser,
     repo: Repository,
     service: GitSshService,
 }
@@ -303,18 +310,25 @@ async fn prepare_git_ssh_command(
     }
 
     Ok(PreparedGitSshCommand {
+        auth: auth.clone(),
         repo,
         service: parsed.service,
     })
 }
 
 async fn run_git_ssh_command(
+    state: AppState,
     channel: Channel<server::Msg>,
     handle: server::Handle,
     channel_id: ChannelId,
     prepared: PreparedGitSshCommand,
     git_protocol: Option<String>,
 ) -> anyhow::Result<()> {
+    let before_tips = if prepared.service == GitSshService::ReceivePack {
+        git_ref_tips(&prepared.repo).await.unwrap_or_default()
+    } else {
+        Vec::new()
+    };
     let mut command = git_ssh_service_command(&prepared.repo, prepared.service);
     if let Some(git_protocol) = git_protocol {
         command.env("GIT_PROTOCOL", git_protocol);
@@ -362,9 +376,32 @@ async fn run_git_ssh_command(
     let _ = stdout_task.await;
     let _ = stderr_task.await;
 
+    if status.success() && prepared.service == GitSshService::ReceivePack {
+        if let Err(error) =
+            record_successful_ssh_push(&state, &prepared.repo, &prepared.auth, &before_tips).await
+        {
+            warn!(%error, "failed to record SSH push authors");
+        }
+    }
+
     let code = status.code().unwrap_or(1).max(0) as u32;
     let _ = channel_write.exit_status(code).await;
     let _ = channel_write.close().await;
+    Ok(())
+}
+
+async fn record_successful_ssh_push(
+    state: &AppState,
+    repo: &Repository,
+    auth: &AuthUser,
+    before_tips: &[String],
+) -> ApiResult<()> {
+    record_pushed_commit_authors(state, repo, auth, before_tips).await?;
+    sqlx::query("UPDATE repositories SET updated_at = now() WHERE id = $1")
+        .bind(repo.id)
+        .execute(&state.pool)
+        .await?;
+    invalidate_repo_cache(state, &repo.owner_handle, &repo.name).await;
     Ok(())
 }
 

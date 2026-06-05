@@ -10,11 +10,12 @@ type StarButtonProps = {
   owner: string;
   name: string;
   initialStars: number;
+  initialStarred?: boolean;
 };
 
-export function StarButton({ owner, name, initialStars }: StarButtonProps) {
+export function StarButton({ owner, name, initialStars, initialStarred = false }: StarButtonProps) {
   const [stars, setStars] = useState(initialStars);
-  const [starred, setStarred] = useState(false);
+  const [starred, setStarred] = useState(initialStarred);
   const [message, setMessage] = useState("");
 
   async function star() {
@@ -34,9 +35,9 @@ export function StarButton({ owner, name, initialStars }: StarButtonProps) {
       return;
     }
 
-    const repo = (await response.json()) as { stars_count: number };
+    const repo = (await response.json()) as { stars_count: number; viewer_has_starred?: boolean };
     setStars(repo.stars_count);
-    setStarred(true);
+    setStarred(repo.viewer_has_starred ?? true);
     setMessage("");
   }
 

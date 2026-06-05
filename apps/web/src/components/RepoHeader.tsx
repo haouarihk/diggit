@@ -37,7 +37,12 @@ export function RepoHeader({ activeTab, issuesCount = 0, pullRequestsCount = 0, 
 
         <div className="flex flex-wrap items-center gap-3">
           <ForkButton initialForks={repo.forks_count ?? 0} name={repo.name} owner={repo.owner_handle} />
-          <StarButton initialStars={repo.stars_count} name={repo.name} owner={repo.owner_handle} />
+          <StarButton
+            initialStarred={repo.viewer_has_starred}
+            initialStars={repo.stars_count}
+            name={repo.name}
+            owner={repo.owner_handle}
+          />
         </div>
       </div>
 

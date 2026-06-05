@@ -34,4 +34,33 @@ describe("CodeDiff", () => {
     expect(html).toContain("console.info(app);");
     expect(html).toContain("console.log(app);");
   });
+
+  it("moves the focused file to the top without filtering other files", () => {
+    const html = renderToStaticMarkup(
+      <CodeDiff
+        focusPath="src/feature/app.ts"
+        files={[
+          {
+            old_path: "README.md",
+            new_path: "README.md",
+            status: "modified",
+            additions: 1,
+            deletions: 0,
+            hunks: [{ header: "@@ -1 +1 @@", lines: [{ kind: "addition", old_line: null, new_line: 1, content: "docs" }] }],
+          },
+          {
+            old_path: "src/feature/app.ts",
+            new_path: "src/feature/app.ts",
+            status: "modified",
+            additions: 1,
+            deletions: 0,
+            hunks: [{ header: "@@ -1 +1 @@", lines: [{ kind: "addition", old_line: null, new_line: 1, content: "code" }] }],
+          },
+        ]}
+      />,
+    );
+
+    expect(html.indexOf("src/feature/app.ts")).toBeLessThan(html.indexOf("README.md"));
+    expect(html).toContain("README.md");
+  });
 });

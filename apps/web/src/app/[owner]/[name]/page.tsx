@@ -2,12 +2,16 @@ import { RepoHeader, repoHref } from "@/components/RepoHeader";
 import { RepositoryCodeBrowser } from "@/components/RepositoryCodeBrowser";
 import {
   getRepository,
+  getRepositoryStats,
   getRepositoryTree,
   listPullRequests,
+  listRepositoryContributors,
   listRepositoryBranches,
+  listRepositoryLanguages,
   listRepositoryTags,
   type RepositoryTree,
 } from "@/lib/api";
+import { getRepositoryReadme } from "@/lib/repository-readme";
 
 type Props = {
   params: Promise<{ owner: string; name: string }>;
@@ -22,16 +26,25 @@ export default async function RepoPage({ params, searchParams }: Props) {
   const repo = await getRepository(decodedOwner, decodedName);
   const selectedRef = ref || repo.default_branch;
   const baseHref = repoHref(decodedOwner, decodedName);
-  const [pullRequests, branches, tags, tree] = await Promise.all([
+  const [pullRequests, branches, tags, stats, languages, contributors, tree] = await Promise.all([
     listPullRequests(decodedOwner, decodedName).catch(() => ({ data: [] })),
     listRepositoryBranches(decodedOwner, decodedName).catch(() => ({
       data: [{ name: repo.default_branch, is_default: true, commit_sha: null }],
     })),
     listRepositoryTags(decodedOwner, decodedName).catch(() => ({ data: [] })),
+    getRepositoryStats(decodedOwner, decodedName, selectedRef).catch(() => ({
+      branches_count: 0,
+      commits_count: 0,
+      releases_count: 0,
+      tags_count: 0,
+    })),
+    listRepositoryLanguages(decodedOwner, decodedName, selectedRef).catch(() => ({ data: [] })),
+    listRepositoryContributors(decodedOwner, decodedName, selectedRef).catch(() => ({ data: [] })),
     getRepositoryTree(decodedOwner, decodedName, selectedRef).catch(
       (): RepositoryTree => ({ ref_name: selectedRef, last_commit: null, entries: [] }),
     ),
   ]);
+  const readme = await getRepositoryReadme(decodedOwner, decodedName, selectedRef, tree.entries);
 
   return (
     <div className="grid gap-6">
@@ -40,10 +53,14 @@ export default async function RepoPage({ params, searchParams }: Props) {
         baseHref={baseHref}
         branches={branches.data}
         mode="tree"
+        contributors={contributors.data}
+        languages={languages.data}
         owner={decodedOwner}
         query={q}
+        readme={readme}
         repo={repo}
         selectedRef={selectedRef}
+        stats={stats}
         tags={tags.data}
         tree={tree}
       />

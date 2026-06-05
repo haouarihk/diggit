@@ -9,13 +9,16 @@ type Props = {
     name: string;
     sha: string;
   }>;
+  searchParams: Promise<{ path?: string }>;
 };
 
-export default async function CommitDetailPage({ params }: Props) {
+export default async function CommitDetailPage({ params, searchParams }: Props) {
   const { owner, name, sha } = await params;
+  const { path } = await searchParams;
   const decodedOwner = decodeURIComponent(owner);
   const decodedName = decodeURIComponent(name);
   const decodedSha = decodeURIComponent(sha);
+  const focusPath = path ? decodeURIComponent(path) : undefined;
   const baseHref = repoHref(decodedOwner, decodedName);
   const [repo, pullRequests, detail] = await Promise.all([
     getRepository(decodedOwner, decodedName),
@@ -40,7 +43,7 @@ export default async function CommitDetailPage({ params }: Props) {
           <p className="text-sm text-[#59636e]">Parent {detail.parents.map((parent) => parent.slice(0, 12)).join(", ")}</p>
         ) : null}
       </section>
-      <CodeDiff files={detail.files} />
+      <CodeDiff files={detail.files} focusPath={focusPath} />
     </div>
   );
 }

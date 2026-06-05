@@ -350,12 +350,38 @@ pub(crate) async fn federated_fork(
     let user = get_user_by_actor_url(&state.pool, &auth.actor_url).await?;
     let source_repo_url = validate_remote_url(&input.source_repo_url)?.to_string();
     let source_server = validate_remote_base_url(&source_repo_url)?;
+    let requested_name = input.name.is_some();
     let fork_name = normalize_name(
         input
             .name
             .as_deref()
             .unwrap_or_else(|| source_repo_url.rsplit('/').next().unwrap_or("fork")),
     )?;
+    let existing = sqlx::query_as::<_, Repository>(
+        "SELECT * FROM repositories WHERE owner_handle = $1 AND name = $2",
+    )
+    .bind(&user.username)
+    .bind(&fork_name)
+    .fetch_optional(&state.pool)
+    .await?;
+    if let Some(existing) = existing {
+        let matches_source = existing
+            .source_remote_url
+            .as_deref()
+            .or(existing.remote_url.as_deref())
+            == Some(source_repo_url.as_str());
+        if !requested_name && matches_source {
+            return Ok(Json(
+                repository_response(&state.pool, &state.config, existing).await?,
+            ));
+        }
+
+        return Err(ApiError::Conflict(format!(
+            "repository {}/{} already exists",
+            user.username, fork_name
+        )));
+    }
+
     let local_path = repo_path(&state.config, &user.username, &fork_name);
     create_bare_repo(&local_path).await?;
 

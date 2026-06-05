@@ -6,11 +6,14 @@ pub(crate) async fn owner_repositories(
     query: RepoListQuery,
     auth: Option<&AuthUser>,
 ) -> ApiResult<Vec<RepositoryResponse>> {
+    let auth_cache_key = auth
+        .map(|auth| auth.id.to_string())
+        .unwrap_or_else(|| "public".to_string());
     let cache_key = cache_key(&[
         "repos",
         "owner",
         owner,
-        auth.map(|auth| auth.username.as_str()).unwrap_or("public"),
+        &auth_cache_key,
         query.q.as_deref().unwrap_or(""),
         query.sort.as_deref().unwrap_or("updated"),
         query.direction.as_deref().unwrap_or("desc"),
@@ -74,7 +77,7 @@ pub(crate) async fn owner_repositories(
 
     let mut responses = Vec::with_capacity(repos.len());
     for repo in repos {
-        responses.push(repository_response(&state.pool, &state.config, repo).await?);
+        responses.push(repository_response_for_auth(&state.pool, &state.config, repo, auth).await?);
     }
 
     state.cache.set_json(&cache_key, &responses).await;
@@ -173,10 +176,25 @@ pub(crate) async fn ensure_repo_visible(
         return Err(ApiError::NotFound);
     };
 
-    resolve_writable_namespace(pool, auth, &repo.owner_handle)
+    if resolve_writable_namespace(pool, auth, &repo.owner_handle)
         .await
-        .map(|_| ())
-        .map_err(|_| ApiError::NotFound)
+        .is_ok()
+    {
+        return Ok(());
+    }
+
+    let collaborator: Option<(Uuid,)> = sqlx::query_as(
+        "SELECT user_id FROM repository_collaborators WHERE repository_id = $1 AND user_id = $2",
+    )
+    .bind(repo.id)
+    .bind(auth.id)
+    .fetch_optional(pool)
+    .await?;
+    if collaborator.is_some() {
+        Ok(())
+    } else {
+        Err(ApiError::NotFound)
+    }
 }
 
 pub(crate) async fn ensure_repo_action_visible(
@@ -406,6 +424,7 @@ pub(crate) async fn repository_response(
         archived_at: repo.archived_at,
         dominant_language: repo.dominant_language,
         stars_count: repo.stars_count,
+        viewer_has_starred: false,
         forks_count,
         local_path: repo.local_path,
         remote_url: repo.remote_url,
@@ -419,6 +438,37 @@ pub(crate) async fn repository_response(
         created_at: repo.created_at,
         updated_at: repo.updated_at,
     })
+}
+
+pub(crate) async fn repository_response_for_auth(
+    pool: &PgPool,
+    config: &Config,
+    repo: Repository,
+    auth: Option<&AuthUser>,
+) -> ApiResult<RepositoryResponse> {
+    let viewer_has_starred = if let Some(auth) = auth {
+        viewer_has_starred(pool, repo.id, auth.id).await?
+    } else {
+        false
+    };
+    let mut response = repository_response(pool, config, repo).await?;
+    response.viewer_has_starred = viewer_has_starred;
+    Ok(response)
+}
+
+pub(crate) async fn viewer_has_starred(
+    pool: &PgPool,
+    repo_id: Uuid,
+    user_id: Uuid,
+) -> ApiResult<bool> {
+    let starred: Option<(Uuid,)> = sqlx::query_as(
+        "SELECT user_id FROM repository_stars WHERE repository_id = $1 AND user_id = $2",
+    )
+    .bind(repo_id)
+    .bind(user_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(starred.is_some())
 }
 
 #[cfg(test)]

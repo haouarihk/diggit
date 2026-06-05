@@ -22,6 +22,7 @@ export type Repository = {
   archived_at: string | null;
   dominant_language: string;
   stars_count: number;
+  viewer_has_starred: boolean;
   forks_count?: number;
   remote_url: string | null;
   remote_server: string | null;
@@ -118,14 +119,41 @@ export type Collaborator = {
 
 export type PullRequest = {
   id: string;
+  target_repository_id: string;
+  source_repository_id: string | null;
   title: string;
   body: string;
   author_handle: string;
   source_repo_url: string;
   source_branch: string;
   target_branch: string;
-  status: string;
+  status: "open" | "closed" | "merged" | string;
+  activity_id: string | null;
   created_at: string;
+  updated_at: string;
+  viewer_can_update: boolean;
+};
+
+export type PullRequestSourceOption = {
+  repository_id: string | null;
+  owner_handle: string;
+  name: string;
+  url: string;
+  kind: "repository" | "fork" | "upstream" | string;
+  branches: RepositoryBranch[];
+};
+
+export type PullRequestOptions = {
+  repository: PullRequestSourceOption;
+  forks: PullRequestSourceOption[];
+  upstream: PullRequestSourceOption | null;
+};
+
+export type PullRequestCompareInput = {
+  source_repo_url: string;
+  source_branch: string;
+  source_repository_id?: string | null;
+  target_branch: string;
 };
 
 export type Issue = {
@@ -173,6 +201,8 @@ export type RepositoryCommit = {
   message: string;
   author_name: string;
   author_email: string;
+  author_username: string | null;
+  author_avatar_url: string | null;
   avatar_fallback: string;
   created_at: string;
 };
@@ -181,6 +211,28 @@ export type RepositoryBranch = {
   name: string;
   is_default: boolean;
   commit_sha: string | null;
+};
+
+export type RepositoryLanguage = {
+  language: string;
+  bytes: number;
+  percentage: number;
+  color: string;
+};
+
+export type RepositoryContributor = {
+  name: string;
+  username: string | null;
+  avatar_url: string | null;
+  avatar_fallback: string;
+  commits: number;
+};
+
+export type RepositoryStats = {
+  commits_count: number;
+  branches_count: number;
+  tags_count: number;
+  releases_count: number;
 };
 
 export type RepositoryTag = {
@@ -359,13 +411,16 @@ export function getRepository(owner: string, name: string) {
   return apiFetch<Repository>(`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`);
 }
 
-export function getRepositoryTree(owner: string, name: string, refName?: string, path?: string) {
+export function getRepositoryTree(owner: string, name: string, refName?: string, path?: string, recursive = false) {
   const searchParams = new URLSearchParams();
   if (refName) {
     searchParams.set("ref", refName);
   }
   if (path) {
     searchParams.set("path", path);
+  }
+  if (recursive) {
+    searchParams.set("recursive", "true");
   }
   const query = searchParams.toString();
   return apiFetch<RepositoryTree>(
@@ -381,6 +436,39 @@ export function listRepositoryBranches(owner: string, name: string) {
 
 export function listRepositoryTags(owner: string, name: string) {
   return apiFetch<Collection<RepositoryTag>>(`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/tags`);
+}
+
+export function getRepositoryStats(owner: string, name: string, refName?: string) {
+  const searchParams = new URLSearchParams();
+  if (refName) {
+    searchParams.set("ref", refName);
+  }
+  const query = searchParams.toString();
+  return apiFetch<RepositoryStats>(
+    `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/stats${query ? `?${query}` : ""}`,
+  );
+}
+
+export function listRepositoryLanguages(owner: string, name: string, refName?: string) {
+  const searchParams = new URLSearchParams();
+  if (refName) {
+    searchParams.set("ref", refName);
+  }
+  const query = searchParams.toString();
+  return apiFetch<Collection<RepositoryLanguage>>(
+    `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/languages${query ? `?${query}` : ""}`,
+  );
+}
+
+export function listRepositoryContributors(owner: string, name: string, refName?: string) {
+  const searchParams = new URLSearchParams();
+  if (refName) {
+    searchParams.set("ref", refName);
+  }
+  const query = searchParams.toString();
+  return apiFetch<Collection<RepositoryContributor>>(
+    `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/contributors${query ? `?${query}` : ""}`,
+  );
 }
 
 export function listRepositoryCollaborators(owner: string, name: string) {
@@ -399,10 +487,13 @@ export function getRepositoryFile(owner: string, name: string, path: string, ref
   );
 }
 
-export function listCommits(owner: string, name: string, refName?: string) {
+export function listCommits(owner: string, name: string, refName?: string, limit?: number) {
   const searchParams = new URLSearchParams();
   if (refName) {
     searchParams.set("ref", refName);
+  }
+  if (limit !== undefined) {
+    searchParams.set("limit", String(limit));
   }
   const query = searchParams.toString();
   return apiFetch<Collection<RepositoryCommit>>(
@@ -454,6 +545,28 @@ export function listIssueLabels(owner: string, name: string) {
 export function listPullRequests(owner: string, name: string) {
   return apiFetch<Collection<PullRequest>>(
     `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pull-requests`,
+  );
+}
+
+export function getPullRequest(owner: string, name: string, id: string) {
+  return apiFetch<PullRequest>(
+    `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pull-requests/${encodeURIComponent(id)}`,
+  );
+}
+
+export function getPullRequestOptions(owner: string, name: string) {
+  return apiFetch<PullRequestOptions>(
+    `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pull-requests/options`,
+  );
+}
+
+export function comparePullRequestBranches(owner: string, name: string, input: PullRequestCompareInput) {
+  return apiFetch<RepositoryCompare>(
+    `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pull-requests/compare`,
+    {
+      method: "POST",
+      body: JSON.stringify(input),
+    },
   );
 }
 

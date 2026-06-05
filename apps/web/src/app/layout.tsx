@@ -23,9 +23,9 @@ export default function RootLayout({
         <ThemeScript />
         <script dangerouslySetInnerHTML={{ __html: runtimeConfigScript() }} id="diggit-runtime-config" />
       </head>
-      <body className="bg-[#f6f8fa] text-sm leading-6 text-[#1f2328]">
+      <body className="h-full bg-[#f6f8fa] text-sm leading-6 text-[#1f2328]">
         <ThemeProvider>
-          <main className="mx-auto max-w-7xl px-6 pb-12">
+          <main className="min-h-screen mx-auto max-w-7xl px-6 pb-12">
             <NavBar />
             {children}
           </main>

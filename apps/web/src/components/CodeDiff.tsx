@@ -3,9 +3,12 @@ import type { RepositoryDiffFile, RepositoryDiffLine } from "@/lib/api";
 type CodeDiffProps = {
   files: RepositoryDiffFile[];
   emptyLabel?: string;
+  focusPath?: string;
 };
 
-export function CodeDiff({ files, emptyLabel = "No file changes." }: CodeDiffProps) {
+export function CodeDiff({ files, emptyLabel = "No file changes.", focusPath }: CodeDiffProps) {
+  const visibleFiles = focusPath ? focusDiffFiles(files, focusPath) : files;
+
   if (files.length === 0) {
     return (
       <div className="rounded-md border border-[#d0d7de] bg-white p-4 text-[#59636e]">
@@ -16,41 +19,66 @@ export function CodeDiff({ files, emptyLabel = "No file changes." }: CodeDiffPro
 
   return (
     <div className="grid gap-4">
-      {files.map((file) => (
-        <article className="overflow-hidden rounded-md border border-[#d0d7de] bg-white" key={`${file.old_path ?? ""}:${file.new_path ?? ""}`}>
-          <header className="flex flex-wrap items-center justify-between gap-3 border-b border-[#d8dee4] bg-[#f6f8fa] px-4 py-3">
-            <div className="min-w-0">
-              <div className="truncate font-mono text-sm font-semibold">{file.new_path ?? file.old_path ?? "file"}</div>
-              {file.old_path && file.new_path && file.old_path !== file.new_path ? (
-                <div className="truncate text-xs text-[#59636e]">Renamed from {file.old_path}</div>
-              ) : null}
-            </div>
-            <div className="flex items-center gap-2 text-xs font-semibold">
-              <span className="text-[#1a7f37]">+{file.additions}</span>
-              <span className="text-[#cf222e]">-{file.deletions}</span>
-              <span className="rounded-full border border-[#d0d7de] px-2 py-0.5 text-[#59636e]">{file.status}</span>
-            </div>
-          </header>
-          <div className="overflow-x-auto">
-            {file.hunks.map((hunk) => (
-              <div key={hunk.header}>
-                <div className="border-b border-[#d8dee4] bg-[#ddf4ff] px-4 py-1 font-mono text-xs text-[#59636e]">
-                  {hunk.header}
-                </div>
-                <table className="w-full border-collapse font-mono text-xs leading-5">
-                  <tbody>
-                    {hunk.lines.map((line, index) => (
-                      <DiffRow fileKey={file.new_path ?? file.old_path ?? "file"} index={index} key={`${hunk.header}:${index}`} line={line} />
-                    ))}
-                  </tbody>
-                </table>
+      {visibleFiles.map((file, fileIndex) => {
+        const isFocused = Boolean(focusPath && diffFileMatchesPath(file, focusPath));
+        return (
+          <article
+            className={`overflow-hidden rounded-md border bg-white ${
+              isFocused ? "border-[#0969da] shadow-sm" : "border-[#d0d7de]"
+            }`}
+            id={isFocused && fileIndex === 0 ? "focused-diff-file" : undefined}
+            key={`${file.old_path ?? ""}:${file.new_path ?? ""}`}
+          >
+            <header className="flex flex-wrap items-center justify-between gap-3 border-b border-[#d8dee4] bg-[#f6f8fa] px-4 py-3">
+              <div className="min-w-0">
+                <div className="truncate font-mono text-sm font-semibold">{file.new_path ?? file.old_path ?? "file"}</div>
+                {file.old_path && file.new_path && file.old_path !== file.new_path ? (
+                  <div className="truncate text-xs text-[#59636e]">Renamed from {file.old_path}</div>
+                ) : null}
               </div>
-            ))}
-          </div>
-        </article>
-      ))}
+              <div className="flex items-center gap-2 text-xs font-semibold">
+                <span className="text-[#1a7f37]">+{file.additions}</span>
+                <span className="text-[#cf222e]">-{file.deletions}</span>
+                <span className="rounded-full border border-[#d0d7de] px-2 py-0.5 text-[#59636e]">{file.status}</span>
+              </div>
+            </header>
+            <div className="overflow-x-auto">
+              {file.hunks.map((hunk) => (
+                <div key={hunk.header}>
+                  <div className="border-b border-[#d8dee4] bg-[#ddf4ff] px-4 py-1 font-mono text-xs text-[#59636e]">
+                    {hunk.header}
+                  </div>
+                  <table className="w-full border-collapse font-mono text-xs leading-5">
+                    <tbody>
+                      {hunk.lines.map((line, index) => (
+                        <DiffRow fileKey={file.new_path ?? file.old_path ?? "file"} index={index} key={`${hunk.header}:${index}`} line={line} />
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ))}
+            </div>
+          </article>
+        );
+      })}
     </div>
   );
+}
+
+function focusDiffFiles(files: RepositoryDiffFile[], focusPath: string) {
+  const matchingFiles = files.filter((file) => diffFileMatchesPath(file, focusPath));
+  if (matchingFiles.length === 0) {
+    return files;
+  }
+
+  const rest = files.filter((file) => !diffFileMatchesPath(file, focusPath));
+  return [...matchingFiles, ...rest];
+}
+
+function diffFileMatchesPath(file: RepositoryDiffFile, focusPath: string) {
+  return [file.new_path, file.old_path]
+    .filter((path): path is string => Boolean(path))
+    .some((path) => path === focusPath || path.startsWith(`${focusPath}/`));
 }
 
 function DiffRow({ fileKey, index, line }: { fileKey: string; index: number; line: RepositoryDiffLine }) {

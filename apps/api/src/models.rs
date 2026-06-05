@@ -89,6 +89,7 @@ pub(crate) struct RepositoryResponse {
     pub(crate) archived_at: Option<DateTime<Utc>>,
     pub(crate) dominant_language: String,
     pub(crate) stars_count: i32,
+    pub(crate) viewer_has_starred: bool,
     pub(crate) forks_count: i64,
     pub(crate) local_path: String,
     pub(crate) remote_url: Option<String>,
@@ -109,6 +110,8 @@ pub(crate) struct RepositoryCommitResponse {
     pub(crate) message: String,
     pub(crate) author_name: String,
     pub(crate) author_email: String,
+    pub(crate) author_username: Option<String>,
+    pub(crate) author_avatar_url: Option<String>,
     pub(crate) avatar_fallback: String,
     pub(crate) created_at: String,
 }
@@ -116,6 +119,14 @@ pub(crate) struct RepositoryCommitResponse {
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct RepositoryCommitListResponse {
     pub(crate) data: Vec<RepositoryCommitResponse>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub(crate) struct RepositoryStatsResponse {
+    pub(crate) commits_count: i64,
+    pub(crate) branches_count: i64,
+    pub(crate) tags_count: i64,
+    pub(crate) releases_count: i64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -134,6 +145,33 @@ pub(crate) struct RepositoryTagResponse {
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct RepositoryBranchListResponse {
     pub(crate) data: Vec<RepositoryBranchResponse>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub(crate) struct RepositoryLanguageResponse {
+    pub(crate) language: String,
+    pub(crate) bytes: i64,
+    pub(crate) percentage: f64,
+    pub(crate) color: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub(crate) struct RepositoryLanguageListResponse {
+    pub(crate) data: Vec<RepositoryLanguageResponse>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub(crate) struct RepositoryContributorResponse {
+    pub(crate) name: String,
+    pub(crate) username: Option<String>,
+    pub(crate) avatar_url: Option<String>,
+    pub(crate) avatar_fallback: String,
+    pub(crate) commits: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub(crate) struct RepositoryContributorListResponse {
+    pub(crate) data: Vec<RepositoryContributorResponse>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -249,6 +287,41 @@ pub(crate) struct PullRequest {
     pub(crate) activity_id: Option<String>,
     pub(crate) created_at: DateTime<Utc>,
     pub(crate) updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct PullRequestResponse {
+    pub(crate) id: Uuid,
+    pub(crate) target_repository_id: Uuid,
+    pub(crate) source_repository_id: Option<Uuid>,
+    pub(crate) title: String,
+    pub(crate) body: String,
+    pub(crate) author_handle: String,
+    pub(crate) source_repo_url: String,
+    pub(crate) source_branch: String,
+    pub(crate) target_branch: String,
+    pub(crate) status: String,
+    pub(crate) activity_id: Option<String>,
+    pub(crate) created_at: DateTime<Utc>,
+    pub(crate) updated_at: DateTime<Utc>,
+    pub(crate) viewer_can_update: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct PullRequestSourceOptionResponse {
+    pub(crate) repository_id: Option<Uuid>,
+    pub(crate) owner_handle: String,
+    pub(crate) name: String,
+    pub(crate) url: String,
+    pub(crate) kind: String,
+    pub(crate) branches: Vec<RepositoryBranchResponse>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct PullRequestOptionsResponse {
+    pub(crate) repository: PullRequestSourceOptionResponse,
+    pub(crate) forks: Vec<PullRequestSourceOptionResponse>,
+    pub(crate) upstream: Option<PullRequestSourceOptionResponse>,
 }
 
 #[derive(Debug, Serialize, Deserialize, FromRow)]
@@ -624,6 +697,19 @@ pub(crate) struct CreatePullRequestRequest {
 }
 
 #[derive(Debug, Deserialize)]
+pub(crate) struct ComparePullRequestRequest {
+    pub(crate) source_repo_url: String,
+    pub(crate) source_branch: String,
+    pub(crate) target_branch: Option<String>,
+    pub(crate) source_repository_id: Option<Uuid>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct UpdatePullRequestRequest {
+    pub(crate) status: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 pub(crate) struct CreateIssueRequest {
     pub(crate) title: String,
     pub(crate) body: Option<String>,
@@ -674,6 +760,13 @@ pub(crate) struct RepoTreeQuery {
     #[serde(rename = "ref")]
     pub(crate) ref_name: Option<String>,
     pub(crate) path: Option<String>,
+    pub(crate) recursive: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct RepoRefQuery {
+    #[serde(rename = "ref")]
+    pub(crate) ref_name: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

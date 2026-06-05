@@ -19,6 +19,8 @@ use state::{AppState, Cache};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    dotenvy::dotenv().ok();
+
     tracing_subscriber::registry()
         .with(tracing_subscriber::EnvFilter::new(
             env::var("RUST_LOG").unwrap_or_else(|_| "diggit_api=info,tower_http=info".to_string()),
