@@ -72,6 +72,9 @@ export default async function RepoPage({ params, searchParams }: Props) {
     ? await getRepositoryFile(decodedOwner, decodedName, selectedPath, selectedBranch).catch(() => null)
     : null;
   const canModifySelectedBranch = selectedBranch === repo.default_branch;
+  const selectedBranchExists = Boolean(
+    branches.data.find((branch) => branch.name === selectedBranch)?.commit_sha ?? tree.last_commit,
+  );
 
   return (
     <div className="grid gap-6">
@@ -170,8 +173,8 @@ export default async function RepoPage({ params, searchParams }: Props) {
 
           <section className="grid gap-3 rounded-md border border-[#d0d7de] bg-white p-4">
             <h2 className="text-base font-semibold">Clone</h2>
-            <CloneUrl label="SSH" value={cloneCommand(repo.ssh_url, selectedBranch)} />
-            <CloneUrl label="HTTP" value={cloneCommand(repo.http_url, selectedBranch)} />
+            <CloneUrl label="SSH" value={cloneCommand(repo.ssh_url, selectedBranch, selectedBranchExists)} />
+            <CloneUrl label="HTTP" value={cloneCommand(repo.http_url, selectedBranch, selectedBranchExists)} />
           </section>
 
           <section className="grid gap-3 rounded-md border border-[#d0d7de] bg-white p-4">
@@ -445,7 +448,11 @@ function CloneUrl({ label, value }: { label: string; value: string }) {
   );
 }
 
-function cloneCommand(url: string, branch: string) {
+function cloneCommand(url: string, branch: string, branchExists: boolean) {
+  if (!branchExists) {
+    return `git clone ${shellArg(url)}`;
+  }
+
   return `git clone --branch ${shellArg(branch)} ${shellArg(url)}`;
 }
 

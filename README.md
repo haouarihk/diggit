@@ -51,7 +51,7 @@ services:
       ADMIN_USERNAMES: alice
       SIGNUPS_ENABLED: "true"
       SSH_HOST: 0.0.0.0 # bind address
-      SSH_HOST_KEY_PATH: /data/ssh/ssh_host_ed25519_key
+      SSH_HOST_KEY_PATH: /data/git/ssh_host_ed25519_key
       SSH_PORT: "2222" # *
       PORT: "3001"
     ports:
@@ -60,7 +60,6 @@ services:
       - "2222:2222"
     volumes:
       - git_data:/data/git
-      - ssh_data:/data/ssh
 
   web:
     image: ghcr.io/haouarihk/diggit-web:main
@@ -79,7 +78,6 @@ volumes:
   postgres_data:
   redis_data:
   git_data:
-  ssh_data:
 ```
 
 Save this as `compose.yml`, then run `docker compose up -d`.

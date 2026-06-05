@@ -19,6 +19,13 @@ pub(crate) struct Config {
 
 impl Config {
     pub(crate) fn from_env() -> Self {
+        let git_storage_path = env::var("GIT_STORAGE_PATH")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from("./storage/git"));
+        let ssh_host_key_path = env::var("SSH_HOST_KEY_PATH")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| git_storage_path.join("ssh_host_ed25519_key"));
+
         Self {
             database_url: env::var("DATABASE_URL")
                 .unwrap_or_else(|_| "postgres://diggit:diggit@localhost:5432/diggit".to_string()),
@@ -33,9 +40,7 @@ impl Config {
                 .unwrap_or_else(|_| "http://localhost:3001".to_string()),
             public_web_url: env::var("PUBLIC_WEB_URL")
                 .unwrap_or_else(|_| "http://localhost:3000".to_string()),
-            git_storage_path: env::var("GIT_STORAGE_PATH")
-                .map(PathBuf::from)
-                .unwrap_or_else(|_| PathBuf::from("./storage/git")),
+            git_storage_path,
             jwt_secret: jwt_secret_from_env(),
             admin_usernames: env::var("ADMIN_USERNAMES")
                 .unwrap_or_default()
@@ -47,9 +52,7 @@ impl Config {
             ssh_bind_host: env::var("SSH_HOST")
                 .or_else(|_| env::var("SSH_BIND_HOST"))
                 .unwrap_or_else(|_| "0.0.0.0".to_string()),
-            ssh_host_key_path: env::var("SSH_HOST_KEY_PATH")
-                .map(PathBuf::from)
-                .unwrap_or_else(|_| PathBuf::from("./storage/ssh/ssh_host_ed25519_key")),
+            ssh_host_key_path,
             ssh_port: env::var("SSH_PORT")
                 .ok()
                 .and_then(|port| port.parse().ok())
