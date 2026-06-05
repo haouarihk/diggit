@@ -21,7 +21,7 @@ export function ThemeToggle() {
 
   return (
     <details className="group relative" ref={detailsRef}>
-      <summary className="inline-flex cursor-pointer list-none items-center gap-2 rounded-full border border-[#d0d7de] bg-gradient-to-b from-white to-[#f6f8fa] px-3 py-1.5 font-semibold text-[#1f2328] shadow-sm hover:border-[#0969da] hover:text-[#0969da]">
+      <summary className="inline-flex cursor-pointer list-none items-center gap-2 rounded-full border border-[#d0d7de] bg-[#f6f8fa] px-3 py-1.5 font-semibold text-[#1f2328] shadow-sm hover:border-[#0969da] hover:text-[#0969da]">
         <span className="grid h-6 w-6 place-items-center rounded-full bg-[#24292f] text-sm text-white">
           {selected.icon}
         </span>
