@@ -213,3 +213,11 @@ textarea {
 [class~="shadow-lg"] {
   --tw-shadow-color: var(--color-shadow) !important;
 }
+
+
+
+
+
+button:not(disabled) {
+  cursor: pointer;
+}
