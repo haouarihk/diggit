@@ -545,7 +545,7 @@ pub(crate) async fn dispatch_repository_webhooks(
 
     let changes = changed_branch_tips(repo, before_tips).await?;
     for change in changes {
-        let payload = gitlab_push_payload(state, repo, auth, &change);
+        let payload = gitlab_push_payload(state, repo, auth, &change).await?;
         for webhook in webhooks
             .iter()
             .filter(|webhook| webhook.events.iter().any(|event| event == "push"))
@@ -907,24 +907,26 @@ fn zero_sha() -> String {
     "0000000000000000000000000000000000000000".to_string()
 }
 
-fn gitlab_push_payload(
+async fn gitlab_push_payload(
     state: &AppState,
     repo: &Repository,
     auth: &AuthUser,
     change: &(String, String, String),
-) -> Value {
+) -> ApiResult<Value> {
     let (branch, before, after) = change;
-    json!({
+    let project_id = ensure_gitlab_project_id(state, repo.id).await?;
+    Ok(json!({
         "object_kind": "push",
         "event_name": "push",
         "ref": format!("refs/heads/{branch}"),
         "before": before,
         "after": after,
         "checkout_sha": if after == &zero_sha() { Value::Null } else { json!(after) },
+        "project_id": project_id,
         "user_name": auth.username,
         "user_username": auth.username,
         "project": {
-            "id": repo.id.to_string(),
+            "id": project_id,
             "name": repo.name,
             "path": repo.name,
             "path_with_namespace": format!("{}/{}", repo.owner_handle, repo.name),
@@ -944,7 +946,7 @@ fn gitlab_push_payload(
         },
         "commits": [],
         "total_commits_count": 0
-    })
+    }))
 }
 
 async fn gitlab_project_payload(state: &AppState, repo: &Repository) -> ApiResult<Value> {
@@ -990,12 +992,17 @@ async fn deliver_repository_webhook(
             } else {
                 "failed"
             };
+            let error_body = if response.status().is_success() {
+                None
+            } else {
+                response.text().await.ok().filter(|body| !body.is_empty())
+            };
             let _ = sqlx::query(
                 r#"
                 UPDATE repository_webhooks
                 SET last_status = $2,
                     last_status_code = $3,
-                    last_error = NULL,
+                    last_error = $4,
                     last_delivered_at = now(),
                     updated_at = now()
                 WHERE id = $1
@@ -1004,6 +1011,7 @@ async fn deliver_repository_webhook(
             .bind(webhook.id)
             .bind(status)
             .bind(status_code)
+            .bind(error_body)
             .execute(&state.pool)
             .await;
         }

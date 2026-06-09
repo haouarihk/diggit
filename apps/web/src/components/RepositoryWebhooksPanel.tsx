@@ -144,7 +144,7 @@ export function RepositoryWebhooksPanel({ name, owner }: RepositoryWebhooksPanel
         <form className="grid gap-4 rounded-md border border-[#d0d7de] bg-[#f6f8fa] p-4 sm:p-6" onSubmit={createWebhook}>
           <label className="grid gap-1.5">
             Payload URL
-            <input className="w-full rounded-md border border-[#d0d7de] bg-white px-3 py-2" name="url" placeholder="https://panel.haouarihk.com/api/deploy/webhook/..." required />
+            <input className="w-full rounded-md border border-[#d0d7de] bg-white px-3 py-2" name="url" placeholder="https://your-dokploy-domain.com/api/deploy/webhook/..." required />
           </label>
           <label className="grid gap-1.5">
             Secret token
