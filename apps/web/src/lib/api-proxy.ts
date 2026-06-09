@@ -22,6 +22,10 @@ export async function proxyApiRequest(request: NextRequest, path: string) {
       headers.set(key, value);
     }
   });
+  const sessionToken = request.cookies.get("diggit_token")?.value;
+  if (sessionToken && !headers.has("authorization")) {
+    headers.set("authorization", `Bearer ${sessionToken}`);
+  }
 
   const upstream = await fetch(upstreamUrl, {
     method: request.method,

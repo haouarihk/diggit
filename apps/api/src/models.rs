@@ -695,8 +695,8 @@ pub(crate) struct OAuthAuthorizeForm {
     pub(crate) scope: Option<String>,
     pub(crate) scopes: Option<String>,
     pub(crate) state: Option<String>,
-    pub(crate) username: String,
-    pub(crate) password: String,
+    pub(crate) username: Option<String>,
+    pub(crate) password: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

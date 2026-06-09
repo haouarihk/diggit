@@ -92,6 +92,7 @@ pub(crate) async fn revoke_oauth_token_route(
 
 pub(crate) async fn oauth_authorize_get(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Query(query): Query<OAuthAuthorizeQuery>,
 ) -> ApiResult<Html<String>> {
     validate_oauth_authorize_request(&query)?;
@@ -103,15 +104,31 @@ pub(crate) async fn oauth_authorize_get(
     if !oauth_redirect_uri_matches(&application.redirect_uri, &query.redirect_uri)? {
         return Err(ApiError::Unauthorized);
     }
-    Ok(Html(oauth_authorize_page(&application, &query)))
+    let signed_in_user = optional_auth(&state, &headers)
+        .ok()
+        .flatten()
+        .map(|auth| auth.username);
+    Ok(Html(oauth_authorize_page(
+        &application,
+        &query,
+        signed_in_user.as_deref(),
+    )))
 }
 
 pub(crate) async fn oauth_authorize_post(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Form(input): Form<OAuthAuthorizeForm>,
 ) -> ApiResult<Redirect> {
     validate_oauth_authorize_form(&input)?;
-    let user = authenticate_password_user(&state, &input.username, &input.password).await?;
+    let user = match optional_auth(&state, &headers)? {
+        Some(auth) => get_user_by_id(&state.pool, auth.id).await?,
+        None => {
+            let username = input.username.as_deref().ok_or(ApiError::Unauthorized)?;
+            let password = input.password.as_deref().ok_or(ApiError::Unauthorized)?;
+            authenticate_password_user(&state, username, password).await?
+        }
+    };
     let code = create_oauth_authorization_code(
         &state,
         &user,
@@ -497,10 +514,23 @@ fn validate_oauth_authorize_form(input: &OAuthAuthorizeForm) -> ApiResult<()> {
     Ok(())
 }
 
-fn oauth_authorize_page(application: &OAuthApplication, query: &OAuthAuthorizeQuery) -> String {
+fn oauth_authorize_page(
+    application: &OAuthApplication,
+    query: &OAuthAuthorizeQuery,
+    signed_in_user: Option<&str>,
+) -> String {
     let scope = oauth_requested_scope(query.scope.as_deref(), query.scopes.as_deref())
         .unwrap_or("api read_user read_repository");
     let state = query.state.as_deref().unwrap_or("");
+    let fields = match signed_in_user {
+        Some(username) => format!(
+            r#"<p class="muted">Signed in as <strong>{}</strong>.</p>"#,
+            html_escape(username)
+        ),
+        None => r#"<label>Username <input name="username" autocomplete="username" required></label>
+      <label>Password <input name="password" type="password" autocomplete="current-password" required></label>"#
+            .to_string(),
+    };
     format!(
         r#"<!doctype html>
 <html lang="en">
@@ -529,8 +559,7 @@ fn oauth_authorize_page(application: &OAuthApplication, query: &OAuthAuthorizeQu
       <input type="hidden" name="response_type" value="code">
       <input type="hidden" name="scope" value="{scope}">
       <input type="hidden" name="state" value="{state}">
-      <label>Username <input name="username" autocomplete="username" required></label>
-      <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
+      {fields}
       <button type="submit">Authorize application</button>
     </form>
   </main>
@@ -540,7 +569,8 @@ fn oauth_authorize_page(application: &OAuthApplication, query: &OAuthAuthorizeQu
         client_id = html_escape(&query.client_id),
         redirect_uri = html_escape(&query.redirect_uri),
         scope = html_escape(scope),
-        state = html_escape(state)
+        state = html_escape(state),
+        fields = fields
     )
 }
 
