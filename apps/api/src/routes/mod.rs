@@ -71,6 +71,7 @@ pub(crate) fn router(state: AppState) -> Router {
         .route(
             "/api/v4/projects/{project_id}/hooks/{hook_id}",
             put(gitlab_compat::update_gitlab_project_hook_route)
+                .patch(gitlab_compat::update_gitlab_project_hook_route)
                 .delete(gitlab_compat::delete_gitlab_project_hook_route),
         )
         .route(
