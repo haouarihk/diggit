@@ -27,6 +27,7 @@ use crate::{
 pub(crate) mod auth;
 pub(crate) mod federation;
 pub(crate) mod git;
+pub(crate) mod gitlab_compat;
 pub(crate) mod orgs;
 pub(crate) mod repos;
 pub(crate) mod runners;
@@ -38,6 +39,7 @@ pub(crate) mod utils;
 pub(crate) use auth::*;
 pub(crate) use federation::*;
 pub(crate) use git::*;
+pub(crate) use gitlab_compat::*;
 pub(crate) use orgs::*;
 pub(crate) use repos::*;
 pub(crate) use runners::*;

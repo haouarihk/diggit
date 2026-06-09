@@ -426,6 +426,35 @@ pub(crate) struct Runner {
     pub(crate) created_at: DateTime<Utc>,
 }
 
+#[derive(Debug, Serialize, Deserialize, FromRow)]
+pub(crate) struct OAuthApplication {
+    pub(crate) id: Uuid,
+    pub(crate) owner_id: Uuid,
+    pub(crate) name: String,
+    pub(crate) redirect_uri: String,
+    pub(crate) scopes: Vec<String>,
+    pub(crate) client_secret_hash: String,
+    pub(crate) revoked_at: Option<DateTime<Utc>>,
+    pub(crate) created_at: DateTime<Utc>,
+    pub(crate) updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize, Deserialize, FromRow)]
+pub(crate) struct RepositoryWebhook {
+    pub(crate) id: Uuid,
+    pub(crate) repository_id: Uuid,
+    pub(crate) url: String,
+    pub(crate) secret: Option<String>,
+    pub(crate) events: Vec<String>,
+    pub(crate) active: bool,
+    pub(crate) last_status: Option<String>,
+    pub(crate) last_status_code: Option<i32>,
+    pub(crate) last_error: Option<String>,
+    pub(crate) last_delivered_at: Option<DateTime<Utc>>,
+    pub(crate) created_at: DateTime<Utc>,
+    pub(crate) updated_at: DateTime<Utc>,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct Claims {
     pub(crate) sub: Uuid,
@@ -597,6 +626,123 @@ pub(crate) struct FederatedForkRequest {
 pub(crate) struct CreateSshKeyRequest {
     pub(crate) title: String,
     pub(crate) public_key: String,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct OAuthApplicationResponse {
+    pub(crate) id: Uuid,
+    pub(crate) client_id: String,
+    pub(crate) name: String,
+    pub(crate) redirect_uri: String,
+    pub(crate) scopes: Vec<String>,
+    pub(crate) created_at: DateTime<Utc>,
+    pub(crate) updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct CreatedOAuthApplicationResponse {
+    pub(crate) application: OAuthApplicationResponse,
+    pub(crate) client_secret: String,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct OAuthTokenResponse {
+    pub(crate) id: Uuid,
+    pub(crate) application_id: Uuid,
+    pub(crate) application_name: String,
+    pub(crate) scopes: Vec<String>,
+    pub(crate) expires_at: DateTime<Utc>,
+    pub(crate) revoked_at: Option<DateTime<Utc>>,
+    pub(crate) last_used_at: Option<DateTime<Utc>>,
+    pub(crate) created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct CreateOAuthApplicationRequest {
+    pub(crate) name: String,
+    pub(crate) redirect_uri: String,
+    pub(crate) scopes: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct UpdateOAuthApplicationRequest {
+    pub(crate) name: Option<String>,
+    pub(crate) redirect_uri: Option<String>,
+    pub(crate) scopes: Option<Vec<String>>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct RotatedOAuthApplicationSecretResponse {
+    pub(crate) application: OAuthApplicationResponse,
+    pub(crate) client_secret: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct OAuthAuthorizeQuery {
+    pub(crate) client_id: String,
+    pub(crate) redirect_uri: String,
+    pub(crate) response_type: Option<String>,
+    pub(crate) scope: Option<String>,
+    pub(crate) state: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct OAuthAuthorizeForm {
+    pub(crate) client_id: String,
+    pub(crate) redirect_uri: String,
+    pub(crate) response_type: Option<String>,
+    pub(crate) scope: Option<String>,
+    pub(crate) state: Option<String>,
+    pub(crate) username: String,
+    pub(crate) password: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct OAuthTokenRequest {
+    pub(crate) grant_type: String,
+    pub(crate) code: Option<String>,
+    pub(crate) refresh_token: Option<String>,
+    pub(crate) client_id: String,
+    pub(crate) client_secret: String,
+    pub(crate) redirect_uri: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct OAuthTokenIssueResponse {
+    pub(crate) access_token: String,
+    pub(crate) token_type: String,
+    pub(crate) expires_in: i64,
+    pub(crate) refresh_token: String,
+    pub(crate) scope: String,
+    pub(crate) created_at: i64,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct GitlabPageQuery {
+    pub(crate) membership: Option<bool>,
+    pub(crate) page: Option<i64>,
+    pub(crate) per_page: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct CreateRepositoryWebhookRequest {
+    pub(crate) url: String,
+    pub(crate) secret: Option<String>,
+    pub(crate) events: Option<Vec<String>>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct RepositoryWebhookResponse {
+    pub(crate) id: Uuid,
+    pub(crate) url: String,
+    pub(crate) events: Vec<String>,
+    pub(crate) active: bool,
+    pub(crate) last_status: Option<String>,
+    pub(crate) last_status_code: Option<i32>,
+    pub(crate) last_error: Option<String>,
+    pub(crate) last_delivered_at: Option<DateTime<Utc>>,
+    pub(crate) created_at: DateTime<Utc>,
+    pub(crate) updated_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Serialize)]

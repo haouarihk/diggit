@@ -1,6 +1,6 @@
 use axum::{
     Router,
-    routing::{delete, get, post},
+    routing::{delete, get, patch, post},
 };
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 
@@ -9,6 +9,7 @@ use crate::state::AppState;
 pub(crate) mod admin;
 pub(crate) mod auth;
 pub(crate) mod federation;
+pub(crate) mod gitlab_compat;
 pub(crate) mod health;
 pub(crate) mod keys;
 pub(crate) mod organizations;
@@ -32,6 +33,36 @@ pub(crate) fn router(state: AppState) -> Router {
         .route("/auth/federated/token", post(auth::federated_token))
         .route("/auth/federated/exchange", post(auth::federated_exchange))
         .route("/auth/federated/fork", post(auth::federated_fork))
+        .route(
+            "/oauth/applications",
+            get(gitlab_compat::list_oauth_applications_route)
+                .post(gitlab_compat::create_oauth_application_route),
+        )
+        .route(
+            "/oauth/applications/{id}",
+            patch(gitlab_compat::update_oauth_application_route)
+                .delete(gitlab_compat::delete_oauth_application_route),
+        )
+        .route(
+            "/oauth/applications/{id}/rotate-secret",
+            post(gitlab_compat::rotate_oauth_application_secret_route),
+        )
+        .route("/oauth/tokens", get(gitlab_compat::list_oauth_tokens_route))
+        .route(
+            "/oauth/tokens/{id}",
+            delete(gitlab_compat::revoke_oauth_token_route),
+        )
+        .route(
+            "/oauth/authorize",
+            get(gitlab_compat::oauth_authorize_get).post(gitlab_compat::oauth_authorize_post),
+        )
+        .route("/oauth/token", post(gitlab_compat::oauth_token))
+        .route("/api/v4/user", get(gitlab_compat::gitlab_user))
+        .route("/api/v4/projects", get(gitlab_compat::gitlab_projects))
+        .route(
+            "/api/v4/projects/{project_id}/repository/branches",
+            get(gitlab_compat::gitlab_project_branches),
+        )
         .route("/search", get(search::search))
         .route(
             "/user/keys",
@@ -177,6 +208,19 @@ pub(crate) fn router(state: AppState) -> Router {
             delete(repositories::delete_repo_collaborator),
         )
         .route(
+            "/repos/{owner}/{name}/webhooks",
+            get(gitlab_compat::list_repository_webhooks_route)
+                .post(gitlab_compat::create_repository_webhook_route),
+        )
+        .route(
+            "/repos/{owner}/{name}/webhooks/{webhook_id}",
+            delete(gitlab_compat::delete_repository_webhook_route),
+        )
+        .route(
+            "/repos/{owner}/{name}/webhooks/{webhook_id}/test",
+            post(gitlab_compat::test_repository_webhook_route),
+        )
+        .route(
             "/repos/{owner}/{name}/contents",
             get(repositories::get_repo_file)
                 .put(repositories::update_repo_file)
@@ -256,6 +300,14 @@ pub(crate) fn router(state: AppState) -> Router {
         .route("/actors/{username}", get(federation::actor))
         .route("/actors/{username}/outbox", get(federation::outbox))
         .route("/inbox", post(federation::inbox))
+        .route(
+            "/{owner}/{repo_git}/info/refs",
+            get(gitlab_compat::smart_git_info_refs),
+        )
+        .route(
+            "/{owner}/{repo_git}/git-upload-pack",
+            post(gitlab_compat::smart_git_upload_pack),
+        )
         .route("/{owner}/{name}", get(repositories::get_repo))
         .route("/{owner}/{name}/fork", post(repositories::fork_repo))
         .route(

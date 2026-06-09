@@ -29,6 +29,7 @@ export default async function RepositorySettingsLayout({ children, params }: Rep
             <SettingsLink href={settingsHref} label="General" />
             <SettingsLink href={`${settingsHref}/collaborators`} label="Collaborators" />
             <SettingsLink href={`${settingsHref}/secrets`} label="Secrets and variables" />
+            <SettingsLink href={`${settingsHref}/webhooks`} label="Webhooks" />
           </nav>
         </aside>
         {children}

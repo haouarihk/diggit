@@ -325,7 +325,7 @@ async fn run_git_ssh_command(
     git_protocol: Option<String>,
 ) -> anyhow::Result<()> {
     let before_tips = if prepared.service == GitSshService::ReceivePack {
-        git_ref_tips(&prepared.repo).await.unwrap_or_default()
+        git_branch_tips(&prepared.repo).await.unwrap_or_default()
     } else {
         Vec::new()
     };
@@ -394,14 +394,19 @@ async fn record_successful_ssh_push(
     state: &AppState,
     repo: &Repository,
     auth: &AuthUser,
-    before_tips: &[String],
+    before_tips: &[GitBranchTip],
 ) -> ApiResult<()> {
-    record_pushed_commit_authors(state, repo, auth, before_tips).await?;
+    let before_shas = before_tips
+        .iter()
+        .map(|tip| tip.sha.clone())
+        .collect::<Vec<_>>();
+    record_pushed_commit_authors(state, repo, auth, &before_shas).await?;
     sqlx::query("UPDATE repositories SET updated_at = now() WHERE id = $1")
         .bind(repo.id)
         .execute(&state.pool)
         .await?;
     invalidate_repo_cache(state, &repo.owner_handle, &repo.name).await;
+    dispatch_repository_webhooks(state, repo, auth, before_tips).await?;
     Ok(())
 }
 
