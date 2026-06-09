@@ -231,11 +231,11 @@ pub(crate) async fn gitlab_projects(
 pub(crate) async fn gitlab_project_branches(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Path(project_id): Path<i64>,
+    Path(project_ref): Path<String>,
     Query(query): Query<GitlabPageQuery>,
 ) -> ApiResult<Response> {
     let auth = require_oauth_access(&state, &headers, "read_repository").await?;
-    let repo = repository_by_gitlab_project_id(&state, project_id).await?;
+    let repo = repository_by_gitlab_project_ref(&state, &project_ref).await?;
     ensure_oauth_repo_visible(&state, &auth, &repo).await?;
     let page = query.page.unwrap_or(1).max(1);
     let per_page = query.per_page.unwrap_or(100).clamp(1, 100);
@@ -280,33 +280,46 @@ pub(crate) async fn gitlab_project_branches(
 pub(crate) async fn gitlab_project_hooks(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Path(project_id): Path<i64>,
+    Path(project_ref): Path<String>,
 ) -> ApiResult<Json<Vec<Value>>> {
     let auth = require_oauth_access(&state, &headers, "api").await?;
-    let repo = repository_by_gitlab_project_id(&state, project_id).await?;
+    let repo = repository_by_gitlab_project_ref(&state, &project_ref).await?;
     Ok(Json(list_gitlab_project_hooks(&state, &auth, &repo).await?))
 }
 
 pub(crate) async fn create_gitlab_project_hook_route(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Path(project_id): Path<i64>,
+    Path(project_ref): Path<String>,
     Json(input): Json<CreateGitlabProjectHookRequest>,
 ) -> ApiResult<Json<Value>> {
     let auth = require_oauth_access(&state, &headers, "api").await?;
-    let repo = repository_by_gitlab_project_id(&state, project_id).await?;
+    let repo = repository_by_gitlab_project_ref(&state, &project_ref).await?;
     Ok(Json(
         create_gitlab_project_hook(&state, &auth, &repo, input).await?,
+    ))
+}
+
+pub(crate) async fn update_gitlab_project_hook_route(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((project_ref, hook_id)): Path<(String, String)>,
+    Json(input): Json<CreateGitlabProjectHookRequest>,
+) -> ApiResult<Json<Value>> {
+    let auth = require_oauth_access(&state, &headers, "api").await?;
+    let repo = repository_by_gitlab_project_ref(&state, &project_ref).await?;
+    Ok(Json(
+        update_gitlab_project_hook(&state, &auth, &repo, &hook_id, input).await?,
     ))
 }
 
 pub(crate) async fn delete_gitlab_project_hook_route(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Path((project_id, hook_id)): Path<(i64, String)>,
+    Path((project_ref, hook_id)): Path<(String, String)>,
 ) -> ApiResult<StatusCode> {
     let auth = require_oauth_access(&state, &headers, "api").await?;
-    let repo = repository_by_gitlab_project_id(&state, project_id).await?;
+    let repo = repository_by_gitlab_project_ref(&state, &project_ref).await?;
     delete_gitlab_project_hook(&state, &auth, &repo, &hook_id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -314,10 +327,10 @@ pub(crate) async fn delete_gitlab_project_hook_route(
 pub(crate) async fn test_gitlab_project_hook_route(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Path((project_id, hook_id)): Path<(i64, String)>,
+    Path((project_ref, hook_id)): Path<(String, String)>,
 ) -> ApiResult<StatusCode> {
     let auth = require_oauth_access(&state, &headers, "api").await?;
-    let repo = repository_by_gitlab_project_id(&state, project_id).await?;
+    let repo = repository_by_gitlab_project_ref(&state, &project_ref).await?;
     test_gitlab_project_hook(&state, &auth, &repo, &hook_id).await?;
     Ok(StatusCode::NO_CONTENT)
 }

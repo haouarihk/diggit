@@ -456,6 +456,47 @@ pub(crate) async fn repository_by_gitlab_project_id(
     .await?)
 }
 
+pub(crate) async fn repository_by_gitlab_project_ref(
+    state: &AppState,
+    project_ref: &str,
+) -> ApiResult<Repository> {
+    if let Ok(project_id) = project_ref.parse::<i64>() {
+        return repository_by_gitlab_project_id(state, project_id).await;
+    }
+
+    let project_ref = percent_decode_project_ref(project_ref)?;
+    let Some((owner, name)) = project_ref.split_once('/') else {
+        return Err(ApiError::NotFound);
+    };
+    if owner.is_empty() || name.is_empty() || name.contains('/') {
+        return Err(ApiError::NotFound);
+    }
+
+    find_repo(&state.pool, owner, name).await
+}
+
+fn percent_decode_project_ref(value: &str) -> ApiResult<String> {
+    let bytes = value.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            if index + 2 >= bytes.len() {
+                return Err(ApiError::NotFound);
+            }
+            let hex = std::str::from_utf8(&bytes[index + 1..index + 3])
+                .map_err(|_| ApiError::NotFound)?;
+            let byte = u8::from_str_radix(hex, 16).map_err(|_| ApiError::NotFound)?;
+            decoded.push(byte);
+            index += 3;
+        } else {
+            decoded.push(bytes[index]);
+            index += 1;
+        }
+    }
+    String::from_utf8(decoded).map_err(|_| ApiError::NotFound)
+}
+
 pub(crate) async fn ensure_oauth_repo_visible(
     state: &AppState,
     auth: &OAuthTokenAuth,
@@ -537,6 +578,45 @@ pub(crate) async fn create_gitlab_project_hook(
         "#,
     )
     .bind(Uuid::now_v7())
+    .bind(repo.id)
+    .bind(url)
+    .bind(input.token.filter(|value| !value.trim().is_empty()))
+    .bind(events)
+    .bind(input.active.unwrap_or(true))
+    .fetch_one(&state.pool)
+    .await?;
+    let project_id = ensure_gitlab_project_id(state, repo.id).await?;
+    Ok(gitlab_project_hook_json(state, repo, project_id, webhook))
+}
+
+pub(crate) async fn update_gitlab_project_hook(
+    state: &AppState,
+    auth: &OAuthTokenAuth,
+    repo: &Repository,
+    hook_id: &str,
+    input: CreateGitlabProjectHookRequest,
+) -> ApiResult<Value> {
+    ensure_repo_admin(&state.pool, &auth.user, repo).await?;
+    let hook_id = Uuid::parse_str(hook_id).map_err(|_| ApiError::NotFound)?;
+    let url = validate_remote_url(&input.url)?.to_string();
+    let events = if input.push_events.unwrap_or(true) {
+        vec!["push".to_string()]
+    } else {
+        Vec::new()
+    };
+    let webhook = sqlx::query_as::<_, RepositoryWebhook>(
+        r#"
+        UPDATE repository_webhooks
+        SET url = $3,
+            secret = $4,
+            events = $5,
+            active = $6,
+            updated_at = now()
+        WHERE id = $1 AND repository_id = $2
+        RETURNING *
+        "#,
+    )
+    .bind(hook_id)
     .bind(repo.id)
     .bind(url)
     .bind(input.token.filter(|value| !value.trim().is_empty()))
@@ -1256,6 +1336,14 @@ mod tests {
         assert_eq!(
             oauth_access_token_from_headers(&headers),
             Some("abc".to_string())
+        );
+    }
+
+    #[test]
+    fn percent_decodes_project_refs() {
+        assert_eq!(
+            percent_decode_project_ref("haouarihk%2Fmoneyloop-io").unwrap(),
+            "haouarihk/moneyloop-io"
         );
     }
 }

@@ -1,6 +1,6 @@
 use axum::{
     Router,
-    routing::{delete, get, patch, post},
+    routing::{delete, get, patch, post, put},
 };
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 
@@ -70,7 +70,8 @@ pub(crate) fn router(state: AppState) -> Router {
         )
         .route(
             "/api/v4/projects/{project_id}/hooks/{hook_id}",
-            delete(gitlab_compat::delete_gitlab_project_hook_route),
+            put(gitlab_compat::update_gitlab_project_hook_route)
+                .delete(gitlab_compat::delete_gitlab_project_hook_route),
         )
         .route(
             "/api/v4/projects/{project_id}/hooks/{hook_id}/test",
