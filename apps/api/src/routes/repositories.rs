@@ -186,6 +186,7 @@ pub(crate) async fn update_repo_settings(
     .fetch_one(&state.pool)
     .await?;
 
+    ensure_repo_head(&updated).await?;
     invalidate_repo_cache(&state, &old_owner, &old_name).await;
     invalidate_repo_cache(&state, &updated.owner_handle, &updated.name).await;
     Ok(Json(

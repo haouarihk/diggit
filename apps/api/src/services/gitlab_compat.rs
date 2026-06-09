@@ -4,6 +4,7 @@ use bcrypt::{DEFAULT_COST, hash, verify};
 const OAUTH_ACCESS_TOKEN_TTL_HOURS: i64 = 2;
 const OAUTH_CODE_TTL_MINUTES: i64 = 10;
 const ALLOWED_OAUTH_SCOPES: &[&str] = &["api", "read_user", "read_repository"];
+const WEBHOOK_DELIVERY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 #[derive(Debug, Clone)]
 pub(crate) struct OAuthTokenAuth {
@@ -490,6 +491,93 @@ pub(crate) async fn create_repository_webhook(
     Ok(repository_webhook_response(webhook))
 }
 
+pub(crate) async fn list_gitlab_project_hooks(
+    state: &AppState,
+    auth: &OAuthTokenAuth,
+    repo: &Repository,
+) -> ApiResult<Vec<Value>> {
+    ensure_repo_admin(&state.pool, &auth.user, repo).await?;
+    let webhooks = sqlx::query_as::<_, RepositoryWebhook>(
+        "SELECT * FROM repository_webhooks WHERE repository_id = $1 ORDER BY created_at DESC",
+    )
+    .bind(repo.id)
+    .fetch_all(&state.pool)
+    .await?;
+    let project_id = ensure_gitlab_project_id(state, repo.id).await?;
+    Ok(webhooks
+        .into_iter()
+        .map(|webhook| gitlab_project_hook_json(state, repo, project_id, webhook))
+        .collect())
+}
+
+pub(crate) async fn create_gitlab_project_hook(
+    state: &AppState,
+    auth: &OAuthTokenAuth,
+    repo: &Repository,
+    input: CreateGitlabProjectHookRequest,
+) -> ApiResult<Value> {
+    ensure_repo_admin(&state.pool, &auth.user, repo).await?;
+    let url = validate_remote_url(&input.url)?.to_string();
+    let _enable_ssl_verification = input.enable_ssl_verification.unwrap_or(true);
+    let _branch_filter_strategy = input
+        .branch_filter_strategy
+        .as_deref()
+        .unwrap_or("wildcard");
+    let _push_events_branch_filter = input.push_events_branch_filter.as_deref();
+    let events = if input.push_events.unwrap_or(true) {
+        vec!["push".to_string()]
+    } else {
+        Vec::new()
+    };
+    let webhook = sqlx::query_as::<_, RepositoryWebhook>(
+        r#"
+        INSERT INTO repository_webhooks (id, repository_id, url, secret, events, active)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        RETURNING *
+        "#,
+    )
+    .bind(Uuid::now_v7())
+    .bind(repo.id)
+    .bind(url)
+    .bind(input.token.filter(|value| !value.trim().is_empty()))
+    .bind(events)
+    .bind(input.active.unwrap_or(true))
+    .fetch_one(&state.pool)
+    .await?;
+    let project_id = ensure_gitlab_project_id(state, repo.id).await?;
+    Ok(gitlab_project_hook_json(state, repo, project_id, webhook))
+}
+
+pub(crate) async fn delete_gitlab_project_hook(
+    state: &AppState,
+    auth: &OAuthTokenAuth,
+    repo: &Repository,
+    hook_id: &str,
+) -> ApiResult<()> {
+    ensure_repo_admin(&state.pool, &auth.user, repo).await?;
+    let hook_id = Uuid::parse_str(hook_id).map_err(|_| ApiError::NotFound)?;
+    let result =
+        sqlx::query("DELETE FROM repository_webhooks WHERE id = $1 AND repository_id = $2")
+            .bind(hook_id)
+            .bind(repo.id)
+            .execute(&state.pool)
+            .await?;
+    if result.rows_affected() == 0 {
+        return Err(ApiError::NotFound);
+    }
+    Ok(())
+}
+
+pub(crate) async fn test_gitlab_project_hook(
+    state: &AppState,
+    auth: &OAuthTokenAuth,
+    repo: &Repository,
+    hook_id: &str,
+) -> ApiResult<()> {
+    let hook_id = Uuid::parse_str(hook_id).map_err(|_| ApiError::NotFound)?;
+    test_repository_webhook(state, &auth.user, repo, hook_id).await
+}
+
 pub(crate) async fn list_repository_webhooks(
     state: &AppState,
     auth: &AuthUser,
@@ -539,11 +627,23 @@ pub(crate) async fn dispatch_repository_webhooks(
     .bind(repo.id)
     .fetch_all(&state.pool)
     .await?;
+    tracing::info!(
+        owner = %repo.owner_handle,
+        repo = %repo.name,
+        webhook_count = webhooks.len(),
+        "loaded active repository webhooks"
+    );
     if webhooks.is_empty() {
         return Ok(());
     }
 
     let changes = changed_branch_tips(repo, before_tips).await?;
+    tracing::info!(
+        owner = %repo.owner_handle,
+        repo = %repo.name,
+        changed_refs = changes.len(),
+        "computed repository webhook push changes"
+    );
     for change in changes {
         let payload = gitlab_push_payload(state, repo, auth, &change).await?;
         for webhook in webhooks
@@ -965,6 +1065,45 @@ async fn gitlab_repository_payload(state: &AppState, repo: &Repository) -> ApiRe
     }))
 }
 
+fn gitlab_project_hook_json(
+    state: &AppState,
+    repo: &Repository,
+    project_id: i64,
+    webhook: RepositoryWebhook,
+) -> Value {
+    let push_events = webhook.events.iter().any(|event| event == "push");
+    json!({
+        "id": webhook.id.to_string(),
+        "url": webhook.url,
+        "project_id": project_id,
+        "push_events": push_events,
+        "issues_events": false,
+        "merge_requests_events": false,
+        "tag_push_events": false,
+        "note_events": false,
+        "job_events": false,
+        "pipeline_events": false,
+        "wiki_page_events": false,
+        "deployment_events": false,
+        "releases_events": false,
+        "enable_ssl_verification": true,
+        "repository_update_events": false,
+        "alert_status": webhook.last_status,
+        "disabled_until": Value::Null,
+        "url_variables": [],
+        "created_at": webhook.created_at,
+        "resource_access_token_events": false,
+        "custom_webhook_template": Value::Null,
+        "push_events_branch_filter": Value::Null,
+        "branch_filter_strategy": "wildcard",
+        "active": webhook.active,
+        "last_status_code": webhook.last_status_code,
+        "last_error": webhook.last_error,
+        "last_delivered_at": webhook.last_delivered_at,
+        "web_url": format!("{}/{}/{}/-/hooks/{}", state.config.public_web_url.trim_end_matches('/'), repo.owner_handle, repo.name, webhook.id)
+    })
+}
+
 async fn deliver_repository_webhook(
     state: &AppState,
     webhook: &RepositoryWebhook,
@@ -983,9 +1122,10 @@ async fn deliver_repository_webhook(
         request = request.header("X-Gitlab-Token", secret);
     }
 
-    let result = request.send().await;
+    let started = std::time::Instant::now();
+    let result = tokio::time::timeout(WEBHOOK_DELIVERY_TIMEOUT, request.send()).await;
     match result {
-        Ok(response) => {
+        Ok(Ok(response)) => {
             let status_code = i32::from(response.status().as_u16());
             let status = if response.status().is_success() {
                 "success"
@@ -1014,24 +1154,56 @@ async fn deliver_repository_webhook(
             .bind(error_body)
             .execute(&state.pool)
             .await;
+            tracing::info!(
+                webhook_id = %webhook.id,
+                status = %status,
+                status_code = status_code,
+                elapsed_ms = started.elapsed().as_millis(),
+                "repository webhook delivery completed"
+            );
         }
-        Err(error) => {
-            let _ = sqlx::query(
-                r#"
-                UPDATE repository_webhooks
-                SET last_status = 'failed',
-                    last_error = $2,
-                    last_delivered_at = now(),
-                    updated_at = now()
-                WHERE id = $1
-                "#,
-            )
-            .bind(webhook.id)
-            .bind(error.to_string())
-            .execute(&state.pool)
-            .await;
+        Ok(Err(error)) => {
+            let error = error.to_string();
+            record_repository_webhook_failure(state, webhook.id, &error).await;
+            tracing::warn!(
+                webhook_id = %webhook.id,
+                %error,
+                elapsed_ms = started.elapsed().as_millis(),
+                "repository webhook delivery failed"
+            );
+        }
+        Err(_) => {
+            let error = format!(
+                "webhook delivery timed out after {} seconds",
+                WEBHOOK_DELIVERY_TIMEOUT.as_secs()
+            );
+            record_repository_webhook_failure(state, webhook.id, &error).await;
+            tracing::warn!(
+                webhook_id = %webhook.id,
+                %error,
+                elapsed_ms = started.elapsed().as_millis(),
+                "repository webhook delivery timed out"
+            );
         }
     }
+}
+
+async fn record_repository_webhook_failure(state: &AppState, webhook_id: Uuid, error: &str) {
+    let _ = sqlx::query(
+        r#"
+        UPDATE repository_webhooks
+        SET last_status = 'failed',
+            last_status_code = NULL,
+            last_error = $2,
+            last_delivered_at = now(),
+            updated_at = now()
+        WHERE id = $1
+        "#,
+    )
+    .bind(webhook_id)
+    .bind(error)
+    .execute(&state.pool)
+    .await;
 }
 
 async fn gitlab_namespace_kind(state: &AppState, repo: &Repository) -> ApiResult<String> {

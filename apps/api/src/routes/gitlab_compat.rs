@@ -277,6 +277,51 @@ pub(crate) async fn gitlab_project_branches(
     )
 }
 
+pub(crate) async fn gitlab_project_hooks(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(project_id): Path<i64>,
+) -> ApiResult<Json<Vec<Value>>> {
+    let auth = require_oauth_access(&state, &headers, "api").await?;
+    let repo = repository_by_gitlab_project_id(&state, project_id).await?;
+    Ok(Json(list_gitlab_project_hooks(&state, &auth, &repo).await?))
+}
+
+pub(crate) async fn create_gitlab_project_hook_route(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(project_id): Path<i64>,
+    Json(input): Json<CreateGitlabProjectHookRequest>,
+) -> ApiResult<Json<Value>> {
+    let auth = require_oauth_access(&state, &headers, "api").await?;
+    let repo = repository_by_gitlab_project_id(&state, project_id).await?;
+    Ok(Json(
+        create_gitlab_project_hook(&state, &auth, &repo, input).await?,
+    ))
+}
+
+pub(crate) async fn delete_gitlab_project_hook_route(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((project_id, hook_id)): Path<(i64, String)>,
+) -> ApiResult<StatusCode> {
+    let auth = require_oauth_access(&state, &headers, "api").await?;
+    let repo = repository_by_gitlab_project_id(&state, project_id).await?;
+    delete_gitlab_project_hook(&state, &auth, &repo, &hook_id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub(crate) async fn test_gitlab_project_hook_route(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((project_id, hook_id)): Path<(i64, String)>,
+) -> ApiResult<StatusCode> {
+    let auth = require_oauth_access(&state, &headers, "api").await?;
+    let repo = repository_by_gitlab_project_id(&state, project_id).await?;
+    test_gitlab_project_hook(&state, &auth, &repo, &hook_id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 pub(crate) async fn smart_git_info_refs(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -381,6 +426,7 @@ async fn smart_git_http(
     };
     let repo = find_repo(&state.pool, &owner, &name).await?;
     ensure_oauth_repo_visible(&state, &auth, &repo).await?;
+    ensure_repo_head(&repo).await?;
 
     let mut command = Command::new("git");
     command

@@ -63,6 +63,19 @@ pub(crate) fn router(state: AppState) -> Router {
             "/api/v4/projects/{project_id}/repository/branches",
             get(gitlab_compat::gitlab_project_branches),
         )
+        .route(
+            "/api/v4/projects/{project_id}/hooks",
+            get(gitlab_compat::gitlab_project_hooks)
+                .post(gitlab_compat::create_gitlab_project_hook_route),
+        )
+        .route(
+            "/api/v4/projects/{project_id}/hooks/{hook_id}",
+            delete(gitlab_compat::delete_gitlab_project_hook_route),
+        )
+        .route(
+            "/api/v4/projects/{project_id}/hooks/{hook_id}/test",
+            post(gitlab_compat::test_gitlab_project_hook_route),
+        )
         .route("/search", get(search::search))
         .route(
             "/user/keys",

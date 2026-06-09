@@ -733,6 +733,17 @@ pub(crate) struct CreateRepositoryWebhookRequest {
     pub(crate) events: Option<Vec<String>>,
 }
 
+#[derive(Debug, Deserialize)]
+pub(crate) struct CreateGitlabProjectHookRequest {
+    pub(crate) url: String,
+    pub(crate) token: Option<String>,
+    pub(crate) push_events: Option<bool>,
+    pub(crate) active: Option<bool>,
+    pub(crate) enable_ssl_verification: Option<bool>,
+    pub(crate) push_events_branch_filter: Option<String>,
+    pub(crate) branch_filter_strategy: Option<String>,
+}
+
 #[derive(Debug, Serialize)]
 pub(crate) struct RepositoryWebhookResponse {
     pub(crate) id: Uuid,

@@ -5,7 +5,12 @@ use russh::{
     keys::{Algorithm, PrivateKey, PublicKey, ssh_key::LineEnding},
     server::{self, Auth, Handler, Server, Session},
 };
-use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    net::SocketAddr,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 use tokio::{io, net::TcpListener, task::JoinHandle};
 
 #[derive(Clone)]
@@ -325,7 +330,15 @@ async fn run_git_ssh_command(
     git_protocol: Option<String>,
 ) -> anyhow::Result<()> {
     let before_tips = if prepared.service == GitSshService::ReceivePack {
-        git_branch_tips(&prepared.repo).await.unwrap_or_default()
+        let started = Instant::now();
+        let tips = git_branch_tips(&prepared.repo).await.unwrap_or_default();
+        tracing::info!(
+            owner = %prepared.repo.owner_handle,
+            repo = %prepared.repo.name,
+            elapsed_ms = started.elapsed().as_millis(),
+            "SSH push branch snapshot completed"
+        );
+        tips
     } else {
         Vec::new()
     };
@@ -368,6 +381,7 @@ async fn run_git_ssh_command(
         Ok::<(), io::Error>(())
     });
 
+    let git_started = Instant::now();
     let status = child
         .wait()
         .await
@@ -375,18 +389,48 @@ async fn run_git_ssh_command(
     let _ = stdin_task.await;
     let _ = stdout_task.await;
     let _ = stderr_task.await;
+    tracing::info!(
+        owner = %prepared.repo.owner_handle,
+        repo = %prepared.repo.name,
+        service = ?prepared.service,
+        status = status.code().unwrap_or(1),
+        elapsed_ms = git_started.elapsed().as_millis(),
+        "SSH Git service completed"
+    );
 
-    if status.success() && prepared.service == GitSshService::ReceivePack {
+    let webhook_dispatch = if status.success() && prepared.service == GitSshService::ReceivePack {
         if let Err(error) =
             record_successful_ssh_push(&state, &prepared.repo, &prepared.auth, &before_tips).await
         {
-            warn!(%error, "failed to record SSH push authors");
+            warn!(%error, "failed to record SSH push metadata");
+            None
+        } else {
+            Some((state.clone(), prepared.repo, prepared.auth, before_tips))
         }
-    }
+    } else {
+        None
+    };
 
     let code = status.code().unwrap_or(1).max(0) as u32;
     let _ = channel_write.exit_status(code).await;
     let _ = channel_write.close().await;
+
+    if let Some((state, repo, auth, before_tips)) = webhook_dispatch {
+        tokio::spawn(async move {
+            let started = Instant::now();
+            if let Err(error) =
+                dispatch_repository_webhooks(&state, &repo, &auth, &before_tips).await
+            {
+                warn!(%error, "failed to dispatch repository webhooks after SSH push");
+            }
+            tracing::info!(
+                owner = %repo.owner_handle,
+                repo = %repo.name,
+                elapsed_ms = started.elapsed().as_millis(),
+                "SSH push webhook dispatch completed"
+            );
+        });
+    }
     Ok(())
 }
 
@@ -400,13 +444,33 @@ async fn record_successful_ssh_push(
         .iter()
         .map(|tip| tip.sha.clone())
         .collect::<Vec<_>>();
+    let started = Instant::now();
     record_pushed_commit_authors(state, repo, auth, &before_shas).await?;
+    tracing::info!(
+        owner = %repo.owner_handle,
+        repo = %repo.name,
+        elapsed_ms = started.elapsed().as_millis(),
+        "SSH push commit author recording completed"
+    );
+    let started = Instant::now();
     sqlx::query("UPDATE repositories SET updated_at = now() WHERE id = $1")
         .bind(repo.id)
         .execute(&state.pool)
         .await?;
+    tracing::info!(
+        owner = %repo.owner_handle,
+        repo = %repo.name,
+        elapsed_ms = started.elapsed().as_millis(),
+        "SSH push repository timestamp update completed"
+    );
+    let started = Instant::now();
     invalidate_repo_cache(state, &repo.owner_handle, &repo.name).await;
-    dispatch_repository_webhooks(state, repo, auth, before_tips).await?;
+    tracing::info!(
+        owner = %repo.owner_handle,
+        repo = %repo.name,
+        elapsed_ms = started.elapsed().as_millis(),
+        "SSH push cache invalidation completed"
+    );
     Ok(())
 }
 
