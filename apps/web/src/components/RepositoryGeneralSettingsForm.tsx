@@ -163,10 +163,11 @@ export function RepositoryGeneralSettingsForm({ branches, redirectTo, repository
             value={defaultBranch}
             onChange={(event) => setDefaultBranch(event.target.value)}
           >
-            {branches.length === 0 ? <option value={defaultBranch}>{defaultBranch}</option> : null}
+            {branches.length === 0 ? <option value={defaultBranch}>{defaultBranch} (default)</option> : null}
             {branches.map((branch) => (
               <option key={branch.name} value={branch.name}>
                 {branch.name}
+                {branch.is_default ? " (default)" : ""}
               </option>
             ))}
           </select>

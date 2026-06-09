@@ -348,8 +348,8 @@ function RepositoryCodeToolbar({
   return (
     <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-[#d0d7de] bg-white p-3">
       <div className="flex flex-wrap items-center gap-2">
-        <RefSelector baseHref={baseHref} label="Branch" refs={branches.map((branch) => branch.name)} selectedRef={selectedRef} />
-        <RefSelector baseHref={baseHref} label="Tags" refs={tags.map((tag) => tag.name)} selectedRef={selectedRef} />
+        <RefSelector baseHref={baseHref} label="Branch" refs={branches.map(branchRefSelectorItem)} selectedRef={selectedRef} />
+        <RefSelector baseHref={baseHref} label="Tags" refs={tags.map((tag) => ({ name: tag.name }))} selectedRef={selectedRef} />
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <form action={baseHref} className="flex gap-2">
@@ -361,8 +361,8 @@ function RepositoryCodeToolbar({
             Code
           </summary>
           <div className="absolute right-0 z-20 mt-2 grid w-80 gap-3 rounded-md border border-[#d0d7de] bg-white p-3 shadow-lg">
-            <CloneUrl label="SSH" value={cloneCommand(repo.ssh_url, selectedRef, branchExists)} />
-            <CloneUrl label="HTTP" value={cloneCommand(repo.http_url, selectedRef, branchExists)} />
+            <CloneUrl label="SSH" value={cloneCommand(repo.ssh_url, selectedRef, repo.default_branch, branchExists)} />
+            <CloneUrl label="HTTP" value={cloneCommand(repo.http_url, selectedRef, repo.default_branch, branchExists)} />
           </div>
         </details>
       </div>
@@ -370,25 +370,41 @@ function RepositoryCodeToolbar({
   );
 }
 
-function RefSelector({ baseHref, label, refs, selectedRef }: { baseHref: string; label: string; refs: string[]; selectedRef: string }) {
+type RefSelectorItem = {
+  isDefault?: boolean;
+  name: string;
+};
+
+function branchRefSelectorItem(branch: RepositoryBranch): RefSelectorItem {
+  return { isDefault: branch.is_default, name: branch.name };
+}
+
+function RefSelector({ baseHref, label, refs, selectedRef }: { baseHref: string; label: string; refs: RefSelectorItem[]; selectedRef: string }) {
   if (refs.length === 0) {
     return null;
   }
+  const selected = refs.find((ref) => ref.name === selectedRef);
   return (
     <details className="relative">
       <summary className="flex cursor-pointer list-none items-center gap-2 rounded-md border border-[#d0d7de] bg-white px-3 py-1.5 text-sm font-semibold">
         <span>{label}: {selectedRef}</span>
+        {selected?.isDefault ? <DefaultBranchBadge /> : null}
         <span className="text-xs text-[#59636e]">▼</span>
       </summary>
       <div className="absolute left-0 z-20 mt-2 max-h-80 min-w-56 overflow-auto rounded-md border border-[#d0d7de] bg-white py-2 shadow-lg">
         {refs.map((ref) => (
-          <Link className="block px-3 py-2 text-sm hover:bg-[#f6f8fa]" href={codeHref(baseHref, undefined, ref, "tree")} key={ref}>
-            {ref}
+          <Link className="flex items-center justify-between gap-3 px-3 py-2 text-sm hover:bg-[#f6f8fa]" href={codeHref(baseHref, undefined, ref.name, "tree")} key={ref.name}>
+            <span className="truncate">{ref.name}</span>
+            {ref.isDefault ? <DefaultBranchBadge /> : null}
           </Link>
         ))}
       </div>
     </details>
   );
+}
+
+function DefaultBranchBadge() {
+  return <span className="rounded-full border border-[#d0d7de] bg-[#f6f8fa] px-2 py-0.5 text-[11px] font-semibold text-[#59636e]">Default</span>;
 }
 
 function RepositoryFileTable({ baseHref, entries, selectedRef }: { baseHref: string; entries: RepositoryTreeEntry[]; selectedRef: string }) {
@@ -566,8 +582,8 @@ function RepositoryTreeNavigationSidebar({
 
       <div className="grid gap-3 border-b border-[#d8dee4] p-3">
         <div className="flex flex-wrap gap-2">
-          <RefSelector baseHref={baseHref} label="Branch" refs={branches.map((branch) => branch.name)} selectedRef={selectedRef} />
-          <RefSelector baseHref={baseHref} label="Tags" refs={tags.map((tag) => tag.name)} selectedRef={selectedRef} />
+          <RefSelector baseHref={baseHref} label="Branch" refs={branches.map(branchRefSelectorItem)} selectedRef={selectedRef} />
+          <RefSelector baseHref={baseHref} label="Tags" refs={tags.map((tag) => ({ name: tag.name }))} selectedRef={selectedRef} />
         </div>
         <div className="grid gap-1">
           <Link
@@ -878,8 +894,8 @@ function commitHref(baseHref: string, sha: string, path?: string) {
   return `${baseHref}/commits/${sha}?${query}`;
 }
 
-function cloneCommand(url: string, ref: string, refExists: boolean) {
-  return refExists ? `git clone --branch ${shellArg(ref)} ${shellArg(url)}` : `git clone ${shellArg(url)}`;
+function cloneCommand(url: string, ref: string, defaultBranch: string, refExists: boolean) {
+  return refExists && ref !== defaultBranch ? `git clone --branch ${shellArg(ref)} ${shellArg(url)}` : `git clone ${shellArg(url)}`;
 }
 
 function shellArg(value: string) {
