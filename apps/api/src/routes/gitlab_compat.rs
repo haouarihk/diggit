@@ -3,7 +3,7 @@ use axum::{
     body::{Body, Bytes},
     extract::{Path, Query, State},
     http::{HeaderMap, HeaderName, HeaderValue, StatusCode, Uri},
-    response::{Html, Redirect, Response},
+    response::{Html, IntoResponse, Redirect, Response},
 };
 use bcrypt::verify;
 use serde_json::{Value, json};
@@ -374,7 +374,11 @@ async fn smart_git_http(
         .strip_suffix(".git")
         .ok_or(ApiError::NotFound)?
         .to_string();
-    let auth = require_oauth_access(&state, &headers, "read_repository").await?;
+    let auth = match require_oauth_access(&state, &headers, "read_repository").await {
+        Ok(auth) => auth,
+        Err(ApiError::Unauthorized) => return Ok(git_basic_auth_challenge()),
+        Err(error) => return Err(error),
+    };
     let repo = find_repo(&state.pool, &owner, &name).await?;
     ensure_oauth_repo_visible(&state, &auth, &repo).await?;
 
@@ -411,6 +415,15 @@ async fn smart_git_http(
         ));
     }
     cgi_response(output.stdout)
+}
+
+fn git_basic_auth_challenge() -> Response {
+    Response::builder()
+        .status(StatusCode::UNAUTHORIZED)
+        .header("WWW-Authenticate", r#"Basic realm="Diggit Git""#)
+        .header("content-type", "text/plain; charset=utf-8")
+        .body(Body::from("Authentication required\n"))
+        .unwrap_or_else(|_| StatusCode::UNAUTHORIZED.into_response())
 }
 
 fn cgi_response(output: Vec<u8>) -> ApiResult<Response> {
