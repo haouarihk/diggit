@@ -28,7 +28,9 @@ pub(crate) async fn spawn_ssh_server(
     let host_key = load_or_create_host_key(&state.config.ssh_host_key_path)?;
     let config = Arc::new(server::Config {
         inactivity_timeout: Some(Duration::from_secs(3600)),
-        auth_rejection_time: Duration::from_secs(3),
+        // Git clients often offer every key in the local SSH agent before the
+        // matching key. A multi-second rejection delay makes pushes look hung.
+        auth_rejection_time: Duration::from_millis(250),
         auth_rejection_time_initial: Some(Duration::from_millis(250)),
         keys: vec![host_key],
         ..Default::default()
@@ -82,12 +84,15 @@ fn load_or_create_host_key(path: &PathBuf) -> anyhow::Result<PrivateKey> {
 impl server::Server for GitSshServer {
     type Handler = GitSshSession;
 
-    fn new_client(&mut self, _peer_addr: Option<SocketAddr>) -> Self::Handler {
+    fn new_client(&mut self, peer_addr: Option<SocketAddr>) -> Self::Handler {
+        tracing::info!(?peer_addr, "SSH client connected");
         GitSshSession {
             state: self.state.clone(),
             auth: None,
             channels: HashMap::new(),
             git_protocol: HashMap::new(),
+            peer_addr,
+            connected_at: Instant::now(),
         }
     }
 
@@ -101,19 +106,33 @@ pub(crate) struct GitSshSession {
     auth: Option<AuthUser>,
     channels: HashMap<ChannelId, Channel<server::Msg>>,
     git_protocol: HashMap<ChannelId, String>,
+    peer_addr: Option<SocketAddr>,
+    connected_at: Instant,
 }
 
 impl Handler for GitSshSession {
     type Error = anyhow::Error;
 
-    async fn auth_none(&mut self, _user: &str) -> Result<Auth, Self::Error> {
+    async fn auth_none(&mut self, user: &str) -> Result<Auth, Self::Error> {
+        tracing::info!(
+            ?self.peer_addr,
+            user,
+            elapsed_ms = self.connected_at.elapsed().as_millis(),
+            "SSH none auth rejected"
+        );
         Ok(Auth::Reject {
             proceed_with_methods: None,
             partial_success: false,
         })
     }
 
-    async fn auth_password(&mut self, _user: &str, _password: &str) -> Result<Auth, Self::Error> {
+    async fn auth_password(&mut self, user: &str, _password: &str) -> Result<Auth, Self::Error> {
+        tracing::info!(
+            ?self.peer_addr,
+            user,
+            elapsed_ms = self.connected_at.elapsed().as_millis(),
+            "SSH password auth rejected"
+        );
         Ok(Auth::Reject {
             proceed_with_methods: None,
             partial_success: false,
@@ -126,15 +145,36 @@ impl Handler for GitSshSession {
         public_key: &PublicKey,
     ) -> Result<Auth, Self::Error> {
         if user != "git" {
+            tracing::info!(
+                ?self.peer_addr,
+                user,
+                elapsed_ms = self.connected_at.elapsed().as_millis(),
+                "SSH public key offer rejected for unsupported user"
+            );
             return Ok(Auth::Reject {
                 proceed_with_methods: None,
                 partial_success: false,
             });
         }
 
+        let started = Instant::now();
         if lookup_auth_user(&self.state, public_key).await?.is_some() {
+            tracing::info!(
+                ?self.peer_addr,
+                user,
+                elapsed_ms = self.connected_at.elapsed().as_millis(),
+                lookup_ms = started.elapsed().as_millis(),
+                "SSH public key offer accepted"
+            );
             Ok(Auth::Accept)
         } else {
+            tracing::info!(
+                ?self.peer_addr,
+                user,
+                elapsed_ms = self.connected_at.elapsed().as_millis(),
+                lookup_ms = started.elapsed().as_millis(),
+                "SSH public key offer rejected"
+            );
             Ok(Auth::Reject {
                 proceed_with_methods: None,
                 partial_success: false,
@@ -148,13 +188,27 @@ impl Handler for GitSshSession {
         public_key: &PublicKey,
     ) -> Result<Auth, Self::Error> {
         if user != "git" {
+            tracing::info!(
+                ?self.peer_addr,
+                user,
+                elapsed_ms = self.connected_at.elapsed().as_millis(),
+                "SSH public key auth rejected for unsupported user"
+            );
             return Ok(Auth::Reject {
                 proceed_with_methods: None,
                 partial_success: false,
             });
         }
 
+        let started = Instant::now();
         let Some(auth) = lookup_auth_user(&self.state, public_key).await? else {
+            tracing::info!(
+                ?self.peer_addr,
+                user,
+                elapsed_ms = self.connected_at.elapsed().as_millis(),
+                lookup_ms = started.elapsed().as_millis(),
+                "SSH public key auth rejected"
+            );
             return Ok(Auth::Reject {
                 proceed_with_methods: None,
                 partial_success: false,
@@ -165,6 +219,14 @@ impl Handler for GitSshSession {
             .bind(fingerprint)
             .execute(&self.state.pool)
             .await?;
+        tracing::info!(
+            ?self.peer_addr,
+            user,
+            username = %auth.username,
+            elapsed_ms = self.connected_at.elapsed().as_millis(),
+            lookup_ms = started.elapsed().as_millis(),
+            "SSH public key auth accepted"
+        );
         self.auth = Some(auth);
         Ok(Auth::Accept)
     }
@@ -225,9 +287,25 @@ impl Handler for GitSshSession {
         let command = String::from_utf8_lossy(data).to_string();
         let state = self.state.clone();
         let handle = session.handle();
+        tracing::info!(
+            ?self.peer_addr,
+            username = %auth.username,
+            command = %command,
+            elapsed_ms = self.connected_at.elapsed().as_millis(),
+            "SSH exec request received"
+        );
 
+        let started = Instant::now();
         match prepare_git_ssh_command(&state, &auth, &command).await {
             Ok(prepared) => {
+                tracing::info!(
+                    ?self.peer_addr,
+                    owner = %prepared.repo.owner_handle,
+                    repo = %prepared.repo.name,
+                    service = ?prepared.service,
+                    elapsed_ms = started.elapsed().as_millis(),
+                    "SSH Git command prepared"
+                );
                 session.channel_success(channel_id)?;
                 tokio::spawn(async move {
                     if let Err(error) = run_git_ssh_command(
@@ -245,6 +323,12 @@ impl Handler for GitSshSession {
                 });
             }
             Err(error) => {
+                tracing::info!(
+                    ?self.peer_addr,
+                    %error,
+                    elapsed_ms = started.elapsed().as_millis(),
+                    "SSH Git command rejected"
+                );
                 let _ = session.extended_data(channel_id, 1, format!("{error}\n").into_bytes());
                 session.channel_failure(channel_id)?;
                 session.close(channel_id)?;
@@ -331,6 +415,11 @@ async fn run_git_ssh_command(
 ) -> anyhow::Result<()> {
     let before_tips = if prepared.service == GitSshService::ReceivePack {
         let started = Instant::now();
+        tracing::info!(
+            owner = %prepared.repo.owner_handle,
+            repo = %prepared.repo.name,
+            "SSH push branch snapshot started"
+        );
         let tips = git_branch_tips(&prepared.repo).await.unwrap_or_default();
         tracing::info!(
             owner = %prepared.repo.owner_handle,
@@ -346,6 +435,12 @@ async fn run_git_ssh_command(
     if let Some(git_protocol) = git_protocol {
         command.env("GIT_PROTOCOL", git_protocol);
     }
+    tracing::info!(
+        owner = %prepared.repo.owner_handle,
+        repo = %prepared.repo.name,
+        service = ?prepared.service,
+        "SSH Git service starting"
+    );
     let mut child = command.spawn().context("failed to start Git service")?;
     let mut child_stdin = child.stdin.take().context("missing Git stdin")?;
     let mut child_stdout = child.stdout.take().context("missing Git stdout")?;
@@ -382,6 +477,12 @@ async fn run_git_ssh_command(
     });
 
     let git_started = Instant::now();
+    tracing::info!(
+        owner = %prepared.repo.owner_handle,
+        repo = %prepared.repo.name,
+        service = ?prepared.service,
+        "SSH Git service waiting for client and git process"
+    );
     let status = child
         .wait()
         .await
@@ -398,6 +499,8 @@ async fn run_git_ssh_command(
         "SSH Git service completed"
     );
 
+    let repo_owner = prepared.repo.owner_handle.clone();
+    let repo_name = prepared.repo.name.clone();
     let webhook_dispatch = if status.success() && prepared.service == GitSshService::ReceivePack {
         if let Err(error) =
             record_successful_ssh_push(&state, &prepared.repo, &prepared.auth, &before_tips).await
@@ -414,6 +517,12 @@ async fn run_git_ssh_command(
     let code = status.code().unwrap_or(1).max(0) as u32;
     let _ = channel_write.exit_status(code).await;
     let _ = channel_write.close().await;
+    tracing::info!(
+        owner = %repo_owner,
+        repo = %repo_name,
+        exit_code = code,
+        "SSH Git channel closed"
+    );
 
     if let Some((state, repo, auth, before_tips)) = webhook_dispatch {
         tokio::spawn(async move {
