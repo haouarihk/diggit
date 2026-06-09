@@ -1,6 +1,11 @@
-import { OAuthApplicationsPanel } from "@/components/OAuthApplicationsPanel";
+import { OAuthApplicationsPanel, type OAuthApplication } from "@/components/OAuthApplicationsPanel";
+import { apiFetch } from "@/lib/api";
 
-export default function OAuthApplicationsPage() {
+export default async function OAuthApplicationsPage() {
+  const applications = await apiFetch<{ data: OAuthApplication[] }>("/oauth/applications")
+    .then((body) => body.data)
+    .catch(() => []);
+
   return (
     <div className="grid gap-3.5">
       <section className="mb-6">
@@ -12,7 +17,7 @@ export default function OAuthApplicationsPage() {
           Register Dokploy or other clients that need GitLab-compatible access to your Diggit repositories.
         </p>
       </section>
-      <OAuthApplicationsPanel />
+      <OAuthApplicationsPanel initialApplications={applications} />
     </div>
   );
 }

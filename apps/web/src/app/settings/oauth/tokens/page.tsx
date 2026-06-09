@@ -1,6 +1,11 @@
-import { OAuthTokensPanel } from "@/components/OAuthTokensPanel";
+import { OAuthTokensPanel, type OAuthToken } from "@/components/OAuthTokensPanel";
+import { apiFetch } from "@/lib/api";
 
-export default function OAuthTokensPage() {
+export default async function OAuthTokensPage() {
+  const tokens = await apiFetch<{ data: OAuthToken[] }>("/oauth/tokens")
+    .then((body) => body.data)
+    .catch(() => []);
+
   return (
     <div className="grid gap-3.5">
       <section className="mb-6">
@@ -10,7 +15,7 @@ export default function OAuthTokensPage() {
         <h1 className="mb-3 text-4xl font-semibold tracking-tight">OAuth tokens</h1>
         <p className="text-[#59636e]">Review and revoke tokens issued to OAuth applications.</p>
       </section>
-      <OAuthTokensPanel />
+      <OAuthTokensPanel initialTokens={tokens} />
     </div>
   );
 }

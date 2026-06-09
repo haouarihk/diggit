@@ -683,6 +683,7 @@ pub(crate) struct OAuthAuthorizeQuery {
     pub(crate) redirect_uri: String,
     pub(crate) response_type: Option<String>,
     pub(crate) scope: Option<String>,
+    pub(crate) scopes: Option<String>,
     pub(crate) state: Option<String>,
 }
 
@@ -692,6 +693,7 @@ pub(crate) struct OAuthAuthorizeForm {
     pub(crate) redirect_uri: String,
     pub(crate) response_type: Option<String>,
     pub(crate) scope: Option<String>,
+    pub(crate) scopes: Option<String>,
     pub(crate) state: Option<String>,
     pub(crate) username: String,
     pub(crate) password: String,

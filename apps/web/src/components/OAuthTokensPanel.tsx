@@ -6,7 +6,7 @@ import { useState } from "react";
 
 const API_URL = apiBaseUrl();
 
-type OAuthToken = {
+export type OAuthToken = {
   id: string;
   application_id: string;
   application_name: string;
@@ -17,8 +17,8 @@ type OAuthToken = {
   created_at: string;
 };
 
-export function OAuthTokensPanel() {
-  const [tokens, setTokens] = useState<OAuthToken[]>([]);
+export function OAuthTokensPanel({ initialTokens = [] }: { initialTokens?: OAuthToken[] }) {
+  const [tokens, setTokens] = useState<OAuthToken[]>(initialTokens);
   const [message, setMessage] = useState("");
 
   async function loadTokens() {
@@ -55,7 +55,7 @@ export function OAuthTokensPanel() {
       {message ? <div className="border-b border-[#d8dee4] px-4 py-2 text-[#59636e]">{message}</div> : null}
       <div className="grid">
         {tokens.length === 0 ? (
-          <div className="p-4 text-[#59636e]">No tokens loaded yet. Refresh after signing in.</div>
+          <div className="p-4 text-[#59636e]">No OAuth tokens yet.</div>
         ) : (
           tokens.map((token) => (
             <article className="grid gap-2 border-b border-[#d8dee4] p-4 last:border-b-0" key={token.id}>

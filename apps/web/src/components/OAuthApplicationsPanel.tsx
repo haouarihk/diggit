@@ -7,7 +7,7 @@ import { FormEvent, useState } from "react";
 
 const API_URL = apiBaseUrl();
 
-type OAuthApplication = {
+export type OAuthApplication = {
   id: string;
   client_id: string;
   name: string;
@@ -22,8 +22,8 @@ type CreatedOAuthApplication = {
   client_secret: string;
 };
 
-export function OAuthApplicationsPanel() {
-  const [applications, setApplications] = useState<OAuthApplication[]>([]);
+export function OAuthApplicationsPanel({ initialApplications = [] }: { initialApplications?: OAuthApplication[] }) {
+  const [applications, setApplications] = useState<OAuthApplication[]>(initialApplications);
   const [activeApplication, setActiveApplication] = useState<OAuthApplication | null>(null);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [message, setMessage] = useState("");
@@ -120,7 +120,7 @@ export function OAuthApplicationsPanel() {
       {message ? <div className="border-b border-[#d8dee4] px-4 py-2 text-[#59636e]">{message}</div> : null}
       <div className="grid">
         {applications.length === 0 ? (
-          <div className="p-4 text-[#59636e]">No applications loaded yet. Refresh after signing in.</div>
+          <div className="p-4 text-[#59636e]">No OAuth applications yet.</div>
         ) : (
           applications.map((application) => (
             <article className="grid gap-2 border-b border-[#d8dee4] p-4 last:border-b-0" key={application.id}>
@@ -147,7 +147,7 @@ export function OAuthApplicationsPanel() {
           </label>
           <label className="grid gap-1.5">
             Redirect URI
-            <input className="w-full rounded-md border border-[#d0d7de] bg-white px-3 py-2" name="redirectUri" placeholder="https://panel.haouarihk.com/api/providers/gitlab/callback" required />
+            <input className="w-full rounded-md border border-[#d0d7de] bg-white px-3 py-2" name="redirectUri" placeholder="https://your-dokploy-domain.com/api/providers/gitlab/callback" required />
           </label>
           <label className="grid gap-1.5">
             Scopes

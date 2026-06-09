@@ -100,7 +100,7 @@ pub(crate) async fn oauth_authorize_get(
             .bind(Uuid::parse_str(&query.client_id).map_err(|_| ApiError::Unauthorized)?)
             .fetch_one(&state.pool)
             .await?;
-    if application.redirect_uri != query.redirect_uri {
+    if !oauth_redirect_uri_matches(&application.redirect_uri, &query.redirect_uri)? {
         return Err(ApiError::Unauthorized);
     }
     Ok(Html(oauth_authorize_page(&application, &query)))
@@ -117,7 +117,7 @@ pub(crate) async fn oauth_authorize_post(
         &user,
         &input.client_id,
         &input.redirect_uri,
-        input.scope.as_deref(),
+        oauth_requested_scope(input.scope.as_deref(), input.scopes.as_deref()),
     )
     .await?;
     let separator = if input.redirect_uri.contains('?') {
@@ -498,9 +498,7 @@ fn validate_oauth_authorize_form(input: &OAuthAuthorizeForm) -> ApiResult<()> {
 }
 
 fn oauth_authorize_page(application: &OAuthApplication, query: &OAuthAuthorizeQuery) -> String {
-    let scope = query
-        .scope
-        .as_deref()
+    let scope = oauth_requested_scope(query.scope.as_deref(), query.scopes.as_deref())
         .unwrap_or("api read_user read_repository");
     let state = query.state.as_deref().unwrap_or("");
     format!(
@@ -544,6 +542,10 @@ fn oauth_authorize_page(application: &OAuthApplication, query: &OAuthAuthorizeQu
         scope = html_escape(scope),
         state = html_escape(state)
     )
+}
+
+fn oauth_requested_scope<'a>(scope: Option<&'a str>, scopes: Option<&'a str>) -> Option<&'a str> {
+    scope.or(scopes)
 }
 
 fn gitlab_json_response(value: Value, headers: &[(&str, String)]) -> ApiResult<Response> {

@@ -276,7 +276,7 @@ pub(crate) async fn create_oauth_authorization_code(
     requested_scope: Option<&str>,
 ) -> ApiResult<String> {
     let application = find_oauth_application_by_client_id(state, client_id).await?;
-    if application.redirect_uri != redirect_uri {
+    if !oauth_redirect_uri_matches(&application.redirect_uri, redirect_uri)? {
         return Err(ApiError::Unauthorized);
     }
     let requested_scopes = scope_string_to_vec(requested_scope.unwrap_or("api"));
@@ -300,6 +300,25 @@ pub(crate) async fn create_oauth_authorization_code(
     .execute(&state.pool)
     .await?;
     Ok(code)
+}
+
+pub(crate) fn oauth_redirect_uri_matches(registered: &str, provided: &str) -> ApiResult<bool> {
+    if registered == provided {
+        return Ok(true);
+    }
+    let registered = validate_remote_url(registered)?;
+    let provided = validate_remote_url(provided)?;
+    let same_origin_and_path = registered.scheme() == provided.scheme()
+        && registered.host_str() == provided.host_str()
+        && registered.port_or_known_default() == provided.port_or_known_default()
+        && registered.path() == provided.path();
+    if !same_origin_and_path {
+        return Ok(false);
+    }
+    Ok(match registered.query() {
+        Some(query) => provided.query() == Some(query),
+        None => true,
+    })
 }
 
 pub(crate) async fn exchange_oauth_token(
