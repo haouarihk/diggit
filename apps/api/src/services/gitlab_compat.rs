@@ -818,19 +818,32 @@ pub(crate) async fn test_repository_webhook(
         .map(str::trim)
         .filter(|branch| !branch.is_empty() && !branch.contains('*'))
         .unwrap_or(&repo.default_branch);
+    let test_sha = "0000000000000000000000000000000000000000";
     let payload = json!({
         "object_kind": "push",
         "event_name": "push",
         "ref": format!("refs/heads/{branch}"),
-        "before": "0000000000000000000000000000000000000000",
-        "after": "0000000000000000000000000000000000000000",
+        "before": test_sha,
+        "after": test_sha,
         "checkout_sha": serde_json::Value::Null,
         "user_name": auth.username,
         "user_username": auth.username,
         "project": gitlab_project_payload(state, repo).await?,
         "repository": gitlab_repository_payload(state, repo).await?,
-        "commits": [],
-        "total_commits_count": 0
+        "commits": [{
+            "id": test_sha,
+            "message": "Test commit",
+            "timestamp": Utc::now().to_rfc3339(),
+            "url": Value::Null,
+            "author": {
+                "name": auth.username,
+                "email": ""
+            },
+            "added": [],
+            "modified": [],
+            "removed": []
+        }],
+        "total_commits_count": 1
     });
     deliver_repository_webhook(state, &webhook, &payload).await;
     Ok(())
