@@ -570,21 +570,51 @@ pub(crate) async fn create_gitlab_project_hook(
     } else {
         Vec::new()
     };
-    let webhook = sqlx::query_as::<_, RepositoryWebhook>(
-        r#"
-        INSERT INTO repository_webhooks (id, repository_id, url, secret, events, active)
-        VALUES ($1, $2, $3, $4, $5, $6)
-        RETURNING *
-        "#,
+    let secret = input.token.filter(|value| !value.trim().is_empty());
+    let active = input.active.unwrap_or(true);
+    let existing_id: Option<Uuid> = sqlx::query_scalar(
+        "SELECT id FROM repository_webhooks WHERE repository_id = $1 AND url = $2 ORDER BY created_at DESC LIMIT 1",
     )
-    .bind(Uuid::now_v7())
     .bind(repo.id)
-    .bind(url)
-    .bind(input.token.filter(|value| !value.trim().is_empty()))
-    .bind(events)
-    .bind(input.active.unwrap_or(true))
-    .fetch_one(&state.pool)
+    .bind(&url)
+    .fetch_optional(&state.pool)
     .await?;
+    let webhook = if let Some(existing_id) = existing_id {
+        sqlx::query_as::<_, RepositoryWebhook>(
+            r#"
+            UPDATE repository_webhooks
+            SET secret = $3,
+                events = $4,
+                active = $5,
+                updated_at = now()
+            WHERE id = $1 AND repository_id = $2
+            RETURNING *
+            "#,
+        )
+        .bind(existing_id)
+        .bind(repo.id)
+        .bind(secret)
+        .bind(events)
+        .bind(active)
+        .fetch_one(&state.pool)
+        .await?
+    } else {
+        sqlx::query_as::<_, RepositoryWebhook>(
+            r#"
+            INSERT INTO repository_webhooks (id, repository_id, url, secret, events, active)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            RETURNING *
+            "#,
+        )
+        .bind(Uuid::now_v7())
+        .bind(repo.id)
+        .bind(url)
+        .bind(secret)
+        .bind(events)
+        .bind(active)
+        .fetch_one(&state.pool)
+        .await?
+    };
     let project_id = ensure_gitlab_project_id(state, repo.id).await?;
     Ok(gitlab_project_hook_json(state, repo, project_id, webhook))
 }
