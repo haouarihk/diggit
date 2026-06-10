@@ -4,6 +4,7 @@ type MarkdownViewerProps = {
   content: string;
   fileName?: string;
   className?: string;
+  variant?: "file" | "comment";
 };
 
 type MarkdownBlock =
@@ -14,11 +15,13 @@ type MarkdownBlock =
   | { type: "list"; items: string[] }
   | { type: "paragraph"; text: string };
 
-export function MarkdownViewer({ content, fileName, className = "" }: MarkdownViewerProps) {
+export function MarkdownViewer({ content, fileName, className = "", variant = "file" }: MarkdownViewerProps) {
   const blocks = parseMarkdown(content);
+  const shell = variant === "comment" ? `grid gap-3 ${className}` : `rounded-b-md border border-t-0 border-[#d0d7de] bg-white p-5 ${className}`;
+  const emptyLabel = variant === "comment" ? "Nothing to preview yet." : "This file is empty.";
 
   return (
-    <article className={`rounded-b-md border border-t-0 border-[#d0d7de] bg-white p-5 ${className}`}>
+    <article className={shell}>
       {fileName ? (
         <div className="mb-5 flex items-center gap-2 border-b border-[#d8dee4] pb-3 text-sm text-[#59636e]">
           {fileIcon(fileName)}
@@ -27,9 +30,11 @@ export function MarkdownViewer({ content, fileName, className = "" }: MarkdownVi
       ) : null}
 
       {blocks.length === 0 ? (
-        <p className="text-[#59636e]">This file is empty.</p>
+        <p className="text-[#59636e]">{emptyLabel}</p>
       ) : (
-        <div className="grid gap-4 text-[#1f2328]">{blocks.map(renderBlock)}</div>
+        <div className={`${variant === "comment" ? "grid gap-3" : "grid gap-4"} text-[#1f2328]`}>
+          {blocks.map((block, index) => renderBlock(block, index, variant))}
+        </div>
       )}
     </article>
   );
@@ -118,11 +123,20 @@ function shouldContinueParagraph(line: string) {
   );
 }
 
-function renderBlock(block: MarkdownBlock, index: number) {
+function renderBlock(block: MarkdownBlock, index: number, variant: MarkdownViewerProps["variant"]) {
   switch (block.type) {
     case "heading": {
       const Tag = `h${block.level}` as ElementType;
-      const size = block.level === 1 ? "text-2xl" : block.level === 2 ? "text-xl" : "text-lg";
+      const size =
+        variant === "comment"
+          ? block.level === 1
+            ? "text-xl"
+            : "text-lg"
+          : block.level === 1
+            ? "text-2xl"
+            : block.level === 2
+              ? "text-xl"
+              : "text-lg";
       return (
         <Tag className={`${size} border-b border-[#d8dee4] pb-2 font-semibold tracking-tight`} key={index}>
           {renderInline(block.text)}
@@ -151,10 +165,14 @@ function renderBlock(block: MarkdownBlock, index: number) {
       );
     case "code":
       return (
-        <pre className="overflow-x-auto rounded-md bg-[#f6f8fa] p-4 text-sm leading-6 text-[#1f2328]" key={index}>
-          {block.language ? <div className="mb-2 text-xs font-semibold text-[#59636e]">{block.language}</div> : null}
-          <code>{block.code}</code>
-        </pre>
+        <div className="overflow-hidden rounded-md border border-[#d0d7de] bg-[#0d1117] text-[#e6edf3]" key={index}>
+          <div className="flex items-center justify-between border-b border-white/10 bg-white/5 px-3 py-1.5 text-xs font-semibold text-[#8b949e]">
+            <span>{block.language || "code"}</span>
+          </div>
+          <pre className="overflow-x-auto p-4 text-sm leading-6">
+            <code>{highlightCode(block.code, block.language)}</code>
+          </pre>
+        </div>
       );
     case "horizontalRule":
       return <hr className="border-[#d8dee4]" key={index} />;
@@ -163,7 +181,7 @@ function renderBlock(block: MarkdownBlock, index: number) {
 
 function renderInline(text: string): ReactNode[] {
   const nodes: ReactNode[] = [];
-  const pattern = /(`[^`]+`|\[[^\]]+\]\([^)]+\))/g;
+  const pattern = /(`[^`]+`|!?\[[^\]]+\]\([^)]+\))/g;
   let cursor = 0;
   let match = pattern.exec(text);
 
@@ -178,6 +196,16 @@ function renderInline(text: string): ReactNode[] {
         <code className="rounded bg-[#f6f8fa] px-1.5 py-0.5 text-[0.9em]" key={`${token}-${match.index}`}>
           {token.slice(1, -1)}
         </code>,
+      );
+    } else if (token.startsWith("![")) {
+      const image = token.match(/^!\[([^\]]*)\]\(([^)]+)\)$/);
+      const src = safeMarkdownHref(image?.[2] ?? "");
+      nodes.push(
+        <span className="my-2 block" key={`${token}-${match.index}`}>
+          {/* Comment and federated images are arbitrary URLs, so Next Image cannot preconfigure them. */}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img alt={image?.[1] ?? ""} className="max-h-[420px] max-w-full rounded-md border border-[#d0d7de]" src={src} />
+        </span>,
       );
     } else {
       const link = token.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
@@ -198,6 +226,63 @@ function renderInline(text: string): ReactNode[] {
   }
 
   return nodes;
+}
+
+function highlightCode(code: string, language: string) {
+  const normalized = language.toLowerCase();
+  if (normalized === "json") {
+    return highlightJson(code);
+  }
+  if (["js", "jsx", "javascript", "ts", "tsx", "typescript"].includes(normalized)) {
+    return highlightKeywords(code, /\b(await|async|break|case|catch|class|const|continue|default|else|export|extends|finally|for|from|function|if|import|let|new|return|switch|throw|try|type|var|while)\b/g);
+  }
+  if (["rs", "rust"].includes(normalized)) {
+    return highlightKeywords(code, /\b(async|await|break|const|continue|crate|else|enum|fn|for|if|impl|let|match|mod|mut|pub|return|self|struct|trait|use|where|while)\b/g);
+  }
+  if (["py", "python"].includes(normalized)) {
+    return highlightKeywords(code, /\b(and|as|async|await|break|class|continue|def|elif|else|except|False|for|from|if|import|in|is|lambda|None|not|or|pass|return|True|try|while|with|yield)\b/g);
+  }
+  if (["sh", "bash", "shell"].includes(normalized)) {
+    return highlightKeywords(code, /\b(case|do|done|elif|else|esac|fi|for|function|if|in|then|while)\b/g);
+  }
+  return code;
+}
+
+function highlightKeywords(code: string, keywordPattern: RegExp) {
+  const keywordMatcher = new RegExp(keywordPattern.source);
+  return code.split(/(".*?"|'.*?'|`.*?`|\/\/.*|#.*)/g).map((part, index) => {
+    if (!part) {
+      return null;
+    }
+    if (/^(["'`])/.test(part)) {
+      return <span className="text-[#a5d6ff]" key={index}>{part}</span>;
+    }
+    if (/^(\/\/|#)/.test(part)) {
+      return <span className="text-[#8b949e]" key={index}>{part}</span>;
+    }
+    return part.split(keywordPattern).map((token, tokenIndex) =>
+      keywordMatcher.test(token) ? (
+        <span className="text-[#ff7b72]" key={`${index}-${tokenIndex}`}>{token}</span>
+      ) : (
+        token
+      ),
+    );
+  });
+}
+
+function highlightJson(code: string) {
+  return code.split(/("(?:\\.|[^"])*"|\btrue\b|\bfalse\b|\bnull\b|-?\d+(?:\.\d+)?)/g).map((part, index) => {
+    if (/^"/.test(part)) {
+      return <span className="text-[#a5d6ff]" key={index}>{part}</span>;
+    }
+    if (/^(true|false|null)$/.test(part)) {
+      return <span className="text-[#ff7b72]" key={index}>{part}</span>;
+    }
+    if (/^-?\d/.test(part)) {
+      return <span className="text-[#79c0ff]" key={index}>{part}</span>;
+    }
+    return part;
+  });
 }
 
 export function safeMarkdownHref(href: string) {

@@ -30,6 +30,7 @@ async fn main() -> anyhow::Result<()> {
 
     let config = Arc::new(Config::from_env());
     fs::create_dir_all(&config.git_storage_path).await?;
+    fs::create_dir_all(&config.attachment_storage_path).await?;
 
     let pool = PgPoolOptions::new()
         .max_connections(10)

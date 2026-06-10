@@ -369,6 +369,36 @@ pub(crate) struct CommentReactionResponse {
     pub(crate) viewer_reacted: bool,
 }
 
+#[derive(Debug, Serialize, Deserialize, FromRow)]
+pub(crate) struct CommentAttachment {
+    pub(crate) id: Uuid,
+    pub(crate) repository_id: Uuid,
+    pub(crate) comment_id: Option<Uuid>,
+    pub(crate) uploaded_by_actor_url: String,
+    pub(crate) original_filename: String,
+    pub(crate) content_type: String,
+    pub(crate) byte_size: i64,
+    pub(crate) sha256: String,
+    pub(crate) storage_key: String,
+    pub(crate) created_at: DateTime<Utc>,
+    pub(crate) attached_at: Option<DateTime<Utc>>,
+    pub(crate) deleted_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct CommentAttachmentResponse {
+    pub(crate) id: Uuid,
+    pub(crate) filename: String,
+    #[serde(rename = "contentType")]
+    pub(crate) content_type: String,
+    pub(crate) size: i64,
+    pub(crate) url: String,
+    pub(crate) markdown: String,
+    #[serde(rename = "isImage")]
+    pub(crate) is_image: bool,
+    pub(crate) created_at: DateTime<Utc>,
+}
+
 #[derive(Debug, Serialize)]
 pub(crate) struct CommentResponse {
     pub(crate) id: Uuid,
@@ -383,6 +413,7 @@ pub(crate) struct CommentResponse {
     pub(crate) body: String,
     pub(crate) activity_id: Option<String>,
     pub(crate) reactions: Vec<CommentReactionResponse>,
+    pub(crate) attachments: Vec<CommentAttachmentResponse>,
     pub(crate) viewer_can_update: bool,
     pub(crate) created_at: DateTime<Utc>,
     pub(crate) updated_at: DateTime<Utc>,
@@ -941,11 +972,13 @@ pub(crate) struct UpsertIssueLabelRequest {
 #[derive(Debug, Deserialize)]
 pub(crate) struct CreateIssueCommentRequest {
     pub(crate) body: String,
+    pub(crate) attachment_ids: Option<Vec<Uuid>>,
 }
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct UpdateCommentRequest {
     pub(crate) body: String,
+    pub(crate) attachment_ids: Option<Vec<Uuid>>,
 }
 
 #[derive(Debug, Deserialize)]

@@ -8,6 +8,7 @@ pub(crate) struct Config {
     pub(crate) app_base_url: String,
     pub(crate) public_web_url: String,
     pub(crate) git_storage_path: PathBuf,
+    pub(crate) attachment_storage_path: PathBuf,
     pub(crate) jwt_secret: String,
     pub(crate) admin_usernames: Vec<String>,
     pub(crate) signups_enabled: bool,
@@ -25,6 +26,9 @@ impl Config {
         let ssh_host_key_path = env::var("SSH_HOST_KEY_PATH")
             .map(PathBuf::from)
             .unwrap_or_else(|_| git_storage_path.join("ssh_host_ed25519_key"));
+        let attachment_storage_path = env::var("ATTACHMENT_STORAGE_PATH")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| git_storage_path.join("../attachments"));
 
         Self {
             database_url: env::var("DATABASE_URL")
@@ -41,6 +45,7 @@ impl Config {
             public_web_url: env::var("PUBLIC_WEB_URL")
                 .unwrap_or_else(|_| "http://localhost:3000".to_string()),
             git_storage_path,
+            attachment_storage_path,
             jwt_secret: jwt_secret_from_env(),
             admin_usernames: env::var("ADMIN_USERNAMES")
                 .unwrap_or_default()

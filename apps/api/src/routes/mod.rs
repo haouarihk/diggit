@@ -304,6 +304,14 @@ pub(crate) fn router(state: AppState) -> Router {
                 .delete(repositories::delete_pull_request_comment_reaction),
         )
         .route(
+            "/repos/{owner}/{name}/comment-attachments",
+            post(repositories::upload_comment_attachment),
+        )
+        .route(
+            "/repos/{owner}/{name}/comment-attachments/{attachment_id}/{filename}",
+            get(repositories::get_comment_attachment),
+        )
+        .route(
             "/repos/{owner}/{name}/issue-labels",
             get(repositories::list_issue_labels).post(repositories::upsert_issue_label),
         )
@@ -322,6 +330,15 @@ pub(crate) fn router(state: AppState) -> Router {
         .route(
             "/repos/{owner}/{name}/issues/{number}/comments",
             get(repositories::list_issue_comments).post(repositories::create_issue_comment),
+        )
+        .route(
+            "/repos/{owner}/{name}/issues/{number}/comments/{comment_id}",
+            patch(repositories::update_issue_comment).delete(repositories::delete_issue_comment),
+        )
+        .route(
+            "/repos/{owner}/{name}/issues/{number}/comments/{comment_id}/reactions",
+            post(repositories::create_issue_comment_reaction)
+                .delete(repositories::delete_issue_comment_reaction),
         )
         .route(
             "/servers",
@@ -382,6 +399,14 @@ pub(crate) fn router(state: AppState) -> Router {
                 .delete(repositories::delete_pull_request_comment_reaction),
         )
         .route(
+            "/{owner}/{name}/comment-attachments",
+            post(repositories::upload_comment_attachment),
+        )
+        .route(
+            "/{owner}/{name}/comment-attachments/{attachment_id}/{filename}",
+            get(repositories::get_comment_attachment),
+        )
+        .route(
             "/{owner}/{name}/issues",
             get(repositories::list_issues).post(repositories::create_issue),
         )
@@ -392,6 +417,15 @@ pub(crate) fn router(state: AppState) -> Router {
         .route(
             "/{owner}/{name}/issues/{number}/comments",
             get(repositories::list_issue_comments).post(repositories::create_issue_comment),
+        )
+        .route(
+            "/{owner}/{name}/issues/{number}/comments/{comment_id}",
+            patch(repositories::update_issue_comment).delete(repositories::delete_issue_comment),
+        )
+        .route(
+            "/{owner}/{name}/issues/{number}/comments/{comment_id}/reactions",
+            post(repositories::create_issue_comment_reaction)
+                .delete(repositories::delete_issue_comment_reaction),
         )
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())

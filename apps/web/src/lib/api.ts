@@ -193,6 +193,9 @@ export type IssueComment = {
   remote_server: string | null;
   body: string;
   activity_id: string | null;
+  reactions: CommentReaction[];
+  attachments: CommentAttachment[];
+  viewer_can_update: boolean;
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
@@ -204,10 +207,18 @@ export type CommentReaction = {
   viewer_reacted: boolean;
 };
 
-export type PullRequestComment = IssueComment & {
-  reactions: CommentReaction[];
-  viewer_can_update: boolean;
+export type CommentAttachment = {
+  id: string;
+  filename: string;
+  contentType: string;
+  size: number;
+  url: string;
+  markdown: string;
+  isImage: boolean;
+  created_at: string;
 };
+
+export type PullRequestComment = IssueComment;
 
 export type RepositoryCommit = {
   sha: string;
@@ -610,10 +621,30 @@ export function listRepositoryIssueComments(owner: string, name: string, number:
   );
 }
 
+export function updateRepositoryIssueComment(owner: string, name: string, number: number, commentId: string, body: string, attachmentIds: string[] = []) {
+  return apiFetch<IssueComment>(
+    `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/issues/${number}/comments/${encodeURIComponent(commentId)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ attachment_ids: attachmentIds, body }),
+    },
+  );
+}
+
 export function listPullRequestComments(owner: string, name: string, id: string, page = 1, limit = 100) {
   const searchParams = new URLSearchParams({ page: String(page), limit: String(limit) });
   return apiFetch<PaginatedCollection<PullRequestComment>>(
     `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pull-requests/${encodeURIComponent(id)}/comments?${searchParams.toString()}`,
+  );
+}
+
+export function updatePullRequestComment(owner: string, name: string, id: string, commentId: string, body: string, attachmentIds: string[] = []) {
+  return apiFetch<PullRequestComment>(
+    `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pull-requests/${encodeURIComponent(id)}/comments/${encodeURIComponent(commentId)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ attachment_ids: attachmentIds, body }),
+    },
   );
 }
 

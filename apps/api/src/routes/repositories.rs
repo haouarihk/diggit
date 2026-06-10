@@ -1,13 +1,17 @@
 use axum::{
     Json,
     body::Body,
-    extract::{Path, Query, State},
-    http::{HeaderMap, StatusCode},
+    extract::{Multipart, Path, Query, State},
+    http::{
+        HeaderMap, StatusCode,
+        header::{CONTENT_DISPOSITION, CONTENT_LENGTH, CONTENT_TYPE},
+    },
     response::{IntoResponse, Response},
 };
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use sqlx::Row;
-use std::path::PathBuf;
+use std::path::{Path as FsPath, PathBuf};
 use tokio::fs;
 use uuid::Uuid;
 
@@ -19,6 +23,7 @@ use crate::{
 };
 
 const FIXED_COMMENT_REACTIONS: [&str; 8] = ["👍", "👎", "😄", "🎉", "😕", "❤️", "🚀", "👀"];
+const MAX_COMMENT_ATTACHMENT_BYTES: usize = 10 * 1024 * 1024;
 
 pub(crate) async fn create_repo(
     State(state): State<AppState>,
@@ -1583,11 +1588,19 @@ pub(crate) async fn list_issue_comments(
     headers: HeaderMap,
     Path((owner, name, number)): Path<(String, String, i32)>,
     Query(query): Query<IssueListQuery>,
-) -> ApiResult<Json<PaginatedResponse<IssueComment>>> {
-    let auth = optional_auth(&state, &headers)?;
+) -> ApiResult<Json<PaginatedResponse<CommentResponse>>> {
+    let auth = optional_repo_action_auth(&state, &headers)?;
     let repo = find_repo(&state.pool, &owner, &name).await?;
-    ensure_repo_visible(&state.pool, auth.as_ref(), &repo).await?;
+    ensure_repo_visible(
+        &state.pool,
+        local_auth_from_repo_action(auth.as_ref()),
+        &repo,
+    )
+    .await?;
     let issue = find_issue(&state, repo.id, number).await?;
+    let viewer_actor_url = auth
+        .as_ref()
+        .map(|auth| repo_action_actor_url(&state, auth));
     let (page, limit, offset) = pagination_input(query.page, query.limit);
     let total: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM comments WHERE issue_id = $1")
         .bind(issue.id)
@@ -1607,9 +1620,13 @@ pub(crate) async fn list_issue_comments(
     .bind(offset)
     .fetch_all(&state.pool)
     .await?;
+    let mut data = Vec::with_capacity(comments.len());
+    for comment in comments {
+        data.push(comment_response(&state, comment, viewer_actor_url.as_deref()).await?);
+    }
 
     Ok(Json(PaginatedResponse {
-        data: comments,
+        data,
         pagination: pagination(page, limit, total.0),
     }))
 }
@@ -1619,7 +1636,7 @@ pub(crate) async fn create_issue_comment(
     headers: HeaderMap,
     Path((owner, name, number)): Path<(String, String, i32)>,
     Json(input): Json<CreateIssueCommentRequest>,
-) -> ApiResult<Json<IssueComment>> {
+) -> ApiResult<Json<CommentResponse>> {
     let auth = require_repo_action_auth(&state, &headers, "repo:comment")?;
     let repo = find_repo(&state.pool, &owner, &name).await?;
     ensure_repo_action_visible(&state.pool, &auth, &repo).await?;
@@ -1653,9 +1670,146 @@ pub(crate) async fn create_issue_comment(
     .bind(&activity_id)
     .fetch_one(&state.pool)
     .await?;
+    let viewer_actor_url = repo_action_actor_url(&state, &auth);
+    sync_comment_attachments(
+        &state,
+        repo.id,
+        comment.id,
+        &viewer_actor_url,
+        input.attachment_ids.as_deref(),
+    )
+    .await?;
+    let comment = find_comment_by_id(&state, repo.id, comment.id).await?;
 
     deliver_issue_comment_activity(&state, &repo, &issue, &comment, &activity_id).await?;
-    Ok(Json(comment))
+    Ok(Json(
+        comment_response(&state, comment, Some(&viewer_actor_url)).await?,
+    ))
+}
+
+pub(crate) async fn update_issue_comment(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((owner, name, number, comment_id)): Path<(String, String, i32, Uuid)>,
+    Json(input): Json<UpdateCommentRequest>,
+) -> ApiResult<Json<CommentResponse>> {
+    let auth = require_repo_action_auth(&state, &headers, "repo:comment")?;
+    let repo = find_repo(&state.pool, &owner, &name).await?;
+    ensure_repo_action_visible(&state.pool, &auth, &repo).await?;
+    let issue = find_issue(&state, repo.id, number).await?;
+    let current = find_issue_comment(&state, repo.id, issue.id, comment_id).await?;
+    ensure_comment_author(&state, &current, &auth)?;
+    if current.deleted_at.is_some() {
+        return Err(ApiError::BadRequest(
+            "deleted comments cannot be edited".to_string(),
+        ));
+    }
+    let body = validate_comment_body(&input.body)?;
+    let comment = sqlx::query_as::<_, IssueComment>(
+        r#"
+        UPDATE comments
+        SET body = $4, updated_at = now()
+        WHERE id = $1 AND repository_id = $2 AND issue_id = $3 AND deleted_at IS NULL
+        RETURNING *
+        "#,
+    )
+    .bind(comment_id)
+    .bind(repo.id)
+    .bind(issue.id)
+    .bind(body)
+    .fetch_one(&state.pool)
+    .await?;
+    let viewer_actor_url = repo_action_actor_url(&state, &auth);
+    sync_comment_attachments(
+        &state,
+        repo.id,
+        comment.id,
+        &viewer_actor_url,
+        input.attachment_ids.as_deref(),
+    )
+    .await?;
+    let comment = find_comment_by_id(&state, repo.id, comment.id).await?;
+
+    Ok(Json(
+        comment_response(&state, comment, Some(&viewer_actor_url)).await?,
+    ))
+}
+
+pub(crate) async fn delete_issue_comment(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((owner, name, number, comment_id)): Path<(String, String, i32, Uuid)>,
+) -> ApiResult<Json<CommentResponse>> {
+    let auth = require_repo_action_auth(&state, &headers, "repo:comment")?;
+    let repo = find_repo(&state.pool, &owner, &name).await?;
+    ensure_repo_action_visible(&state.pool, &auth, &repo).await?;
+    let issue = find_issue(&state, repo.id, number).await?;
+    let current = find_issue_comment(&state, repo.id, issue.id, comment_id).await?;
+    ensure_comment_author(&state, &current, &auth)?;
+    sqlx::query("DELETE FROM comment_reactions WHERE comment_id = $1")
+        .bind(comment_id)
+        .execute(&state.pool)
+        .await?;
+    sqlx::query("UPDATE comment_attachments SET deleted_at = COALESCE(deleted_at, now()) WHERE comment_id = $1")
+        .bind(comment_id)
+        .execute(&state.pool)
+        .await?;
+    let comment = sqlx::query_as::<_, IssueComment>(
+        r#"
+        UPDATE comments
+        SET body = '', deleted_at = COALESCE(deleted_at, now()), updated_at = now()
+        WHERE id = $1 AND repository_id = $2 AND issue_id = $3
+        RETURNING *
+        "#,
+    )
+    .bind(comment_id)
+    .bind(repo.id)
+    .bind(issue.id)
+    .fetch_one(&state.pool)
+    .await?;
+    let viewer_actor_url = repo_action_actor_url(&state, &auth);
+
+    Ok(Json(
+        comment_response(&state, comment, Some(&viewer_actor_url)).await?,
+    ))
+}
+
+pub(crate) async fn create_issue_comment_reaction(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((owner, name, number, comment_id)): Path<(String, String, i32, Uuid)>,
+    Json(input): Json<CommentReactionRequest>,
+) -> ApiResult<Json<CommentResponse>> {
+    let auth = require_repo_action_auth(&state, &headers, "repo:comment")?;
+    let repo = find_repo(&state.pool, &owner, &name).await?;
+    ensure_repo_action_visible(&state.pool, &auth, &repo).await?;
+    let issue = find_issue(&state, repo.id, number).await?;
+    let comment = find_issue_comment(&state, repo.id, issue.id, comment_id).await?;
+    add_comment_reaction(&state, &auth, comment.id, &input.emoji).await?;
+    let actor_url = repo_action_actor_url(&state, &auth);
+
+    Ok(Json(
+        comment_response(&state, comment, Some(&actor_url)).await?,
+    ))
+}
+
+pub(crate) async fn delete_issue_comment_reaction(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((owner, name, number, comment_id)): Path<(String, String, i32, Uuid)>,
+    Json(input): Json<CommentReactionRequest>,
+) -> ApiResult<Json<CommentResponse>> {
+    let auth = require_repo_action_auth(&state, &headers, "repo:comment")?;
+    let repo = find_repo(&state.pool, &owner, &name).await?;
+    ensure_repo_action_visible(&state.pool, &auth, &repo).await?;
+    let issue = find_issue(&state, repo.id, number).await?;
+    let comment = find_issue_comment(&state, repo.id, issue.id, comment_id).await?;
+    remove_comment_reaction(&state, &auth, comment.id, &input.emoji).await?;
+    let actor_url = repo_action_actor_url(&state, &auth);
+
+    Ok(Json(
+        comment_response(&state, comment, Some(&actor_url)).await?,
+    ))
 }
 
 pub(crate) async fn list_pull_request_comments(
@@ -1746,6 +1900,15 @@ pub(crate) async fn create_pull_request_comment(
     .fetch_one(&state.pool)
     .await?;
     let viewer_actor_url = repo_action_actor_url(&state, &auth);
+    sync_comment_attachments(
+        &state,
+        repo.id,
+        comment.id,
+        &viewer_actor_url,
+        input.attachment_ids.as_deref(),
+    )
+    .await?;
+    let comment = find_comment_by_id(&state, repo.id, comment.id).await?;
 
     Ok(Json(
         comment_response(&state, comment, Some(&viewer_actor_url)).await?,
@@ -1785,6 +1948,15 @@ pub(crate) async fn update_pull_request_comment(
     .fetch_one(&state.pool)
     .await?;
     let viewer_actor_url = repo_action_actor_url(&state, &auth);
+    sync_comment_attachments(
+        &state,
+        repo.id,
+        comment.id,
+        &viewer_actor_url,
+        input.attachment_ids.as_deref(),
+    )
+    .await?;
+    let comment = find_comment_by_id(&state, repo.id, comment.id).await?;
 
     Ok(Json(
         comment_response(&state, comment, Some(&viewer_actor_url)).await?,
@@ -1803,6 +1975,10 @@ pub(crate) async fn delete_pull_request_comment(
     let current = find_pull_request_comment(&state, repo.id, pr.id, comment_id).await?;
     ensure_comment_author(&state, &current, &auth)?;
     sqlx::query("DELETE FROM comment_reactions WHERE comment_id = $1")
+        .bind(comment_id)
+        .execute(&state.pool)
+        .await?;
+    sqlx::query("UPDATE comment_attachments SET deleted_at = COALESCE(deleted_at, now()) WHERE comment_id = $1")
         .bind(comment_id)
         .execute(&state.pool)
         .await?;
@@ -1895,6 +2071,133 @@ pub(crate) async fn delete_pull_request_comment_reaction(
     ))
 }
 
+pub(crate) async fn upload_comment_attachment(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((owner, name)): Path<(String, String)>,
+    mut multipart: Multipart,
+) -> ApiResult<Json<CommentAttachmentResponse>> {
+    let auth = require_repo_action_auth(&state, &headers, "repo:comment")?;
+    let repo = find_repo(&state.pool, &owner, &name).await?;
+    ensure_repo_action_visible(&state.pool, &auth, &repo).await?;
+    let actor_url = repo_action_actor_url(&state, &auth);
+
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?
+    {
+        if field.name() != Some("file") {
+            continue;
+        }
+        let filename = sanitize_attachment_filename(field.file_name().unwrap_or("attachment"));
+        let content_type = field
+            .content_type()
+            .map(str::to_string)
+            .unwrap_or_else(|| "application/octet-stream".to_string());
+        let bytes = field
+            .bytes()
+            .await
+            .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+        if bytes.is_empty() {
+            return Err(ApiError::BadRequest("attachment is empty".to_string()));
+        }
+        if bytes.len() > MAX_COMMENT_ATTACHMENT_BYTES {
+            return Err(ApiError::BadRequest("attachment is too large".to_string()));
+        }
+
+        let id = Uuid::now_v7();
+        let storage_key = id.to_string();
+        let storage_path = comment_attachment_storage_path(&state, &storage_key);
+        if let Some(parent) = storage_path.parent() {
+            fs::create_dir_all(parent).await?;
+        }
+        fs::write(&storage_path, &bytes).await?;
+        let sha256 = format!("{:x}", Sha256::digest(&bytes));
+        let attachment = sqlx::query_as::<_, CommentAttachment>(
+            r#"
+            INSERT INTO comment_attachments
+              (id, repository_id, uploaded_by_actor_url, original_filename,
+               content_type, byte_size, sha256, storage_key)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            RETURNING *
+            "#,
+        )
+        .bind(id)
+        .bind(repo.id)
+        .bind(actor_url)
+        .bind(filename)
+        .bind(content_type)
+        .bind(bytes.len() as i64)
+        .bind(sha256)
+        .bind(storage_key)
+        .fetch_one(&state.pool)
+        .await?;
+
+        return Ok(Json(comment_attachment_response(
+            &state.config.app_base_url,
+            &repo,
+            attachment,
+        )));
+    }
+
+    Err(ApiError::BadRequest("file field is required".to_string()))
+}
+
+pub(crate) async fn get_comment_attachment(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((owner, name, attachment_id, _filename)): Path<(String, String, Uuid, String)>,
+) -> ApiResult<Response> {
+    let auth = optional_auth(&state, &headers)?;
+    let repo = find_repo(&state.pool, &owner, &name).await?;
+    ensure_repo_visible(&state.pool, auth.as_ref(), &repo).await?;
+    let attachment = sqlx::query_as::<_, CommentAttachment>(
+        r#"
+        SELECT *
+        FROM comment_attachments
+        WHERE id = $1 AND repository_id = $2 AND deleted_at IS NULL
+        "#,
+    )
+    .bind(attachment_id)
+    .bind(repo.id)
+    .fetch_one(&state.pool)
+    .await?;
+    let path = comment_attachment_storage_path(&state, &attachment.storage_key);
+    let bytes = fs::read(path).await?;
+
+    let mut response = Body::from(bytes).into_response();
+    let headers = response.headers_mut();
+    headers.insert(
+        CONTENT_TYPE,
+        attachment
+            .content_type
+            .parse()
+            .unwrap_or_else(|_| "application/octet-stream".parse().unwrap()),
+    );
+    headers.insert(
+        CONTENT_LENGTH,
+        attachment.byte_size.to_string().parse().unwrap(),
+    );
+    headers.insert(
+        CONTENT_DISPOSITION,
+        format!(
+            "{}; filename=\"{}\"",
+            if attachment_is_inline_image(&attachment.content_type) {
+                "inline"
+            } else {
+                "attachment"
+            },
+            header_safe_filename(&attachment.original_filename)
+        )
+        .parse()
+        .unwrap(),
+    );
+    headers.insert("x-content-type-options", "nosniff".parse().unwrap());
+
+    Ok(response)
+}
+
 struct IssueAuthor {
     handle: String,
     actor_url: Option<String>,
@@ -1977,6 +2280,40 @@ async fn find_pull_request_comment(
     .await?)
 }
 
+async fn find_issue_comment(
+    state: &AppState,
+    repository_id: Uuid,
+    issue_id: Uuid,
+    comment_id: Uuid,
+) -> ApiResult<IssueComment> {
+    Ok(sqlx::query_as::<_, IssueComment>(
+        r#"
+        SELECT *
+        FROM comments
+        WHERE id = $1 AND repository_id = $2 AND issue_id = $3
+        "#,
+    )
+    .bind(comment_id)
+    .bind(repository_id)
+    .bind(issue_id)
+    .fetch_one(&state.pool)
+    .await?)
+}
+
+async fn find_comment_by_id(
+    state: &AppState,
+    repository_id: Uuid,
+    comment_id: Uuid,
+) -> ApiResult<IssueComment> {
+    Ok(sqlx::query_as::<_, IssueComment>(
+        "SELECT * FROM comments WHERE id = $1 AND repository_id = $2",
+    )
+    .bind(comment_id)
+    .bind(repository_id)
+    .fetch_one(&state.pool)
+    .await?)
+}
+
 async fn comment_response(
     state: &AppState,
     comment: IssueComment,
@@ -2001,6 +2338,11 @@ async fn comment_response(
     } else {
         comment.body
     };
+    let attachments = if comment.deleted_at.is_some() {
+        Vec::new()
+    } else {
+        comment_attachments(state, comment.repository_id, comment.id).await?
+    };
 
     Ok(CommentResponse {
         id: comment.id,
@@ -2015,11 +2357,144 @@ async fn comment_response(
         body,
         activity_id: comment.activity_id,
         reactions,
+        attachments,
         viewer_can_update,
         created_at: comment.created_at,
         updated_at: comment.updated_at,
         deleted_at: comment.deleted_at,
     })
+}
+
+async fn comment_attachments(
+    state: &AppState,
+    repository_id: Option<Uuid>,
+    comment_id: Uuid,
+) -> ApiResult<Vec<CommentAttachmentResponse>> {
+    let Some(repository_id) = repository_id else {
+        return Ok(Vec::new());
+    };
+    let repo: Repository = sqlx::query_as("SELECT * FROM repositories WHERE id = $1")
+        .bind(repository_id)
+        .fetch_one(&state.pool)
+        .await?;
+    let attachments = sqlx::query_as::<_, CommentAttachment>(
+        r#"
+        SELECT *
+        FROM comment_attachments
+        WHERE repository_id = $1 AND comment_id = $2 AND deleted_at IS NULL
+        ORDER BY created_at ASC
+        "#,
+    )
+    .bind(repository_id)
+    .bind(comment_id)
+    .fetch_all(&state.pool)
+    .await?;
+    Ok(attachments
+        .into_iter()
+        .map(|attachment| {
+            comment_attachment_response(&state.config.app_base_url, &repo, attachment)
+        })
+        .collect())
+}
+
+async fn sync_comment_attachments(
+    state: &AppState,
+    repository_id: Uuid,
+    comment_id: Uuid,
+    actor_url: &str,
+    attachment_ids: Option<&[Uuid]>,
+) -> ApiResult<()> {
+    let Some(attachment_ids) = attachment_ids else {
+        return Ok(());
+    };
+    sqlx::query(
+        r#"
+        UPDATE comment_attachments
+        SET deleted_at = COALESCE(deleted_at, now())
+        WHERE repository_id = $1
+          AND comment_id = $2
+          AND NOT (id = ANY($3))
+        "#,
+    )
+    .bind(repository_id)
+    .bind(comment_id)
+    .bind(attachment_ids)
+    .execute(&state.pool)
+    .await?;
+    if attachment_ids.is_empty() {
+        return Ok(());
+    }
+    sqlx::query(
+        r#"
+        UPDATE comment_attachments
+        SET comment_id = $2, attached_at = COALESCE(attached_at, now()), deleted_at = NULL
+        WHERE repository_id = $1
+          AND id = ANY($3)
+          AND uploaded_by_actor_url = $4
+          AND (comment_id IS NULL OR comment_id = $2)
+        "#,
+    )
+    .bind(repository_id)
+    .bind(comment_id)
+    .bind(attachment_ids)
+    .bind(actor_url)
+    .execute(&state.pool)
+    .await?;
+    Ok(())
+}
+
+async fn add_comment_reaction(
+    state: &AppState,
+    auth: &RepoActionAuth,
+    comment_id: Uuid,
+    emoji: &str,
+) -> ApiResult<()> {
+    let comment = sqlx::query_as::<_, IssueComment>("SELECT * FROM comments WHERE id = $1")
+        .bind(comment_id)
+        .fetch_one(&state.pool)
+        .await?;
+    if comment.deleted_at.is_some() {
+        return Err(ApiError::BadRequest(
+            "deleted comments cannot receive reactions".to_string(),
+        ));
+    }
+    let emoji = validate_comment_reaction(emoji)?;
+    let actor = issue_author(state, auth).await?;
+    let actor_url = actor.actor_url.clone().ok_or(ApiError::Unauthorized)?;
+    sqlx::query(
+        r#"
+        INSERT INTO comment_reactions (comment_id, emoji, actor_url, actor_display_name, remote_server)
+        VALUES ($1, $2, $3, $4, $5)
+        ON CONFLICT (comment_id, actor_url, emoji) DO NOTHING
+        "#,
+    )
+    .bind(comment_id)
+    .bind(emoji)
+    .bind(actor_url)
+    .bind(actor.display_name)
+    .bind(actor.remote_server)
+    .execute(&state.pool)
+    .await?;
+    Ok(())
+}
+
+async fn remove_comment_reaction(
+    state: &AppState,
+    auth: &RepoActionAuth,
+    comment_id: Uuid,
+    emoji: &str,
+) -> ApiResult<()> {
+    let emoji = validate_comment_reaction(emoji)?;
+    let actor_url = repo_action_actor_url(state, auth);
+    sqlx::query(
+        "DELETE FROM comment_reactions WHERE comment_id = $1 AND emoji = $2 AND actor_url = $3",
+    )
+    .bind(comment_id)
+    .bind(emoji)
+    .bind(actor_url)
+    .execute(&state.pool)
+    .await?;
+    Ok(())
 }
 
 async fn comment_reactions(
@@ -2063,6 +2538,99 @@ fn validate_comment_reaction(emoji: &str) -> ApiResult<&'static str> {
         .copied()
         .find(|allowed| *allowed == emoji)
         .ok_or_else(|| ApiError::BadRequest("unsupported reaction emoji".to_string()))
+}
+
+fn comment_attachment_response(
+    app_base_url: &str,
+    repo: &Repository,
+    attachment: CommentAttachment,
+) -> CommentAttachmentResponse {
+    let url = format!(
+        "{}/repos/{}/{}/comment-attachments/{}/{}",
+        app_base_url.trim_end_matches('/'),
+        url_path_segment(&repo.owner_handle),
+        url_path_segment(&repo.name),
+        attachment.id,
+        url_path_segment(&attachment.original_filename)
+    );
+    let is_image = attachment_is_inline_image(&attachment.content_type);
+    let markdown = if is_image {
+        format!("![{}]({})", attachment.original_filename, url)
+    } else {
+        format!("[{}]({})", attachment.original_filename, url)
+    };
+    CommentAttachmentResponse {
+        id: attachment.id,
+        filename: attachment.original_filename,
+        content_type: attachment.content_type,
+        size: attachment.byte_size,
+        url,
+        markdown,
+        is_image,
+        created_at: attachment.created_at,
+    }
+}
+
+fn comment_attachment_storage_path(state: &AppState, storage_key: &str) -> PathBuf {
+    state.config.attachment_storage_path.join(storage_key)
+}
+
+fn sanitize_attachment_filename(value: &str) -> String {
+    let name = FsPath::new(value)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("attachment")
+        .trim();
+    let sanitized = name
+        .chars()
+        .map(|char| {
+            if char.is_ascii_alphanumeric() || matches!(char, '.' | '-' | '_' | ' ') {
+                char
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>()
+        .trim()
+        .trim_matches('.')
+        .to_string();
+    if sanitized.is_empty() {
+        "attachment".to_string()
+    } else {
+        sanitized.chars().take(120).collect()
+    }
+}
+
+fn header_safe_filename(value: &str) -> String {
+    value
+        .chars()
+        .map(|char| {
+            if char == '"' || char == '\\' || char.is_control() {
+                '_'
+            } else {
+                char
+            }
+        })
+        .collect()
+}
+
+fn attachment_is_inline_image(content_type: &str) -> bool {
+    matches!(
+        content_type.split(';').next().unwrap_or("").trim(),
+        "image/png" | "image/jpeg" | "image/gif" | "image/webp"
+    )
+}
+
+fn url_path_segment(value: &str) -> String {
+    let mut encoded = String::new();
+    for byte in value.as_bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(*byte, b'-' | b'_' | b'.' | b'~') {
+            encoded.push(*byte as char);
+        } else {
+            encoded.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    encoded
 }
 
 async fn validate_default_branch(repo: &Repository, branch: &str) -> ApiResult<()> {
