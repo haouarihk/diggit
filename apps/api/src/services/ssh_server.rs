@@ -418,14 +418,16 @@ async fn run_git_ssh_command(
         tracing::info!(
             owner = %prepared.repo.owner_handle,
             repo = %prepared.repo.name,
-            "SSH push branch snapshot started"
+            "SSH push ref snapshot started"
         );
-        let tips = git_branch_tips(&prepared.repo).await.unwrap_or_default();
+        let tips = git_webhook_ref_tips(&prepared.repo)
+            .await
+            .unwrap_or_default();
         tracing::info!(
             owner = %prepared.repo.owner_handle,
             repo = %prepared.repo.name,
             elapsed_ms = started.elapsed().as_millis(),
-            "SSH push branch snapshot completed"
+            "SSH push ref snapshot completed"
         );
         tips
     } else {
@@ -547,7 +549,7 @@ async fn record_successful_ssh_push(
     state: &AppState,
     repo: &Repository,
     auth: &AuthUser,
-    before_tips: &[GitBranchTip],
+    before_tips: &[GitWebhookRefTip],
 ) -> ApiResult<()> {
     let before_shas = before_tips
         .iter()

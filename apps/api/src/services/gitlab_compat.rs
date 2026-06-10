@@ -5,16 +5,44 @@ const OAUTH_ACCESS_TOKEN_TTL_HOURS: i64 = 2;
 const OAUTH_CODE_TTL_MINUTES: i64 = 10;
 const ALLOWED_OAUTH_SCOPES: &[&str] = &["api", "read_user", "read_repository"];
 const WEBHOOK_DELIVERY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+const SUPPORTED_GITLAB_WEBHOOK_EVENTS: &[&str] = &[
+    "push",
+    "tag_push",
+    "issues",
+    "confidential_issues",
+    "merge_requests",
+    "note",
+    "confidential_note",
+    "job",
+    "pipeline",
+    "wiki_page",
+    "deployment",
+    "releases",
+    "resource_access_token",
+    "repository_update",
+    "emoji",
+];
 
 #[derive(Debug, Clone)]
 pub(crate) struct OAuthTokenAuth {
     pub(crate) user: AuthUser,
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub(crate) struct GitBranchTip {
+#[derive(Debug, Clone)]
+pub(crate) struct GitWebhookRefTip {
+    pub(crate) event: String,
     pub(crate) name: String,
+    pub(crate) ref_path: String,
     pub(crate) sha: String,
+}
+
+#[derive(Debug, Clone)]
+struct GitWebhookRefChange {
+    event: String,
+    name: String,
+    ref_path: String,
+    before: String,
+    after: String,
 }
 
 pub(crate) fn oauth_application_response(
@@ -37,6 +65,8 @@ pub(crate) fn repository_webhook_response(webhook: RepositoryWebhook) -> Reposit
         url: webhook.url,
         events: webhook.events,
         active: webhook.active,
+        push_events_branch_filter: webhook.push_events_branch_filter,
+        branch_filter_strategy: webhook.branch_filter_strategy,
         last_status: webhook.last_status,
         last_status_code: webhook.last_status_code,
         last_error: webhook.last_error,
@@ -515,10 +545,14 @@ pub(crate) async fn create_repository_webhook(
     let url = validate_remote_url(&input.url)?.to_string();
     let events =
         normalize_webhook_events(input.events.unwrap_or_else(|| vec!["push".to_string()]))?;
+    let push_events_branch_filter = normalize_gitlab_branch_filter(input.push_events_branch_filter);
+    let branch_filter_strategy =
+        normalize_gitlab_branch_filter_strategy(input.branch_filter_strategy);
     let webhook = sqlx::query_as::<_, RepositoryWebhook>(
         r#"
-        INSERT INTO repository_webhooks (id, repository_id, url, secret, events)
-        VALUES ($1, $2, $3, $4, $5)
+        INSERT INTO repository_webhooks
+          (id, repository_id, url, secret, events, push_events_branch_filter, branch_filter_strategy)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
         RETURNING *
         "#,
     )
@@ -527,6 +561,8 @@ pub(crate) async fn create_repository_webhook(
     .bind(url)
     .bind(input.secret.filter(|value| !value.trim().is_empty()))
     .bind(events)
+    .bind(push_events_branch_filter)
+    .bind(branch_filter_strategy)
     .fetch_one(&state.pool)
     .await?;
     Ok(repository_webhook_response(webhook))
@@ -560,14 +596,10 @@ pub(crate) async fn create_gitlab_project_hook(
     ensure_repo_admin(&state.pool, &auth.user, repo).await?;
     let url = validate_remote_url(&input.url)?.to_string();
     let _enable_ssl_verification = input.enable_ssl_verification.unwrap_or(true);
+    let events = gitlab_project_hook_events(&input);
     let branch_filter_strategy =
         normalize_gitlab_branch_filter_strategy(input.branch_filter_strategy);
     let push_events_branch_filter = normalize_gitlab_branch_filter(input.push_events_branch_filter);
-    let events = if input.push_events.unwrap_or(true) {
-        vec!["push".to_string()]
-    } else {
-        Vec::new()
-    };
     let secret = input.token.filter(|value| !value.trim().is_empty());
     let active = input.active.unwrap_or(true);
     let existing_id: Option<Uuid> = sqlx::query_scalar(
@@ -634,11 +666,7 @@ pub(crate) async fn update_gitlab_project_hook(
     ensure_repo_admin(&state.pool, &auth.user, repo).await?;
     let hook_id = Uuid::parse_str(hook_id).map_err(|_| ApiError::NotFound)?;
     let url = validate_remote_url(&input.url)?.to_string();
-    let events = if input.push_events.unwrap_or(true) {
-        vec!["push".to_string()]
-    } else {
-        Vec::new()
-    };
+    let events = gitlab_project_hook_events(&input);
     let branch_filter_strategy =
         normalize_gitlab_branch_filter_strategy(input.branch_filter_strategy);
     let push_events_branch_filter = normalize_gitlab_branch_filter(input.push_events_branch_filter);
@@ -741,7 +769,7 @@ pub(crate) async fn dispatch_repository_webhooks(
     state: &AppState,
     repo: &Repository,
     auth: &AuthUser,
-    before_tips: &[GitBranchTip],
+    before_tips: &[GitWebhookRefTip],
 ) -> ApiResult<()> {
     let webhooks = sqlx::query_as::<_, RepositoryWebhook>(
         "SELECT * FROM repository_webhooks WHERE repository_id = $1 AND active = TRUE",
@@ -759,7 +787,7 @@ pub(crate) async fn dispatch_repository_webhooks(
         return Ok(());
     }
 
-    let changes = changed_branch_tips(repo, before_tips).await?;
+    let changes = changed_webhook_refs(repo, before_tips).await?;
     tracing::info!(
         owner = %repo.owner_handle,
         repo = %repo.name,
@@ -770,8 +798,10 @@ pub(crate) async fn dispatch_repository_webhooks(
         let payload = gitlab_push_payload(state, repo, auth, &change).await?;
         for webhook in webhooks
             .iter()
-            .filter(|webhook| webhook.events.iter().any(|event| event == "push"))
-            .filter(|webhook| webhook_matches_branch_filter(webhook, &change.0))
+            .filter(|webhook| webhook.events.iter().any(|event| event == &change.event))
+            .filter(|webhook| {
+                change.event != "push" || webhook_matches_branch_filter(webhook, &change.name)
+            })
         {
             deliver_repository_webhook(state, webhook, &payload).await;
         }
@@ -783,7 +813,7 @@ pub(crate) async fn record_successful_http_push(
     state: &AppState,
     repo: &Repository,
     auth: &AuthUser,
-    before_tips: &[GitBranchTip],
+    before_tips: &[GitWebhookRefTip],
 ) -> ApiResult<()> {
     let before_shas = before_tips
         .iter()
@@ -1125,7 +1155,7 @@ fn normalize_webhook_events(events: Vec<String>) -> ApiResult<Vec<String>> {
     let mut normalized = Vec::new();
     for event in events {
         let event = event.trim().to_ascii_lowercase();
-        if event != "push" {
+        if !SUPPORTED_GITLAB_WEBHOOK_EVENTS.contains(&event.as_str()) {
             return Err(ApiError::BadRequest(format!(
                 "unsupported webhook event {event}"
             )));
@@ -1138,6 +1168,72 @@ fn normalize_webhook_events(events: Vec<String>) -> ApiResult<Vec<String>> {
         normalized.push("push".to_string());
     }
     Ok(normalized)
+}
+
+fn gitlab_project_hook_events(input: &CreateGitlabProjectHookRequest) -> Vec<String> {
+    let mut events = Vec::new();
+    push_gitlab_project_hook_event(&mut events, "push", input.push_events.unwrap_or(true));
+    push_gitlab_project_hook_event(
+        &mut events,
+        "tag_push",
+        input.tag_push_events.unwrap_or(false),
+    );
+    push_gitlab_project_hook_event(&mut events, "issues", input.issues_events.unwrap_or(false));
+    push_gitlab_project_hook_event(
+        &mut events,
+        "confidential_issues",
+        input.confidential_issues_events.unwrap_or(false),
+    );
+    push_gitlab_project_hook_event(
+        &mut events,
+        "merge_requests",
+        input.merge_requests_events.unwrap_or(false),
+    );
+    push_gitlab_project_hook_event(&mut events, "note", input.note_events.unwrap_or(false));
+    push_gitlab_project_hook_event(
+        &mut events,
+        "confidential_note",
+        input.confidential_note_events.unwrap_or(false),
+    );
+    push_gitlab_project_hook_event(&mut events, "job", input.job_events.unwrap_or(false));
+    push_gitlab_project_hook_event(
+        &mut events,
+        "pipeline",
+        input.pipeline_events.unwrap_or(false),
+    );
+    push_gitlab_project_hook_event(
+        &mut events,
+        "wiki_page",
+        input.wiki_page_events.unwrap_or(false),
+    );
+    push_gitlab_project_hook_event(
+        &mut events,
+        "deployment",
+        input.deployment_events.unwrap_or(false),
+    );
+    push_gitlab_project_hook_event(
+        &mut events,
+        "releases",
+        input.releases_events.unwrap_or(false),
+    );
+    push_gitlab_project_hook_event(
+        &mut events,
+        "resource_access_token",
+        input.resource_access_token_events.unwrap_or(false),
+    );
+    push_gitlab_project_hook_event(
+        &mut events,
+        "repository_update",
+        input.repository_update_events.unwrap_or(false),
+    );
+    push_gitlab_project_hook_event(&mut events, "emoji", input.emoji_events.unwrap_or(false));
+    events
+}
+
+fn push_gitlab_project_hook_event(events: &mut Vec<String>, event: &str, enabled: bool) {
+    if enabled {
+        events.push(event.to_string());
+    }
 }
 
 fn normalize_gitlab_branch_filter(value: Option<String>) -> Option<String> {
@@ -1220,25 +1316,80 @@ fn wildcard_branch_match(pattern: &str, branch: &str) -> bool {
     true
 }
 
-async fn changed_branch_tips(
+pub(crate) async fn git_webhook_ref_tips(repo: &Repository) -> ApiResult<Vec<GitWebhookRefTip>> {
+    let output = try_run_git_command(
+        repo,
+        &[
+            "for-each-ref".to_string(),
+            "--format=%(refname)%00%(objectname)".to_string(),
+            "refs/heads".to_string(),
+            "refs/tags".to_string(),
+        ],
+    )
+    .await?;
+    Ok(output
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|line| {
+            let mut parts = line.split('\0');
+            let ref_path = parts.next()?.trim();
+            let sha = parts.next()?.trim();
+            if !is_webhook_sha(sha) {
+                return None;
+            }
+            let (event, name) = ref_path
+                .strip_prefix("refs/heads/")
+                .map(|name| ("push", name))
+                .or_else(|| {
+                    ref_path
+                        .strip_prefix("refs/tags/")
+                        .map(|name| ("tag_push", name))
+                })?;
+            Some(GitWebhookRefTip {
+                event: event.to_string(),
+                name: name.to_string(),
+                ref_path: ref_path.to_string(),
+                sha: sha.to_string(),
+            })
+        })
+        .collect())
+}
+
+fn is_webhook_sha(value: &str) -> bool {
+    value.len() == 40 && value.chars().all(|ch| ch.is_ascii_hexdigit())
+}
+
+async fn changed_webhook_refs(
     repo: &Repository,
-    before_tips: &[GitBranchTip],
-) -> ApiResult<Vec<(String, String, String)>> {
-    let after_tips = git_branch_tips(repo).await?;
+    before_tips: &[GitWebhookRefTip],
+) -> ApiResult<Vec<GitWebhookRefChange>> {
+    let after_tips = git_webhook_ref_tips(repo).await?;
     let mut changes = Vec::new();
     for after in &after_tips {
         let before = before_tips
             .iter()
-            .find(|tip| tip.name == after.name)
+            .find(|tip| tip.ref_path == after.ref_path)
             .map(|tip| tip.sha.clone())
             .unwrap_or_else(zero_sha);
         if before != after.sha {
-            changes.push((after.name.clone(), before, after.sha.clone()));
+            changes.push(GitWebhookRefChange {
+                event: after.event.clone(),
+                name: after.name.clone(),
+                ref_path: after.ref_path.clone(),
+                before,
+                after: after.sha.clone(),
+            });
         }
     }
     for before in before_tips {
-        if !after_tips.iter().any(|tip| tip.name == before.name) {
-            changes.push((before.name.clone(), before.sha.clone(), zero_sha()));
+        if !after_tips.iter().any(|tip| tip.ref_path == before.ref_path) {
+            changes.push(GitWebhookRefChange {
+                event: before.event.clone(),
+                name: before.name.clone(),
+                ref_path: before.ref_path.clone(),
+                before: before.sha.clone(),
+                after: zero_sha(),
+            });
         }
     }
     Ok(changes)
@@ -1252,19 +1403,18 @@ async fn gitlab_push_payload(
     state: &AppState,
     repo: &Repository,
     auth: &AuthUser,
-    change: &(String, String, String),
+    change: &GitWebhookRefChange,
 ) -> ApiResult<Value> {
-    let (branch, before, after) = change;
     let project_id = ensure_gitlab_project_id(state, repo.id).await?;
-    let commits = gitlab_push_commits(repo, before, after).await?;
+    let commits = gitlab_push_commits(repo, &change.before, &change.after).await?;
     let total_commits_count = commits.len();
     Ok(json!({
-        "object_kind": "push",
-        "event_name": "push",
-        "ref": format!("refs/heads/{branch}"),
-        "before": before,
-        "after": after,
-        "checkout_sha": if after == &zero_sha() { Value::Null } else { json!(after) },
+        "object_kind": change.event,
+        "event_name": change.event,
+        "ref": change.ref_path,
+        "before": change.before,
+        "after": change.after,
+        "checkout_sha": if change.after == zero_sha() { Value::Null } else { json!(change.after) },
         "project_id": project_id,
         "user_name": auth.username,
         "user_username": auth.username,
@@ -1401,28 +1551,31 @@ fn gitlab_project_hook_json(
     project_id: i64,
     webhook: RepositoryWebhook,
 ) -> Value {
-    let push_events = webhook.events.iter().any(|event| event == "push");
+    let events = &webhook.events;
     json!({
         "id": webhook.id.to_string(),
         "url": webhook.url,
         "project_id": project_id,
-        "push_events": push_events,
-        "issues_events": false,
-        "merge_requests_events": false,
-        "tag_push_events": false,
-        "note_events": false,
-        "job_events": false,
-        "pipeline_events": false,
-        "wiki_page_events": false,
-        "deployment_events": false,
-        "releases_events": false,
+        "push_events": events.iter().any(|event| event == "push"),
+        "issues_events": events.iter().any(|event| event == "issues"),
+        "confidential_issues_events": events.iter().any(|event| event == "confidential_issues"),
+        "merge_requests_events": events.iter().any(|event| event == "merge_requests"),
+        "tag_push_events": events.iter().any(|event| event == "tag_push"),
+        "note_events": events.iter().any(|event| event == "note"),
+        "confidential_note_events": events.iter().any(|event| event == "confidential_note"),
+        "job_events": events.iter().any(|event| event == "job"),
+        "pipeline_events": events.iter().any(|event| event == "pipeline"),
+        "wiki_page_events": events.iter().any(|event| event == "wiki_page"),
+        "deployment_events": events.iter().any(|event| event == "deployment"),
+        "releases_events": events.iter().any(|event| event == "releases"),
         "enable_ssl_verification": true,
-        "repository_update_events": false,
+        "repository_update_events": events.iter().any(|event| event == "repository_update"),
         "alert_status": webhook.last_status,
         "disabled_until": Value::Null,
         "url_variables": [],
         "created_at": webhook.created_at,
-        "resource_access_token_events": false,
+        "resource_access_token_events": events.iter().any(|event| event == "resource_access_token"),
+        "emoji_events": events.iter().any(|event| event == "emoji"),
         "custom_webhook_template": Value::Null,
         "push_events_branch_filter": webhook.push_events_branch_filter,
         "branch_filter_strategy": webhook.branch_filter_strategy.unwrap_or_else(|| "wildcard".to_string()),
@@ -1439,10 +1592,15 @@ async fn deliver_repository_webhook(
     webhook: &RepositoryWebhook,
     payload: &Value,
 ) {
+    let event_header = match payload.get("object_kind").and_then(Value::as_str) {
+        Some("tag_push") => "Tag Push Hook",
+        Some("push") => "Push Hook",
+        _ => "Hook",
+    };
     let mut request = state
         .http
         .post(&webhook.url)
-        .header("X-Gitlab-Event", "Push Hook")
+        .header("X-Gitlab-Event", event_header)
         .json(payload);
     if let Some(secret) = webhook
         .secret

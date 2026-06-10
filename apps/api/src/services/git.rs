@@ -477,34 +477,6 @@ pub(crate) async fn git_ref_tips(repo: &Repository) -> ApiResult<Vec<String>> {
         .collect())
 }
 
-pub(crate) async fn git_branch_tips(repo: &Repository) -> ApiResult<Vec<GitBranchTip>> {
-    let output = try_run_git_command(
-        repo,
-        &[
-            "for-each-ref".to_string(),
-            "--format=%(refname:short)%00%(objectname)".to_string(),
-            "refs/heads".to_string(),
-        ],
-    )
-    .await?;
-    Ok(output
-        .unwrap_or_default()
-        .lines()
-        .filter_map(|line| {
-            let mut parts = line.split('\0');
-            let name = parts.next()?.trim();
-            let sha = parts.next()?.trim();
-            if name.is_empty() || !is_full_sha(sha) {
-                return None;
-            }
-            Some(GitBranchTip {
-                name: name.to_string(),
-                sha: sha.to_string(),
-            })
-        })
-        .collect())
-}
-
 pub(crate) async fn record_pushed_commit_authors(
     state: &AppState,
     repo: &Repository,

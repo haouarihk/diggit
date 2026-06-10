@@ -7,11 +7,31 @@ import { FormEvent, useState } from "react";
 
 const API_URL = apiBaseUrl();
 
+const WEBHOOK_TRIGGER_OPTIONS = [
+  { description: "Branch push events.", label: "Push events", value: "push" },
+  { description: "Tag creation or update events.", label: "Tag push events", value: "tag_push" },
+  { description: "Issue creation and updates.", label: "Issues events", value: "issues" },
+  { description: "Confidential issue activity.", label: "Confidential issues events", value: "confidential_issues" },
+  { description: "Merge request activity.", label: "Merge request events", value: "merge_requests" },
+  { description: "Comments and notes.", label: "Note events", value: "note" },
+  { description: "Confidential comments and notes.", label: "Confidential note events", value: "confidential_note" },
+  { description: "CI job activity.", label: "Job events", value: "job" },
+  { description: "Pipeline activity.", label: "Pipeline events", value: "pipeline" },
+  { description: "Wiki page activity.", label: "Wiki page events", value: "wiki_page" },
+  { description: "Deployment activity.", label: "Deployment events", value: "deployment" },
+  { description: "Release activity.", label: "Release events", value: "releases" },
+  { description: "Resource access token activity.", label: "Resource access token events", value: "resource_access_token" },
+  { description: "Repository update events.", label: "Repository update events", value: "repository_update" },
+  { description: "Emoji reaction activity.", label: "Emoji events", value: "emoji" },
+];
+
 type RepositoryWebhook = {
   id: string;
   url: string;
   events: string[];
   active: boolean;
+  push_events_branch_filter: string | null;
+  branch_filter_strategy: string | null;
   last_status: string | null;
   last_status_code: number | null;
   last_error: string | null;
@@ -45,13 +65,16 @@ export function RepositoryWebhooksPanel({ name, owner }: RepositoryWebhooksPanel
     event.preventDefault();
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
+    const events = selectedWebhookEvents(form);
     const response = await fetch(`${API_URL}${repoPath}/webhooks`, {
       method: "POST",
       headers: { "content-type": "application/json", ...authHeaders() },
       body: JSON.stringify({
         url: form.get("url"),
         secret: form.get("secret") || null,
-        events: ["push"],
+        events,
+        push_events_branch_filter: form.get("push_events_branch_filter") || null,
+        branch_filter_strategy: form.get("branch_filter_strategy") || "wildcard",
       }),
     });
     if (!response.ok) {
@@ -119,7 +142,12 @@ export function RepositoryWebhooksPanel({ name, owner }: RepositoryWebhooksPanel
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
                     <strong className="break-all">{webhook.url}</strong>
-                    <p className="text-sm text-[#59636e]">Events: {webhook.events.join(", ")}</p>
+                    <p className="text-sm text-[#59636e]">Events: {formatWebhookEvents(webhook.events)}</p>
+                    {webhook.push_events_branch_filter ? (
+                      <p className="text-sm text-[#59636e]">
+                        Branch filter: {webhook.push_events_branch_filter} ({webhook.branch_filter_strategy ?? "wildcard"})
+                      </p>
+                    ) : null}
                   </div>
                   <div className="flex gap-2">
                     <button className="rounded-md border border-[#d0d7de] bg-white px-3 py-1.5 font-semibold" type="button" onClick={() => void testWebhook(webhook)}>
@@ -150,7 +178,35 @@ export function RepositoryWebhooksPanel({ name, owner }: RepositoryWebhooksPanel
             Secret token
             <input className="w-full rounded-md border border-[#d0d7de] bg-white px-3 py-2" name="secret" placeholder="Optional GitLab secret token" />
           </label>
-          <p className="text-sm text-[#59636e]">Push events are sent with `X-Gitlab-Event: Push Hook` and the optional `X-Gitlab-Token` header.</p>
+          <fieldset className="grid gap-3">
+            <legend className="font-semibold">Trigger events</legend>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {WEBHOOK_TRIGGER_OPTIONS.map((option) => (
+                <label className="flex gap-2 rounded-md border border-[#d0d7de] bg-white p-3" key={option.value}>
+                  <input className="mt-1" defaultChecked={option.value === "push"} name={option.value} type="checkbox" />
+                  <span className="grid gap-0.5">
+                    <span className="font-semibold">{option.label}</span>
+                    <span className="text-sm text-[#59636e]">{option.description}</span>
+                  </span>
+                </label>
+              ))}
+            </div>
+          </fieldset>
+          <div className="grid gap-3 sm:grid-cols-[1fr_180px]">
+            <label className="grid gap-1.5">
+              Branch filter
+              <input className="w-full rounded-md border border-[#d0d7de] bg-white px-3 py-2" name="push_events_branch_filter" placeholder="Optional, e.g. main or release/*" />
+            </label>
+            <label className="grid gap-1.5">
+              Filter strategy
+              <select className="w-full rounded-md border border-[#d0d7de] bg-white px-3 py-2" defaultValue="wildcard" name="branch_filter_strategy">
+                <option value="wildcard">Wildcard</option>
+                <option value="regex">Regex</option>
+                <option value="all_branches">All branches</option>
+              </select>
+            </label>
+          </div>
+          <p className="text-sm text-[#59636e]">GitLab-style events are sent with `X-Gitlab-Event` and the optional `X-Gitlab-Token` header. Branch filters apply to push events.</p>
           <button className="w-fit rounded-md border border-black/15 bg-[#1a7f37] px-3 py-1.5 font-bold text-white" type="submit">
             Add webhook
           </button>
@@ -158,4 +214,16 @@ export function RepositoryWebhooksPanel({ name, owner }: RepositoryWebhooksPanel
       </Drawer>
     </main>
   );
+}
+
+function selectedWebhookEvents(form: FormData) {
+  const events = WEBHOOK_TRIGGER_OPTIONS.filter((option) => form.get(option.value) === "on").map((option) => option.value);
+  return events.length > 0 ? events : ["push"];
+}
+
+function formatWebhookEvents(events: string[]) {
+  if (events.length === 0) {
+    return "None";
+  }
+  return events.map((event) => WEBHOOK_TRIGGER_OPTIONS.find((option) => option.value === event)?.label ?? event).join(", ");
 }

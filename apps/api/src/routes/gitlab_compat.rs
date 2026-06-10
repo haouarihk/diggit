@@ -464,7 +464,7 @@ async fn smart_git_http(
     ensure_oauth_repo_visible(&state, &auth, &repo).await?;
     ensure_repo_head(&repo).await?;
     let before_tips = if dispatch_push_webhooks {
-        git_branch_tips(&repo).await.unwrap_or_default()
+        git_webhook_ref_tips(&repo).await.unwrap_or_default()
     } else {
         Vec::new()
     };
