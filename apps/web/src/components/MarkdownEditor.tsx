@@ -118,7 +118,9 @@ export function MarkdownEditor({
 
   return (
     <form
-      className={`grid gap-3 rounded-xl border border-[#d0d7de] bg-[#f6f8fa] p-4 ${isDragging ? "ring-2 ring-[#0969da]" : ""}`}
+      className={`overflow-hidden rounded-2xl border bg-white shadow-sm transition ${
+        isDragging ? "border-[#0969da] ring-4 ring-[#ddf4ff]" : "border-[#d0d7de]"
+      }`}
       onDragLeave={() => setIsDragging(false)}
       onDragOver={(event) => {
         event.preventDefault();
@@ -127,9 +129,12 @@ export function MarkdownEditor({
       onDrop={handleDrop}
       onSubmit={onSubmit}
     >
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <span className="font-semibold">{label}</span>
-        <div className="flex rounded-md border border-[#d0d7de] bg-white p-0.5 text-sm">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#d8dee4] bg-linear-to-r from-[#f6f8fa] to-white px-4 py-3">
+        <div>
+          <span className="font-semibold text-[#1f2328]">{label}</span>
+          <p className="text-xs text-[#59636e]">Markdown, files, paste and drag-drop supported.</p>
+        </div>
+        <div className="flex rounded-full border border-[#d0d7de] bg-white p-0.5 text-sm shadow-sm">
           <button className={tabClass(mode === "write")} type="button" onClick={() => setMode("write")}>
             Write
           </button>
@@ -140,8 +145,8 @@ export function MarkdownEditor({
       </div>
 
       {mode === "write" ? (
-        <>
-          <div className="flex flex-wrap gap-1.5 rounded-t-md border border-b-0 border-[#d0d7de] bg-white px-2 py-1.5 text-sm">
+        <div className="grid">
+          <div className="flex flex-wrap items-center gap-1.5 border-b border-[#d8dee4] bg-white px-3 py-2 text-sm">
             <ToolbarButton label="Link" onClick={() => wrapSelection("[", "](https://example.com)")} />
             <ToolbarButton label="Image" onClick={() => insertText("![alt text](https://example.com/image.png)")} />
             <ToolbarButton label="Code" onClick={() => insertText("```js\n\n```\n")} />
@@ -150,8 +155,9 @@ export function MarkdownEditor({
             <ToolbarButton label={isUploading ? "Uploading..." : "Attach"} onClick={() => inputRef.current?.click()} />
           </div>
           <textarea
-            className="min-h-36 w-full rounded-b-md border border-[#d0d7de] bg-white px-3 py-2 text-[#1f2328]"
+            className="min-h-40 w-full resize-y border-0 bg-white px-4 py-3 text-[#1f2328] outline-none placeholder:text-[#8c959f] focus:ring-0"
             disabled={disabled}
+            placeholder="Leave a comment. Use ```js for code blocks, paste images, or drop files here."
             ref={textareaRef}
             required
             value={value}
@@ -159,32 +165,37 @@ export function MarkdownEditor({
             onPaste={handlePaste}
           />
           <input className="hidden" multiple ref={inputRef} type="file" onChange={handleFileInput} />
-        </>
+        </div>
       ) : (
-        <div className="min-h-36 rounded-md border border-[#d0d7de] bg-white p-3">
+        <div className="min-h-40 bg-white p-4">
           <MarkdownViewer content={value} variant="comment" />
         </div>
       )}
 
-      {attachments.length > 0 ? (
-        <div className="flex flex-wrap gap-2">
-          {attachments.map((attachment) => (
-            <span className="rounded-full border border-[#d0d7de] bg-white px-3 py-1 text-sm text-[#59636e]" key={attachment.id}>
-              {attachment.isImage ? "Image" : "File"}: {attachment.filename}
-            </span>
-          ))}
-        </div>
-      ) : null}
-      {uploadMessage ? <p className="text-sm text-[#cf222e]">{uploadMessage}</p> : null}
-      <div className="flex flex-wrap justify-end gap-2">
-        {onCancel ? (
-          <button className="rounded-md border border-[#d0d7de] bg-white px-3 py-1.5 font-semibold" type="button" onClick={onCancel}>
-            Cancel
-          </button>
+      <div className="grid gap-3 border-t border-[#d8dee4] bg-[#f6f8fa] px-4 py-3">
+        {attachments.length > 0 ? (
+          <div className="flex flex-wrap gap-2">
+            {attachments.map((attachment) => (
+              <span className="rounded-full border border-[#d0d7de] bg-white px-3 py-1 text-sm font-medium text-[#59636e] shadow-sm" key={attachment.id}>
+                {attachment.isImage ? "Image" : "File"}: {attachment.filename}
+              </span>
+            ))}
+          </div>
         ) : null}
-        <button className="rounded-md border border-black/15 bg-[#1a7f37] px-3 py-1.5 font-bold text-white disabled:opacity-60" disabled={disabled || isUploading} type="submit">
-          {isUploading ? "Uploading..." : submitLabel}
-        </button>
+        {uploadMessage ? <p className="text-sm text-[#cf222e]">{uploadMessage}</p> : null}
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="text-xs text-[#59636e]">{isDragging ? "Drop files to upload." : "Tip: paste screenshots directly into the editor."}</p>
+          <div className="flex flex-wrap justify-end gap-2">
+            {onCancel ? (
+              <button className="rounded-lg border border-[#d0d7de] bg-white px-3 py-1.5 font-semibold hover:bg-[#f6f8fa]" type="button" onClick={onCancel}>
+                Cancel
+              </button>
+            ) : null}
+            <button className="rounded-lg border border-black/15 bg-[#1a7f37] px-4 py-1.5 font-bold text-white shadow-sm hover:bg-[#116329] disabled:opacity-60" disabled={disabled || isUploading} type="submit">
+              {isUploading ? "Uploading..." : submitLabel}
+            </button>
+          </div>
+        </div>
       </div>
     </form>
   );
@@ -192,12 +203,12 @@ export function MarkdownEditor({
 
 function ToolbarButton({ label, onClick }: { label: string; onClick: () => void }) {
   return (
-    <button className="rounded px-2 py-1 font-semibold text-[#59636e] hover:bg-[#f6f8fa] hover:text-[#0969da]" type="button" onClick={onClick}>
+    <button className="rounded-full px-2.5 py-1 font-semibold text-[#59636e] hover:bg-[#ddf4ff] hover:text-[#0969da]" type="button" onClick={onClick}>
       {label}
     </button>
   );
 }
 
 function tabClass(active: boolean) {
-  return `rounded px-2 py-1 font-semibold ${active ? "bg-[#0969da] text-white" : "text-[#59636e]"}`;
+  return `rounded-full px-3 py-1 font-semibold ${active ? "bg-[#0969da] text-white shadow-sm" : "text-[#59636e] hover:text-[#0969da]"}`;
 }

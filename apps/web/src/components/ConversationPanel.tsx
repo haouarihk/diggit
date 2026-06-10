@@ -5,6 +5,7 @@ import { MarkdownEditor } from "@/components/MarkdownEditor";
 import { MarkdownViewer } from "@/components/MarkdownViewer";
 import { authHeaders } from "@/lib/auth-session";
 import type { CommentAttachment, CommentReaction, IssueComment } from "@/lib/api";
+import { SmilePlus } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
 
@@ -216,19 +217,20 @@ export function ConversationPanel({
         <p className="rounded-xl border border-[#d0d7de] bg-white p-4 text-[#59636e]">{emptyLabel}</p>
       ) : (
         comments.map((comment) => (
-          <article className="relative grid gap-3 rounded-xl border border-[#d0d7de] bg-white p-4 shadow-sm" key={comment.id}>
-            <div className="flex items-start gap-3">
-              <Avatar comment={comment} />
-              <div className="min-w-0 flex-1">
-                <p className="text-sm text-[#59636e]">
-                  <AuthorLink comment={comment} /> commented {formatDate(comment.created_at)}
-                  {comment.remote_server ? <span> from {comment.remote_server}</span> : null}
-                  {comment.updated_at !== comment.created_at && !comment.deleted_at ? <span> · edited</span> : null}
-                </p>
-                {comment.deleted_at ? (
-                  <p className="mt-2 text-sm italic text-[#59636e]">This comment was deleted.</p>
-                ) : editingCommentId === comment.id ? (
-                  <div className="mt-3">
+          <div className="flex items-start gap-3" key={comment.id}>
+            <Avatar comment={comment} />
+            <article className="relative grid min-w-0 flex-1 gap-3 rounded-2xl border border-[#d0d7de] bg-white p-4 shadow-sm before:absolute before:left-[-7px] before:top-5 before:h-3 before:w-3 before:rotate-45 before:border-b before:border-l before:border-[#d0d7de] before:bg-white before:content-['']">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-[#d8dee4] pb-3">
+                  <AuthorLink comment={comment} />
+                  <span className="text-sm text-[#59636e]">commented {formatDate(comment.created_at)}</span>
+                  {comment.remote_server ? <span className="rounded-full bg-[#f6f8fa] px-2 py-0.5 text-xs font-semibold text-[#59636e]">{comment.remote_server}</span> : null}
+                  {comment.updated_at !== comment.created_at && !comment.deleted_at ? <span className="text-xs text-[#59636e]">edited</span> : null}
+                </div>
+                <div className="pt-3">
+                  {comment.deleted_at ? (
+                    <p className="text-sm italic text-[#59636e]">This comment was deleted.</p>
+                  ) : editingCommentId === comment.id ? (
                     <MarkdownEditor
                       attachments={editAttachments}
                       disabled={commentBusyId === comment.id}
@@ -245,113 +247,116 @@ export function ConversationPanel({
                       onChange={setEditBody}
                       onSubmit={(event) => void saveComment(event, comment.id)}
                     />
-                  </div>
-                ) : (
-                  <div className="mt-2">
-                    <MarkdownViewer content={comment.body} sanitizedHtml={comment.body_html} variant="comment" />
-                    <AttachmentList attachments={comment.attachments} />
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {!comment.deleted_at ? (
-              <div className="flex flex-wrap items-end justify-between gap-3">
-                <div className="flex flex-wrap gap-1.5">
-                  {comment.reactions.map((reaction) => (
-                    <button
-                      className={`rounded-full border px-2 py-1 text-sm ${
-                        reaction.viewer_reacted
-                          ? "border-[#0969da] bg-[#ddf4ff] text-[#0969da]"
-                          : "border-[#d0d7de] bg-[#f6f8fa] text-[#24292f]"
-                      } disabled:opacity-60`}
-                      disabled={commentBusyId === comment.id}
-                      key={reaction.emoji}
-                      title={`${reaction.viewer_reacted ? "Remove" : "Add"} ${reaction.emoji} reaction`}
-                      type="button"
-                      onClick={() => void toggleReaction(comment, reaction)}
-                    >
-                      <span>{reaction.emoji}</span>
-                      {reaction.count > 0 ? <span className="ml-1 font-semibold">{reaction.count}</span> : null}
-                    </button>
-                  ))}
-                </div>
-                <div className="relative flex flex-wrap justify-end gap-2">
-                  {comment.viewer_can_update ? (
+                  ) : (
                     <>
+                      <MarkdownViewer content={comment.body} sanitizedHtml={comment.body_html} variant="comment" />
+                      <AttachmentList attachments={comment.attachments} />
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {!comment.deleted_at ? (
+                <div className="flex flex-wrap items-end justify-between gap-3">
+                <div className="flex flex-wrap items-center gap-1.5">
+                    {comment.reactions.map((reaction) => (
+                      <button
+                        className={`rounded-full border px-2 py-1 text-sm ${
+                          reaction.viewer_reacted
+                            ? "border-[#0969da] bg-[#ddf4ff] text-[#0969da]"
+                            : "border-[#d0d7de] bg-[#f6f8fa] text-[#24292f]"
+                        } disabled:opacity-60`}
+                        disabled={commentBusyId === comment.id}
+                        key={reaction.emoji}
+                        title={`${reaction.viewer_reacted ? "Remove" : "Add"} ${reaction.emoji} reaction`}
+                        type="button"
+                        onClick={() => void toggleReaction(comment, reaction)}
+                      >
+                        <span>{reaction.emoji}</span>
+                        {reaction.count > 0 ? <span className="ml-1 font-semibold">{reaction.count}</span> : null}
+                      </button>
+                    ))}
+                  <div className="relative">
                     <button
-                      className="rounded-md border border-[#d0d7de] bg-white px-3 py-1.5 text-sm font-semibold"
+                      aria-expanded={emojiPickerCommentId === comment.id}
+                      aria-label="Add emoji reaction"
+                      className="grid h-8 w-8 place-items-center rounded-full border border-[#d0d7de] bg-white text-[#59636e] hover:border-[#0969da] hover:bg-[#ddf4ff] hover:text-[#0969da] disabled:opacity-60"
+                      disabled={commentBusyId === comment.id}
+                      title="Add reaction"
                       type="button"
                       onClick={() => {
-                        setEditingCommentId(comment.id);
-                        setEditBody(comment.body);
-                        setEditAttachments(comment.attachments);
+                        setEmojiPickerCommentId(emojiPickerCommentId === comment.id ? null : comment.id);
+                        setEmojiSearch("");
                       }}
                     >
-                      Edit
+                      <SmilePlus aria-hidden="true" size={16} />
                     </button>
-                    <button
-                      className="rounded-md border border-[#cf222e] bg-white px-3 py-1.5 text-sm font-semibold text-[#cf222e]"
-                      type="button"
-                      onClick={() => setPendingDelete(comment)}
-                    >
-                      Delete
-                    </button>
-                    </>
-                  ) : null}
-                  <button
-                    aria-expanded={emojiPickerCommentId === comment.id}
-                    aria-label="Add emoji reaction"
-                    className="rounded-md border border-[#d0d7de] bg-white px-3 py-1.5 text-sm font-semibold hover:border-[#0969da] hover:text-[#0969da]"
-                    disabled={commentBusyId === comment.id}
-                    type="button"
-                    onClick={() => {
-                      setEmojiPickerCommentId(emojiPickerCommentId === comment.id ? null : comment.id);
-                      setEmojiSearch("");
-                    }}
-                  >
-                    Add reaction
-                  </button>
-                  {emojiPickerCommentId === comment.id ? (
-                    <div className="absolute bottom-full right-0 z-10 mb-2 grid w-72 gap-2 rounded-xl border border-[#d0d7de] bg-white p-3 shadow-lg">
-                      <input
-                        autoFocus
-                        className="w-full rounded-md border border-[#d0d7de] px-3 py-2 text-sm"
-                        placeholder="Search emoji"
-                        value={emojiSearch}
-                        onChange={(event) => setEmojiSearch(event.target.value)}
-                      />
-                      <div className="grid max-h-64 grid-cols-8 gap-1 overflow-y-auto pr-1">
-                        {filteredEmojiOptions.map((option) => {
-                          const existing = comment.reactions.find((reaction) => reaction.emoji === option.emoji);
-                          return (
-                            <button
-                              className={`grid h-8 w-8 place-items-center rounded-md text-lg hover:bg-[#f6f8fa] ${
-                                existing?.viewer_reacted ? "bg-[#ddf4ff] ring-1 ring-[#0969da]" : ""
-                              }`}
-                              key={option.emoji}
-                              title={option.label}
-                              type="button"
-                              onClick={() =>
-                                void toggleReaction(comment, {
-                                  count: existing?.count ?? 0,
-                                  emoji: option.emoji,
-                                  viewer_reacted: existing?.viewer_reacted ?? false,
-                                })
-                              }
-                            >
-                              {option.emoji}
-                            </button>
-                          );
-                        })}
+                    {emojiPickerCommentId === comment.id ? (
+                      <div className="absolute bottom-full left-0 z-10 mb-2 grid w-72 gap-2 rounded-xl border border-[#d0d7de] bg-white p-3 shadow-lg">
+                        <input
+                          autoFocus
+                          className="w-full rounded-md border border-[#d0d7de] px-3 py-2 text-sm"
+                          placeholder="Search emoji"
+                          value={emojiSearch}
+                          onChange={(event) => setEmojiSearch(event.target.value)}
+                        />
+                        <div className="grid max-h-64 grid-cols-8 gap-1 overflow-y-auto pr-1">
+                          {filteredEmojiOptions.map((option) => {
+                            const existing = comment.reactions.find((reaction) => reaction.emoji === option.emoji);
+                            return (
+                              <button
+                                className={`grid h-8 w-8 place-items-center rounded-md text-lg hover:bg-[#f6f8fa] ${
+                                  existing?.viewer_reacted ? "bg-[#ddf4ff] ring-1 ring-[#0969da]" : ""
+                                }`}
+                                key={option.emoji}
+                                title={option.label}
+                                type="button"
+                                onClick={() =>
+                                  void toggleReaction(comment, {
+                                    count: existing?.count ?? 0,
+                                    emoji: option.emoji,
+                                    viewer_reacted: existing?.viewer_reacted ?? false,
+                                  })
+                                }
+                              >
+                                {option.emoji}
+                              </button>
+                            );
+                          })}
+                        </div>
+                        {filteredEmojiOptions.length === 0 ? <p className="text-sm text-[#59636e]">No emoji found.</p> : null}
                       </div>
-                      {filteredEmojiOptions.length === 0 ? <p className="text-sm text-[#59636e]">No emoji found.</p> : null}
-                    </div>
-                  ) : null}
+                    ) : null}
+                  </div>
+                  </div>
+                  <div className="relative flex flex-wrap justify-end gap-2">
+                    {comment.viewer_can_update ? (
+                      <>
+                        <button
+                          className="rounded-md border border-[#d0d7de] bg-white px-3 py-1.5 text-sm font-semibold hover:bg-[#f6f8fa]"
+                          type="button"
+                          onClick={() => {
+                            setEditingCommentId(comment.id);
+                            setEditBody(comment.body);
+                            setEditAttachments(comment.attachments);
+                          }}
+                        >
+                          Edit
+                        </button>
+                        <button
+                          className="rounded-md border border-[#cf222e] bg-white px-3 py-1.5 text-sm font-semibold text-[#cf222e] hover:bg-[#fff8f8]"
+                          type="button"
+                          onClick={() => setPendingDelete(comment)}
+                        >
+                          Delete
+                        </button>
+                      </>
+                    ) : null}
+                  </div>
                 </div>
-              </div>
-            ) : null}
-          </article>
+              ) : null}
+            </article>
+          </div>
         ))
       )}
 
