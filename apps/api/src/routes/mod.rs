@@ -323,6 +323,10 @@ pub(crate) fn router(state: AppState) -> Router {
             "/{owner}/{repo_git}/git-upload-pack",
             post(gitlab_compat::smart_git_upload_pack),
         )
+        .route(
+            "/{owner}/{repo_git}/git-receive-pack",
+            post(gitlab_compat::smart_git_receive_pack),
+        )
         .route("/{owner}/{name}", get(repositories::get_repo))
         .route("/{owner}/{name}/fork", post(repositories::fork_repo))
         .route(

@@ -9,7 +9,11 @@ type RouteContext = {
 
 async function proxy(request: NextRequest, context: RouteContext) {
   const { path } = await context.params;
-  return proxyApiRequest(request, `/api/v4/${path.map(encodeURIComponent).join("/")}`);
+  const prefix = "/api/v4";
+  const proxiedPath = request.nextUrl.pathname.startsWith(`${prefix}/`)
+    ? request.nextUrl.pathname
+    : `${prefix}/${path.map(encodeURIComponent).join("/")}`;
+  return proxyApiRequest(request, proxiedPath);
 }
 
 export function GET(request: NextRequest, context: RouteContext) {
@@ -17,5 +21,17 @@ export function GET(request: NextRequest, context: RouteContext) {
 }
 
 export function POST(request: NextRequest, context: RouteContext) {
+  return proxy(request, context);
+}
+
+export function PUT(request: NextRequest, context: RouteContext) {
+  return proxy(request, context);
+}
+
+export function PATCH(request: NextRequest, context: RouteContext) {
+  return proxy(request, context);
+}
+
+export function DELETE(request: NextRequest, context: RouteContext) {
   return proxy(request, context);
 }

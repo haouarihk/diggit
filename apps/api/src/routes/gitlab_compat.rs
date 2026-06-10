@@ -349,6 +349,7 @@ pub(crate) async fn smart_git_info_refs(
         "info/refs",
         uri,
         Bytes::new(),
+        false,
     )
     .await
 }
@@ -368,6 +369,27 @@ pub(crate) async fn smart_git_upload_pack(
         "git-upload-pack",
         uri,
         body,
+        false,
+    )
+    .await
+}
+
+pub(crate) async fn smart_git_receive_pack(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((owner, repo_git)): Path<(String, String)>,
+    uri: Uri,
+    body: Bytes,
+) -> ApiResult<Response> {
+    smart_git_http(
+        state,
+        headers,
+        owner,
+        repo_git,
+        "git-receive-pack",
+        uri,
+        body,
+        true,
     )
     .await
 }
@@ -427,6 +449,7 @@ async fn smart_git_http(
     git_path: &str,
     uri: Uri,
     body: Bytes,
+    dispatch_push_webhooks: bool,
 ) -> ApiResult<Response> {
     let name = repo_git
         .strip_suffix(".git")
@@ -440,6 +463,11 @@ async fn smart_git_http(
     let repo = find_repo(&state.pool, &owner, &name).await?;
     ensure_oauth_repo_visible(&state, &auth, &repo).await?;
     ensure_repo_head(&repo).await?;
+    let before_tips = if dispatch_push_webhooks {
+        git_branch_tips(&repo).await.unwrap_or_default()
+    } else {
+        Vec::new()
+    };
 
     let mut command = Command::new("git");
     command
@@ -472,6 +500,23 @@ async fn smart_git_http(
         return Err(ApiError::BadRequest(
             String::from_utf8_lossy(&output.stderr).trim().to_string(),
         ));
+    }
+    if dispatch_push_webhooks {
+        let state = state.clone();
+        let auth = auth.user;
+        tokio::spawn(async move {
+            if let Err(error) =
+                record_successful_http_push(&state, &repo, &auth, &before_tips).await
+            {
+                tracing::warn!(%error, "failed to record HTTP push metadata");
+                return;
+            }
+            if let Err(error) =
+                dispatch_repository_webhooks(&state, &repo, &auth, &before_tips).await
+            {
+                tracing::warn!(%error, "failed to dispatch repository webhooks after HTTP push");
+            }
+        });
     }
     cgi_response(output.stdout)
 }

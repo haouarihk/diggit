@@ -736,6 +736,25 @@ pub(crate) async fn dispatch_repository_webhooks(
     Ok(())
 }
 
+pub(crate) async fn record_successful_http_push(
+    state: &AppState,
+    repo: &Repository,
+    auth: &AuthUser,
+    before_tips: &[GitBranchTip],
+) -> ApiResult<()> {
+    let before_shas = before_tips
+        .iter()
+        .map(|tip| tip.sha.clone())
+        .collect::<Vec<_>>();
+    record_pushed_commit_authors(state, repo, auth, &before_shas).await?;
+    sqlx::query("UPDATE repositories SET updated_at = now() WHERE id = $1")
+        .bind(repo.id)
+        .execute(&state.pool)
+        .await?;
+    invalidate_repo_cache(state, &repo.owner_handle, &repo.name).await;
+    Ok(())
+}
+
 pub(crate) async fn test_repository_webhook(
     state: &AppState,
     auth: &AuthUser,
