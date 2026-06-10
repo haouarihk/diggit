@@ -17,7 +17,7 @@ type MarkdownBlock =
   | { type: "paragraph"; text: string };
 
 export function MarkdownViewer({ content, fileName, className = "", sanitizedHtml, variant = "file" }: MarkdownViewerProps) {
-  const blocks = parseMarkdown(content);
+  const blocks = parseMarkdown(sanitizeMarkdownContent(content));
   const shell = variant === "comment" ? `grid gap-3 ${className}` : `rounded-b-md border border-t-0 border-[#d0d7de] bg-white p-5 ${className}`;
   const emptyLabel = variant === "comment" ? "Nothing to preview yet." : "This file is empty.";
 
@@ -44,6 +44,31 @@ export function MarkdownViewer({ content, fileName, className = "", sanitizedHtm
       )}
     </article>
   );
+}
+
+export function sanitizeMarkdownContent(content: string) {
+  const lines = content.replace(/\r\n/g, "\n").split("\n");
+  const sanitized: string[] = [];
+  let inFence = false;
+
+  for (const line of lines) {
+    if (line.trim().startsWith("```")) {
+      sanitized.push(line);
+      inFence = !inFence;
+      continue;
+    }
+
+    sanitized.push(inFence ? line : sanitizeMarkdownLine(line));
+  }
+
+  return sanitized.join("\n");
+}
+
+function sanitizeMarkdownLine(line: string) {
+  return line
+    .replace(/<!--.*?-->/g, "")
+    .replace(/<\/?(script|style|iframe|object|embed|svg|math)[^>]*>/gi, "")
+    .replace(/<\/?[A-Za-z][A-Za-z0-9:-]*(?:\s+[^<>]*)?>/g, "");
 }
 
 function parseMarkdown(content: string): MarkdownBlock[] {
