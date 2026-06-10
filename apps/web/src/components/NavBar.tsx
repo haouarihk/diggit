@@ -131,10 +131,8 @@ export function NavBar() {
   const homeServer = user?.home_server?.replace(/\/+$/, "");
   const profileHref = isFederated && homeServer ? `${homeServer}/users/${encodeURIComponent(user.username)}` : user ? `/users/${encodeURIComponent(user.username)}` : "#";
   const repositoriesHref = isFederated && homeServer ? `${homeServer}/users/${encodeURIComponent(user.username)}?tab=repositories` : user ? `/users/${encodeURIComponent(user.username)}?tab=repositories` : "#";
-  const settingsKeysHref = isFederated && homeServer ? `${homeServer}/settings/keys` : "/settings/keys";
+  const settingsHref = isFederated && homeServer ? `${homeServer}/settings` : "/settings";
   const runnersHref = isFederated && homeServer ? `${homeServer}/settings/runners` : "/settings/runners";
-  const oauthApplicationsHref = isFederated && homeServer ? `${homeServer}/settings/oauth/applications` : "/settings/oauth/applications";
-  const oauthTokensHref = isFederated && homeServer ? `${homeServer}/settings/oauth/tokens` : "/settings/oauth/tokens";
   const newRepositoryHref = isFederated && homeServer ? `${homeServer}/new/repository` : "/new/repository";
   const newOrganizationHref = isFederated && homeServer ? `${homeServer}/new/organization` : "/new/organization";
 
@@ -240,17 +238,8 @@ export function NavBar() {
                   Organizations
                 </Link>
                 <div className="border-t border-[#d8dee4] py-1">
-                  <Link className="block px-3 py-2 hover:bg-[#f6f8fa]" href={settingsKeysHref}>
-                    SSH keys
-                  </Link>
-                  <Link className="block px-3 py-2 hover:bg-[#f6f8fa]" href={runnersHref}>
-                    User runners
-                  </Link>
-                  <Link className="block px-3 py-2 hover:bg-[#f6f8fa]" href={oauthApplicationsHref}>
-                    OAuth applications
-                  </Link>
-                  <Link className="block px-3 py-2 hover:bg-[#f6f8fa]" href={oauthTokensHref}>
-                    OAuth tokens
+                  <Link className="block px-3 py-2 hover:bg-[#f6f8fa]" href={settingsHref}>
+                    Settings
                   </Link>
                 </div>
                 {user.is_admin ? (

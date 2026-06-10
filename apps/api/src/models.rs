@@ -358,6 +358,35 @@ pub(crate) struct IssueComment {
     pub(crate) body: String,
     pub(crate) activity_id: Option<String>,
     pub(crate) created_at: DateTime<Utc>,
+    pub(crate) updated_at: DateTime<Utc>,
+    pub(crate) deleted_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct CommentReactionResponse {
+    pub(crate) emoji: String,
+    pub(crate) count: i64,
+    pub(crate) viewer_reacted: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct CommentResponse {
+    pub(crate) id: Uuid,
+    pub(crate) repository_id: Option<Uuid>,
+    pub(crate) pull_request_id: Option<Uuid>,
+    pub(crate) issue_id: Option<Uuid>,
+    pub(crate) author_handle: String,
+    pub(crate) author_actor_url: Option<String>,
+    pub(crate) author_display_name: String,
+    pub(crate) author_avatar_url: Option<String>,
+    pub(crate) remote_server: Option<String>,
+    pub(crate) body: String,
+    pub(crate) activity_id: Option<String>,
+    pub(crate) reactions: Vec<CommentReactionResponse>,
+    pub(crate) viewer_can_update: bool,
+    pub(crate) created_at: DateTime<Utc>,
+    pub(crate) updated_at: DateTime<Utc>,
+    pub(crate) deleted_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -912,6 +941,16 @@ pub(crate) struct UpsertIssueLabelRequest {
 #[derive(Debug, Deserialize)]
 pub(crate) struct CreateIssueCommentRequest {
     pub(crate) body: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct UpdateCommentRequest {
+    pub(crate) body: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct CommentReactionRequest {
+    pub(crate) emoji: String,
 }
 
 #[derive(Debug, Deserialize)]

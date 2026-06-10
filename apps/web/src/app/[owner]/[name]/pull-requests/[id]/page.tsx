@@ -1,6 +1,6 @@
 import { PullRequestDetailPanel } from "@/components/PullRequestDetailPanel";
 import { RepoHeader, repoHref } from "@/components/RepoHeader";
-import { getPullRequest, getRepository, listPullRequests } from "@/lib/api";
+import { getPullRequest, getRepository, listPullRequestComments, listPullRequests, type PullRequestComment } from "@/lib/api";
 
 type Props = {
   params: Promise<{
@@ -16,10 +16,11 @@ export default async function PullRequestPage({ params }: Props) {
   const decodedName = decodeURIComponent(name);
   const decodedId = decodeURIComponent(id);
   const baseHref = repoHref(decodedOwner, decodedName);
-  const [repo, pullRequests, pullRequest] = await Promise.all([
+  const [repo, pullRequests, pullRequest, comments] = await Promise.all([
     getRepository(decodedOwner, decodedName),
     listPullRequests(decodedOwner, decodedName).catch(() => ({ data: [] })),
     getPullRequest(decodedOwner, decodedName, decodedId),
+    listPullRequestComments(decodedOwner, decodedName, decodedId, 1, 100).catch(() => emptyComments()),
   ]);
 
   return (
@@ -27,10 +28,18 @@ export default async function PullRequestPage({ params }: Props) {
       <RepoHeader activeTab="pull-requests" pullRequestsCount={pullRequests.data.length} repo={repo} />
       <PullRequestDetailPanel
         baseHref={baseHref}
+        comments={comments.data}
         name={decodedName}
         owner={decodedOwner}
         pullRequest={pullRequest}
       />
     </div>
   );
+}
+
+function emptyComments() {
+  return {
+    data: [] as PullRequestComment[],
+    pagination: { page: 1, limit: 100, total: 0, totalPages: 0 },
+  };
 }

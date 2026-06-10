@@ -284,13 +284,14 @@ function unavailableCompare(error: unknown): RepositoryCompare {
 
 type PullRequestCreateFormProps = {
   baseHref: string;
+  defaultTitle: string;
   name: string;
   owner: string;
   selection: PullRequestSourceSelection;
   targetBranch: string;
 };
 
-export function PullRequestCreateForm({ baseHref, name, owner, selection, targetBranch }: PullRequestCreateFormProps) {
+export function PullRequestCreateForm({ baseHref, defaultTitle, name, owner, selection, targetBranch }: PullRequestCreateFormProps) {
   const router = useRouter();
   const [message, setMessage] = useState("");
 
@@ -330,7 +331,12 @@ export function PullRequestCreateForm({ baseHref, name, owner, selection, target
       </div>
       <label className="grid gap-1.5">
         Title
-        <input className="w-full rounded-lg border border-[#d0d7de] bg-white px-3 py-2 text-[#1f2328]" name="title" required />
+        <input
+          className="w-full rounded-lg border border-[#d0d7de] bg-white px-3 py-2 text-[#1f2328]"
+          defaultValue={defaultTitle}
+          name="title"
+          required
+        />
       </label>
       <label className="grid gap-1.5">
         Body

@@ -289,6 +289,21 @@ pub(crate) fn router(state: AppState) -> Router {
             post(repositories::merge_pull_request),
         )
         .route(
+            "/repos/{owner}/{name}/pull-requests/{id}/comments",
+            get(repositories::list_pull_request_comments)
+                .post(repositories::create_pull_request_comment),
+        )
+        .route(
+            "/repos/{owner}/{name}/pull-requests/{id}/comments/{comment_id}",
+            patch(repositories::update_pull_request_comment)
+                .delete(repositories::delete_pull_request_comment),
+        )
+        .route(
+            "/repos/{owner}/{name}/pull-requests/{id}/comments/{comment_id}/reactions",
+            post(repositories::create_pull_request_comment_reaction)
+                .delete(repositories::delete_pull_request_comment_reaction),
+        )
+        .route(
             "/repos/{owner}/{name}/issue-labels",
             get(repositories::list_issue_labels).post(repositories::upsert_issue_label),
         )
@@ -350,6 +365,21 @@ pub(crate) fn router(state: AppState) -> Router {
         .route(
             "/{owner}/{name}/pull-requests/{id}/merge",
             post(repositories::merge_pull_request),
+        )
+        .route(
+            "/{owner}/{name}/pull-requests/{id}/comments",
+            get(repositories::list_pull_request_comments)
+                .post(repositories::create_pull_request_comment),
+        )
+        .route(
+            "/{owner}/{name}/pull-requests/{id}/comments/{comment_id}",
+            patch(repositories::update_pull_request_comment)
+                .delete(repositories::delete_pull_request_comment),
+        )
+        .route(
+            "/{owner}/{name}/pull-requests/{id}/comments/{comment_id}/reactions",
+            post(repositories::create_pull_request_comment_reaction)
+                .delete(repositories::delete_pull_request_comment_reaction),
         )
         .route(
             "/{owner}/{name}/issues",

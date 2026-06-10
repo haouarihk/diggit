@@ -1,6 +1,6 @@
 import { PullRequestCreateForm } from "@/components/PullRequestFlow";
 import { RepoHeader, repoHref } from "@/components/RepoHeader";
-import { getRepository, listPullRequests } from "@/lib/api";
+import { comparePullRequestBranches, getRepository, listPullRequests, type RepositoryCompare } from "@/lib/api";
 import { decodePullRequestSource } from "@/lib/pull-request-flow";
 import Link from "next/link";
 
@@ -23,6 +23,16 @@ export default async function CreatePullRequestPage({ params, searchParams }: Pr
     listPullRequests(decodedOwner, decodedName).catch(() => ({ data: [] })),
   ]);
   const selection = decodePullRequestSource(from);
+  const compare =
+    selection && targetBranch
+      ? await comparePullRequestBranches(decodedOwner, decodedName, {
+          source_branch: selection.branch,
+          source_repo_url: selection.url,
+          source_repository_id: selection.repositoryId,
+          target_branch: targetBranch,
+        }).catch(() => null)
+      : null;
+  const defaultTitle = selection && targetBranch ? defaultPullRequestTitle(selection.branch, targetBranch, compare) : "";
 
   return (
     <div className="grid gap-6">
@@ -37,6 +47,7 @@ export default async function CreatePullRequestPage({ params, searchParams }: Pr
         {selection && targetBranch ? (
           <PullRequestCreateForm
             baseHref={baseHref}
+            defaultTitle={defaultTitle}
             name={decodedName}
             owner={decodedOwner}
             selection={selection}
@@ -54,4 +65,15 @@ export default async function CreatePullRequestPage({ params, searchParams }: Pr
       </section>
     </div>
   );
+}
+
+function defaultPullRequestTitle(sourceBranch: string, targetBranch: string, compare: RepositoryCompare | null) {
+  if (compare?.ahead_commits.length === 1) {
+    return firstLine(compare.ahead_commits[0]?.message ?? "");
+  }
+  return `Merge from ${sourceBranch} to ${targetBranch}`;
+}
+
+function firstLine(value: string) {
+  return value.split(/\r?\n/)[0]?.trim() || value.trim();
 }

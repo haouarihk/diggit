@@ -194,6 +194,19 @@ export type IssueComment = {
   body: string;
   activity_id: string | null;
   created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+};
+
+export type CommentReaction = {
+  emoji: string;
+  count: number;
+  viewer_reacted: boolean;
+};
+
+export type PullRequestComment = IssueComment & {
+  reactions: CommentReaction[];
+  viewer_can_update: boolean;
 };
 
 export type RepositoryCommit = {
@@ -594,6 +607,13 @@ export function listRepositoryIssueComments(owner: string, name: string, number:
   const searchParams = new URLSearchParams({ page: String(page), limit: String(limit) });
   return apiFetch<PaginatedCollection<IssueComment>>(
     `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/issues/${number}/comments?${searchParams.toString()}`,
+  );
+}
+
+export function listPullRequestComments(owner: string, name: string, id: string, page = 1, limit = 100) {
+  const searchParams = new URLSearchParams({ page: String(page), limit: String(limit) });
+  return apiFetch<PaginatedCollection<PullRequestComment>>(
+    `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pull-requests/${encodeURIComponent(id)}/comments?${searchParams.toString()}`,
   );
 }
 

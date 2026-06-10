@@ -18,6 +18,8 @@ use crate::{
     state::AppState,
 };
 
+const FIXED_COMMENT_REACTIONS: [&str; 8] = ["👍", "👎", "😄", "🎉", "😕", "❤️", "🚀", "👀"];
+
 pub(crate) async fn create_repo(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1656,12 +1658,411 @@ pub(crate) async fn create_issue_comment(
     Ok(Json(comment))
 }
 
+pub(crate) async fn list_pull_request_comments(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((owner, name, id)): Path<(String, String, Uuid)>,
+    Query(query): Query<IssueListQuery>,
+) -> ApiResult<Json<PaginatedResponse<CommentResponse>>> {
+    let auth = optional_repo_action_auth(&state, &headers)?;
+    let repo = find_repo(&state.pool, &owner, &name).await?;
+    ensure_repo_visible(
+        &state.pool,
+        local_auth_from_repo_action(auth.as_ref()),
+        &repo,
+    )
+    .await?;
+    let pr = find_pull_request(&state, repo.id, id).await?;
+    let viewer_actor_url = auth
+        .as_ref()
+        .map(|auth| repo_action_actor_url(&state, auth));
+    let (page, limit, offset) = pagination_input(query.page, query.limit);
+    let total: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM comments WHERE pull_request_id = $1")
+        .bind(pr.id)
+        .fetch_one(&state.pool)
+        .await?;
+    let comments = sqlx::query_as::<_, IssueComment>(
+        r#"
+        SELECT *
+        FROM comments
+        WHERE pull_request_id = $1
+        ORDER BY created_at ASC
+        LIMIT $2 OFFSET $3
+        "#,
+    )
+    .bind(pr.id)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(&state.pool)
+    .await?;
+    let mut data = Vec::with_capacity(comments.len());
+    for comment in comments {
+        data.push(comment_response(&state, comment, viewer_actor_url.as_deref()).await?);
+    }
+
+    Ok(Json(PaginatedResponse {
+        data,
+        pagination: pagination(page, limit, total.0),
+    }))
+}
+
+pub(crate) async fn create_pull_request_comment(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((owner, name, id)): Path<(String, String, Uuid)>,
+    Json(input): Json<CreateIssueCommentRequest>,
+) -> ApiResult<Json<CommentResponse>> {
+    let auth = require_repo_action_auth(&state, &headers, "repo:comment")?;
+    let repo = find_repo(&state.pool, &owner, &name).await?;
+    ensure_repo_action_visible(&state.pool, &auth, &repo).await?;
+    let pr = find_pull_request(&state, repo.id, id).await?;
+    let body = validate_comment_body(&input.body)?;
+    let author = issue_author(&state, &auth).await?;
+    let activity_id = format!(
+        "{}/activities/{}",
+        state.config.app_base_url.trim_end_matches('/'),
+        Uuid::now_v7()
+    );
+
+    let comment = sqlx::query_as::<_, IssueComment>(
+        r#"
+        INSERT INTO comments
+          (id, repository_id, pull_request_id, author_handle, author_actor_url,
+           author_display_name, author_avatar_url, remote_server, body, activity_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        RETURNING *
+        "#,
+    )
+    .bind(Uuid::now_v7())
+    .bind(repo.id)
+    .bind(pr.id)
+    .bind(author.handle)
+    .bind(author.actor_url)
+    .bind(author.display_name)
+    .bind(author.avatar_url)
+    .bind(author.remote_server)
+    .bind(body)
+    .bind(&activity_id)
+    .fetch_one(&state.pool)
+    .await?;
+    let viewer_actor_url = repo_action_actor_url(&state, &auth);
+
+    Ok(Json(
+        comment_response(&state, comment, Some(&viewer_actor_url)).await?,
+    ))
+}
+
+pub(crate) async fn update_pull_request_comment(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((owner, name, id, comment_id)): Path<(String, String, Uuid, Uuid)>,
+    Json(input): Json<UpdateCommentRequest>,
+) -> ApiResult<Json<CommentResponse>> {
+    let auth = require_repo_action_auth(&state, &headers, "repo:comment")?;
+    let repo = find_repo(&state.pool, &owner, &name).await?;
+    ensure_repo_action_visible(&state.pool, &auth, &repo).await?;
+    let pr = find_pull_request(&state, repo.id, id).await?;
+    let current = find_pull_request_comment(&state, repo.id, pr.id, comment_id).await?;
+    ensure_comment_author(&state, &current, &auth)?;
+    if current.deleted_at.is_some() {
+        return Err(ApiError::BadRequest(
+            "deleted comments cannot be edited".to_string(),
+        ));
+    }
+    let body = validate_comment_body(&input.body)?;
+    let comment = sqlx::query_as::<_, IssueComment>(
+        r#"
+        UPDATE comments
+        SET body = $4, updated_at = now()
+        WHERE id = $1 AND repository_id = $2 AND pull_request_id = $3 AND deleted_at IS NULL
+        RETURNING *
+        "#,
+    )
+    .bind(comment_id)
+    .bind(repo.id)
+    .bind(pr.id)
+    .bind(body)
+    .fetch_one(&state.pool)
+    .await?;
+    let viewer_actor_url = repo_action_actor_url(&state, &auth);
+
+    Ok(Json(
+        comment_response(&state, comment, Some(&viewer_actor_url)).await?,
+    ))
+}
+
+pub(crate) async fn delete_pull_request_comment(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((owner, name, id, comment_id)): Path<(String, String, Uuid, Uuid)>,
+) -> ApiResult<Json<CommentResponse>> {
+    let auth = require_repo_action_auth(&state, &headers, "repo:comment")?;
+    let repo = find_repo(&state.pool, &owner, &name).await?;
+    ensure_repo_action_visible(&state.pool, &auth, &repo).await?;
+    let pr = find_pull_request(&state, repo.id, id).await?;
+    let current = find_pull_request_comment(&state, repo.id, pr.id, comment_id).await?;
+    ensure_comment_author(&state, &current, &auth)?;
+    sqlx::query("DELETE FROM comment_reactions WHERE comment_id = $1")
+        .bind(comment_id)
+        .execute(&state.pool)
+        .await?;
+    let comment = sqlx::query_as::<_, IssueComment>(
+        r#"
+        UPDATE comments
+        SET body = '', deleted_at = COALESCE(deleted_at, now()), updated_at = now()
+        WHERE id = $1 AND repository_id = $2 AND pull_request_id = $3
+        RETURNING *
+        "#,
+    )
+    .bind(comment_id)
+    .bind(repo.id)
+    .bind(pr.id)
+    .fetch_one(&state.pool)
+    .await?;
+    let viewer_actor_url = repo_action_actor_url(&state, &auth);
+
+    Ok(Json(
+        comment_response(&state, comment, Some(&viewer_actor_url)).await?,
+    ))
+}
+
+pub(crate) async fn create_pull_request_comment_reaction(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((owner, name, id, comment_id)): Path<(String, String, Uuid, Uuid)>,
+    Json(input): Json<CommentReactionRequest>,
+) -> ApiResult<Json<CommentResponse>> {
+    let auth = require_repo_action_auth(&state, &headers, "repo:comment")?;
+    let repo = find_repo(&state.pool, &owner, &name).await?;
+    ensure_repo_action_visible(&state.pool, &auth, &repo).await?;
+    let pr = find_pull_request(&state, repo.id, id).await?;
+    let comment = find_pull_request_comment(&state, repo.id, pr.id, comment_id).await?;
+    if comment.deleted_at.is_some() {
+        return Err(ApiError::BadRequest(
+            "deleted comments cannot receive reactions".to_string(),
+        ));
+    }
+    let emoji = validate_comment_reaction(&input.emoji)?;
+    let actor = issue_author(&state, &auth).await?;
+    let actor_url = actor
+        .actor_url
+        .clone()
+        .ok_or_else(|| ApiError::Unauthorized)?;
+    sqlx::query(
+        r#"
+        INSERT INTO comment_reactions (comment_id, emoji, actor_url, actor_display_name, remote_server)
+        VALUES ($1, $2, $3, $4, $5)
+        ON CONFLICT (comment_id, actor_url, emoji) DO NOTHING
+        "#,
+    )
+    .bind(comment_id)
+    .bind(emoji)
+    .bind(&actor_url)
+    .bind(actor.display_name)
+    .bind(actor.remote_server)
+    .execute(&state.pool)
+    .await?;
+
+    Ok(Json(
+        comment_response(&state, comment, Some(&actor_url)).await?,
+    ))
+}
+
+pub(crate) async fn delete_pull_request_comment_reaction(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((owner, name, id, comment_id)): Path<(String, String, Uuid, Uuid)>,
+    Json(input): Json<CommentReactionRequest>,
+) -> ApiResult<Json<CommentResponse>> {
+    let auth = require_repo_action_auth(&state, &headers, "repo:comment")?;
+    let repo = find_repo(&state.pool, &owner, &name).await?;
+    ensure_repo_action_visible(&state.pool, &auth, &repo).await?;
+    let pr = find_pull_request(&state, repo.id, id).await?;
+    let comment = find_pull_request_comment(&state, repo.id, pr.id, comment_id).await?;
+    let emoji = validate_comment_reaction(&input.emoji)?;
+    let actor_url = repo_action_actor_url(&state, &auth);
+    sqlx::query(
+        "DELETE FROM comment_reactions WHERE comment_id = $1 AND emoji = $2 AND actor_url = $3",
+    )
+    .bind(comment_id)
+    .bind(emoji)
+    .bind(&actor_url)
+    .execute(&state.pool)
+    .await?;
+
+    Ok(Json(
+        comment_response(&state, comment, Some(&actor_url)).await?,
+    ))
+}
+
 struct IssueAuthor {
     handle: String,
     actor_url: Option<String>,
     display_name: String,
     avatar_url: Option<String>,
     remote_server: Option<String>,
+}
+
+#[derive(sqlx::FromRow)]
+struct CommentReactionAggregate {
+    emoji: String,
+    count: i64,
+    viewer_reacted: bool,
+}
+
+fn optional_repo_action_auth(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> ApiResult<Option<RepoActionAuth>> {
+    if bearer_token(headers).is_none() {
+        return Ok(None);
+    }
+    Ok(Some(match require_current_user(state, headers)? {
+        Ok(auth) => RepoActionAuth::Local(auth),
+        Err(auth) => RepoActionAuth::Federated(auth),
+    }))
+}
+
+fn local_auth_from_repo_action(auth: Option<&RepoActionAuth>) -> Option<&AuthUser> {
+    match auth {
+        Some(RepoActionAuth::Local(auth)) => Some(auth),
+        _ => None,
+    }
+}
+
+fn repo_action_actor_url(state: &AppState, auth: &RepoActionAuth) -> String {
+    match auth {
+        RepoActionAuth::Local(auth) => state.config.actor_url(&auth.username),
+        RepoActionAuth::Federated(auth) => auth.actor_url.clone(),
+    }
+}
+
+fn ensure_comment_author(
+    state: &AppState,
+    comment: &IssueComment,
+    auth: &RepoActionAuth,
+) -> ApiResult<()> {
+    let actor_url = repo_action_actor_url(state, auth);
+    if comment.author_actor_url.as_deref() == Some(actor_url.as_str()) {
+        return Ok(());
+    }
+    if let RepoActionAuth::Local(auth) = auth {
+        if comment.author_actor_url.is_none()
+            && comment.remote_server.is_none()
+            && comment.author_handle == auth.username
+        {
+            return Ok(());
+        }
+    }
+    Err(ApiError::Unauthorized)
+}
+
+async fn find_pull_request_comment(
+    state: &AppState,
+    repository_id: Uuid,
+    pull_request_id: Uuid,
+    comment_id: Uuid,
+) -> ApiResult<IssueComment> {
+    Ok(sqlx::query_as::<_, IssueComment>(
+        r#"
+        SELECT *
+        FROM comments
+        WHERE id = $1 AND repository_id = $2 AND pull_request_id = $3
+        "#,
+    )
+    .bind(comment_id)
+    .bind(repository_id)
+    .bind(pull_request_id)
+    .fetch_one(&state.pool)
+    .await?)
+}
+
+async fn comment_response(
+    state: &AppState,
+    comment: IssueComment,
+    viewer_actor_url: Option<&str>,
+) -> ApiResult<CommentResponse> {
+    let reactions = if comment.deleted_at.is_some() {
+        Vec::new()
+    } else {
+        comment_reactions(state, comment.id, viewer_actor_url).await?
+    };
+    let viewer_can_update = comment.deleted_at.is_none()
+        && viewer_actor_url
+            .and_then(|actor| {
+                comment
+                    .author_actor_url
+                    .as_deref()
+                    .map(|author| author == actor)
+            })
+            .unwrap_or(false);
+    let body = if comment.deleted_at.is_some() {
+        String::new()
+    } else {
+        comment.body
+    };
+
+    Ok(CommentResponse {
+        id: comment.id,
+        repository_id: comment.repository_id,
+        pull_request_id: comment.pull_request_id,
+        issue_id: comment.issue_id,
+        author_handle: comment.author_handle,
+        author_actor_url: comment.author_actor_url,
+        author_display_name: comment.author_display_name,
+        author_avatar_url: comment.author_avatar_url,
+        remote_server: comment.remote_server,
+        body,
+        activity_id: comment.activity_id,
+        reactions,
+        viewer_can_update,
+        created_at: comment.created_at,
+        updated_at: comment.updated_at,
+        deleted_at: comment.deleted_at,
+    })
+}
+
+async fn comment_reactions(
+    state: &AppState,
+    comment_id: Uuid,
+    viewer_actor_url: Option<&str>,
+) -> ApiResult<Vec<CommentReactionResponse>> {
+    let viewer_actor_url = viewer_actor_url.unwrap_or("");
+    let aggregates = sqlx::query_as::<_, CommentReactionAggregate>(
+        r#"
+        SELECT emoji,
+               COUNT(*)::BIGINT AS count,
+               COALESCE(BOOL_OR(actor_url = $2), false) AS viewer_reacted
+        FROM comment_reactions
+        WHERE comment_id = $1
+        GROUP BY emoji
+        "#,
+    )
+    .bind(comment_id)
+    .bind(viewer_actor_url)
+    .fetch_all(&state.pool)
+    .await?;
+
+    Ok(FIXED_COMMENT_REACTIONS
+        .iter()
+        .map(|emoji| {
+            let aggregate = aggregates.iter().find(|item| item.emoji == *emoji);
+            CommentReactionResponse {
+                emoji: (*emoji).to_string(),
+                count: aggregate.map(|item| item.count).unwrap_or(0),
+                viewer_reacted: aggregate.map(|item| item.viewer_reacted).unwrap_or(false),
+            }
+        })
+        .collect())
+}
+
+fn validate_comment_reaction(emoji: &str) -> ApiResult<&'static str> {
+    let emoji = emoji.trim();
+    FIXED_COMMENT_REACTIONS
+        .iter()
+        .copied()
+        .find(|allowed| *allowed == emoji)
+        .ok_or_else(|| ApiError::BadRequest("unsupported reaction emoji".to_string()))
 }
 
 async fn validate_default_branch(repo: &Repository, branch: &str) -> ApiResult<()> {
