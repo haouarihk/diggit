@@ -4,6 +4,7 @@ type MarkdownViewerProps = {
   content: string;
   fileName?: string;
   className?: string;
+  sanitizedHtml?: string;
   variant?: "file" | "comment";
 };
 
@@ -15,7 +16,7 @@ type MarkdownBlock =
   | { type: "list"; items: string[] }
   | { type: "paragraph"; text: string };
 
-export function MarkdownViewer({ content, fileName, className = "", variant = "file" }: MarkdownViewerProps) {
+export function MarkdownViewer({ content, fileName, className = "", sanitizedHtml, variant = "file" }: MarkdownViewerProps) {
   const blocks = parseMarkdown(content);
   const shell = variant === "comment" ? `grid gap-3 ${className}` : `rounded-b-md border border-t-0 border-[#d0d7de] bg-white p-5 ${className}`;
   const emptyLabel = variant === "comment" ? "Nothing to preview yet." : "This file is empty.";
@@ -29,7 +30,12 @@ export function MarkdownViewer({ content, fileName, className = "", variant = "f
         </div>
       ) : null}
 
-      {blocks.length === 0 ? (
+      {sanitizedHtml ? (
+        <div
+          className="grid gap-3 text-[#1f2328] [&_a]:font-medium [&_a]:text-[#0969da] [&_a]:hover:underline [&_blockquote]:border-l-4 [&_blockquote]:border-[#d0d7de] [&_blockquote]:pl-4 [&_blockquote]:text-[#59636e] [&_code]:rounded [&_code]:bg-[#f6f8fa] [&_code]:px-1.5 [&_code]:py-0.5 [&_img]:max-h-[420px] [&_img]:max-w-full [&_img]:rounded-md [&_img]:border [&_img]:border-[#d0d7de] [&_li]:ml-5 [&_pre]:overflow-x-auto [&_pre]:rounded-md [&_pre]:bg-[#0d1117] [&_pre]:p-4 [&_pre]:text-[#e6edf3] [&_ul]:list-disc"
+          dangerouslySetInnerHTML={{ __html: sanitizedHtml }}
+        />
+      ) : blocks.length === 0 ? (
         <p className="text-[#59636e]">{emptyLabel}</p>
       ) : (
         <div className={`${variant === "comment" ? "grid gap-3" : "grid gap-4"} text-[#1f2328]`}>

@@ -8,6 +8,7 @@ use axum::{
     },
     response::{IntoResponse, Response},
 };
+use pulldown_cmark::{Options as MarkdownOptions, Parser as MarkdownParser, html};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use sqlx::Row;
@@ -22,7 +23,13 @@ use crate::{
     state::AppState,
 };
 
-const FIXED_COMMENT_REACTIONS: [&str; 8] = ["👍", "👎", "😄", "🎉", "😕", "❤️", "🚀", "👀"];
+const FIXED_COMMENT_REACTIONS: [&str; 72] = [
+    "👍", "👎", "👌", "👏", "🙌", "🙏", "🤝", "💪", "👀", "🧠", "💅", "😄", "😁", "😂", "🤣", "😊",
+    "😍", "🥰", "😎", "🤔", "😕", "😢", "😭", "😡", "🤯", "😱", "🥳", "🎉", "✨", "🔥", "💯", "✅",
+    "❌", "⚠️", "🚀", "🐛", "🛠️", "📌", "📎", "📝", "📚", "🔍", "💡", "💬", "❤️", "🧡", "💛", "💚",
+    "💙", "💜", "🖤", "🤍", "⭐", "🌟", "🏆", "🍕", "☕", "🍻", "🌈", "🎯", "⏳", "⌛", "🔒", "🔓",
+    "📦", "🧪", "🧹", "🔧", "🎨", "⚡", "🌍", "📣",
+];
 const MAX_COMMENT_ATTACHMENT_BYTES: usize = 10 * 1024 * 1024;
 
 pub(crate) async fn create_repo(
@@ -2338,6 +2345,7 @@ async fn comment_response(
     } else {
         comment.body
     };
+    let body_html = sanitize_markdown_html(&body);
     let attachments = if comment.deleted_at.is_some() {
         Vec::new()
     } else {
@@ -2355,6 +2363,7 @@ async fn comment_response(
         author_avatar_url: comment.author_avatar_url,
         remote_server: comment.remote_server,
         body,
+        body_html,
         activity_id: comment.activity_id,
         reactions,
         attachments,
@@ -2518,15 +2527,13 @@ async fn comment_reactions(
     .fetch_all(&state.pool)
     .await?;
 
-    Ok(FIXED_COMMENT_REACTIONS
-        .iter()
-        .map(|emoji| {
-            let aggregate = aggregates.iter().find(|item| item.emoji == *emoji);
-            CommentReactionResponse {
-                emoji: (*emoji).to_string(),
-                count: aggregate.map(|item| item.count).unwrap_or(0),
-                viewer_reacted: aggregate.map(|item| item.viewer_reacted).unwrap_or(false),
-            }
+    Ok(aggregates
+        .into_iter()
+        .filter(|item| item.count > 0)
+        .map(|item| CommentReactionResponse {
+            emoji: item.emoji,
+            count: item.count,
+            viewer_reacted: item.viewer_reacted,
         })
         .collect())
 }
@@ -2538,6 +2545,18 @@ fn validate_comment_reaction(emoji: &str) -> ApiResult<&'static str> {
         .copied()
         .find(|allowed| *allowed == emoji)
         .ok_or_else(|| ApiError::BadRequest("unsupported reaction emoji".to_string()))
+}
+
+fn sanitize_markdown_html(markdown: &str) -> String {
+    let mut options = MarkdownOptions::empty();
+    options.insert(MarkdownOptions::ENABLE_STRIKETHROUGH);
+    options.insert(MarkdownOptions::ENABLE_TABLES);
+    options.insert(MarkdownOptions::ENABLE_TASKLISTS);
+
+    let parser = MarkdownParser::new_ext(markdown, options);
+    let mut html_output = String::new();
+    html::push_html(&mut html_output, parser);
+    ammonia::clean(&html_output)
 }
 
 fn comment_attachment_response(

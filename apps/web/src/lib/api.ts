@@ -192,6 +192,7 @@ export type IssueComment = {
   author_avatar_url: string | null;
   remote_server: string | null;
   body: string;
+  body_html: string;
   activity_id: string | null;
   reactions: CommentReaction[];
   attachments: CommentAttachment[];

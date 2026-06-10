@@ -411,6 +411,7 @@ pub(crate) struct CommentResponse {
     pub(crate) author_avatar_url: Option<String>,
     pub(crate) remote_server: Option<String>,
     pub(crate) body: String,
+    pub(crate) body_html: String,
     pub(crate) activity_id: Option<String>,
     pub(crate) reactions: Vec<CommentReactionResponse>,
     pub(crate) attachments: Vec<CommentAttachmentResponse>,
