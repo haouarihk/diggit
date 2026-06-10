@@ -1243,6 +1243,8 @@ async fn gitlab_push_payload(
 ) -> ApiResult<Value> {
     let (branch, before, after) = change;
     let project_id = ensure_gitlab_project_id(state, repo.id).await?;
+    let commits = gitlab_push_commits(repo, before, after).await?;
+    let total_commits_count = commits.len();
     Ok(json!({
         "object_kind": "push",
         "event_name": "push",
@@ -1272,9 +1274,96 @@ async fn gitlab_push_payload(
             "git_ssh_url": repository_ssh_url(&state.config, repo),
             "visibility_level": if repo.visibility == "private" { 10 } else { 20 }
         },
-        "commits": [],
-        "total_commits_count": 0
+        "commits": commits,
+        "total_commits_count": total_commits_count
     }))
+}
+
+async fn gitlab_push_commits(
+    repo: &Repository,
+    before: &str,
+    after: &str,
+) -> ApiResult<Vec<Value>> {
+    if after == zero_sha() {
+        return Ok(Vec::new());
+    }
+
+    let range = if before == zero_sha() {
+        after.to_string()
+    } else {
+        format!("{before}..{after}")
+    };
+    let output = try_run_git_command(
+        repo,
+        &[
+            "log".to_string(),
+            "--max-count=20".to_string(),
+            "--reverse".to_string(),
+            "--format=%H%x1f%s%x1f%cI%x1f%an%x1f%ae".to_string(),
+            range,
+        ],
+    )
+    .await?
+    .unwrap_or_default();
+
+    let mut commits = Vec::new();
+    for line in output.lines() {
+        let Some(commit) = parse_gitlab_push_commit(repo, line).await? else {
+            continue;
+        };
+        commits.push(commit);
+    }
+    Ok(commits)
+}
+
+async fn parse_gitlab_push_commit(repo: &Repository, line: &str) -> ApiResult<Option<Value>> {
+    let mut parts = line.split('\x1f');
+    let Some(id) = parts.next().map(str::trim).filter(|id| !id.is_empty()) else {
+        return Ok(None);
+    };
+    let message = parts.next().unwrap_or_default();
+    let timestamp = parts.next().unwrap_or_default();
+    let author_name = parts.next().unwrap_or("Unknown author");
+    let author_email = parts.next().unwrap_or_default();
+    let modified = gitlab_commit_changed_paths(repo, id).await?;
+
+    Ok(Some(json!({
+        "id": id,
+        "message": message,
+        "timestamp": timestamp,
+        "url": Value::Null,
+        "author": {
+            "name": author_name,
+            "email": author_email
+        },
+        "added": [],
+        "modified": modified,
+        "removed": []
+    })))
+}
+
+async fn gitlab_commit_changed_paths(
+    repo: &Repository,
+    commit_sha: &str,
+) -> ApiResult<Vec<String>> {
+    let output = try_run_git_command(
+        repo,
+        &[
+            "diff-tree".to_string(),
+            "--no-commit-id".to_string(),
+            "--name-only".to_string(),
+            "-r".to_string(),
+            commit_sha.to_string(),
+        ],
+    )
+    .await?
+    .unwrap_or_default();
+    Ok(output
+        .lines()
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+        .map(str::to_string)
+        .collect())
 }
 
 async fn gitlab_project_payload(state: &AppState, repo: &Repository) -> ApiResult<Value> {
