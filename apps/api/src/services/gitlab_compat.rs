@@ -4,7 +4,7 @@ use bcrypt::{DEFAULT_COST, hash, verify};
 const OAUTH_ACCESS_TOKEN_TTL_HOURS: i64 = 2;
 const OAUTH_CODE_TTL_MINUTES: i64 = 10;
 const ALLOWED_OAUTH_SCOPES: &[&str] = &["api", "read_user", "read_repository"];
-const WEBHOOK_DELIVERY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+const WEBHOOK_DELIVERY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
 #[derive(Debug, Clone)]
 pub(crate) struct OAuthTokenAuth {
@@ -560,11 +560,9 @@ pub(crate) async fn create_gitlab_project_hook(
     ensure_repo_admin(&state.pool, &auth.user, repo).await?;
     let url = validate_remote_url(&input.url)?.to_string();
     let _enable_ssl_verification = input.enable_ssl_verification.unwrap_or(true);
-    let _branch_filter_strategy = input
-        .branch_filter_strategy
-        .as_deref()
-        .unwrap_or("wildcard");
-    let _push_events_branch_filter = input.push_events_branch_filter.as_deref();
+    let branch_filter_strategy =
+        normalize_gitlab_branch_filter_strategy(input.branch_filter_strategy);
+    let push_events_branch_filter = normalize_gitlab_branch_filter(input.push_events_branch_filter);
     let events = if input.push_events.unwrap_or(true) {
         vec!["push".to_string()]
     } else {
@@ -586,6 +584,8 @@ pub(crate) async fn create_gitlab_project_hook(
             SET secret = $3,
                 events = $4,
                 active = $5,
+                push_events_branch_filter = $6,
+                branch_filter_strategy = $7,
                 updated_at = now()
             WHERE id = $1 AND repository_id = $2
             RETURNING *
@@ -596,13 +596,16 @@ pub(crate) async fn create_gitlab_project_hook(
         .bind(secret)
         .bind(events)
         .bind(active)
+        .bind(&push_events_branch_filter)
+        .bind(&branch_filter_strategy)
         .fetch_one(&state.pool)
         .await?
     } else {
         sqlx::query_as::<_, RepositoryWebhook>(
             r#"
-            INSERT INTO repository_webhooks (id, repository_id, url, secret, events, active)
-            VALUES ($1, $2, $3, $4, $5, $6)
+            INSERT INTO repository_webhooks
+              (id, repository_id, url, secret, events, active, push_events_branch_filter, branch_filter_strategy)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
             RETURNING *
             "#,
         )
@@ -612,6 +615,8 @@ pub(crate) async fn create_gitlab_project_hook(
         .bind(secret)
         .bind(events)
         .bind(active)
+        .bind(&push_events_branch_filter)
+        .bind(&branch_filter_strategy)
         .fetch_one(&state.pool)
         .await?
     };
@@ -634,6 +639,9 @@ pub(crate) async fn update_gitlab_project_hook(
     } else {
         Vec::new()
     };
+    let branch_filter_strategy =
+        normalize_gitlab_branch_filter_strategy(input.branch_filter_strategy);
+    let push_events_branch_filter = normalize_gitlab_branch_filter(input.push_events_branch_filter);
     let webhook = sqlx::query_as::<_, RepositoryWebhook>(
         r#"
         UPDATE repository_webhooks
@@ -641,6 +649,8 @@ pub(crate) async fn update_gitlab_project_hook(
             secret = $4,
             events = $5,
             active = $6,
+            push_events_branch_filter = $7,
+            branch_filter_strategy = $8,
             updated_at = now()
         WHERE id = $1 AND repository_id = $2
         RETURNING *
@@ -652,6 +662,8 @@ pub(crate) async fn update_gitlab_project_hook(
     .bind(input.token.filter(|value| !value.trim().is_empty()))
     .bind(events)
     .bind(input.active.unwrap_or(true))
+    .bind(push_events_branch_filter)
+    .bind(branch_filter_strategy)
     .fetch_one(&state.pool)
     .await?;
     let project_id = ensure_gitlab_project_id(state, repo.id).await?;
@@ -759,6 +771,7 @@ pub(crate) async fn dispatch_repository_webhooks(
         for webhook in webhooks
             .iter()
             .filter(|webhook| webhook.events.iter().any(|event| event == "push"))
+            .filter(|webhook| webhook_matches_branch_filter(webhook, &change.0))
         {
             deliver_repository_webhook(state, webhook, &payload).await;
         }
@@ -799,10 +812,16 @@ pub(crate) async fn test_repository_webhook(
     .bind(repo.id)
     .fetch_one(&state.pool)
     .await?;
+    let branch = webhook
+        .push_events_branch_filter
+        .as_deref()
+        .map(str::trim)
+        .filter(|branch| !branch.is_empty() && !branch.contains('*'))
+        .unwrap_or(&repo.default_branch);
     let payload = json!({
         "object_kind": "push",
         "event_name": "push",
-        "ref": format!("refs/heads/{}", repo.default_branch),
+        "ref": format!("refs/heads/{branch}"),
         "before": "0000000000000000000000000000000000000000",
         "after": "0000000000000000000000000000000000000000",
         "checkout_sha": serde_json::Value::Null,
@@ -1108,6 +1127,86 @@ fn normalize_webhook_events(events: Vec<String>) -> ApiResult<Vec<String>> {
     Ok(normalized)
 }
 
+fn normalize_gitlab_branch_filter(value: Option<String>) -> Option<String> {
+    value
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn normalize_gitlab_branch_filter_strategy(value: Option<String>) -> String {
+    match value.as_deref().map(str::trim) {
+        Some("all_branches") => "all_branches".to_string(),
+        Some("regex") => "regex".to_string(),
+        _ => "wildcard".to_string(),
+    }
+}
+
+fn webhook_matches_branch_filter(webhook: &RepositoryWebhook, branch: &str) -> bool {
+    let Some(filter) = webhook
+        .push_events_branch_filter
+        .as_deref()
+        .map(str::trim)
+        .filter(|filter| !filter.is_empty())
+    else {
+        return true;
+    };
+
+    match webhook
+        .branch_filter_strategy
+        .as_deref()
+        .unwrap_or("wildcard")
+    {
+        "all_branches" => true,
+        "regex" => Regex::new(filter)
+            .map(|pattern| pattern.is_match(branch))
+            .unwrap_or(false),
+        _ => wildcard_branch_match(filter, branch),
+    }
+}
+
+fn wildcard_branch_match(pattern: &str, branch: &str) -> bool {
+    if pattern == "*" {
+        return true;
+    }
+    if !pattern.contains('*') {
+        return pattern == branch;
+    }
+
+    let mut remaining = branch;
+    let mut parts = pattern.split('*').peekable();
+    let starts_with_wildcard = pattern.starts_with('*');
+    let ends_with_wildcard = pattern.ends_with('*');
+
+    if let Some(first) = parts.next() {
+        if !starts_with_wildcard {
+            let Some(next_remaining) = remaining.strip_prefix(first) else {
+                return false;
+            };
+            remaining = next_remaining;
+        } else if let Some(index) = remaining.find(first) {
+            remaining = &remaining[index + first.len()..];
+        } else {
+            return false;
+        }
+    }
+
+    while let Some(part) = parts.next() {
+        if part.is_empty() {
+            continue;
+        }
+        let is_last = parts.peek().is_none();
+        let Some(index) = remaining.find(part) else {
+            return false;
+        };
+        remaining = &remaining[index + part.len()..];
+        if is_last && !ends_with_wildcard && !remaining.is_empty() {
+            return false;
+        }
+    }
+
+    true
+}
+
 async fn changed_branch_tips(
     repo: &Repository,
     before_tips: &[GitBranchTip],
@@ -1223,8 +1322,8 @@ fn gitlab_project_hook_json(
         "created_at": webhook.created_at,
         "resource_access_token_events": false,
         "custom_webhook_template": Value::Null,
-        "push_events_branch_filter": Value::Null,
-        "branch_filter_strategy": "wildcard",
+        "push_events_branch_filter": webhook.push_events_branch_filter,
+        "branch_filter_strategy": webhook.branch_filter_strategy.unwrap_or_else(|| "wildcard".to_string()),
         "active": webhook.active,
         "last_status_code": webhook.last_status_code,
         "last_error": webhook.last_error,

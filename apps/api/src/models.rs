@@ -447,6 +447,8 @@ pub(crate) struct RepositoryWebhook {
     pub(crate) secret: Option<String>,
     pub(crate) events: Vec<String>,
     pub(crate) active: bool,
+    pub(crate) push_events_branch_filter: Option<String>,
+    pub(crate) branch_filter_strategy: Option<String>,
     pub(crate) last_status: Option<String>,
     pub(crate) last_status_code: Option<i32>,
     pub(crate) last_error: Option<String>,
