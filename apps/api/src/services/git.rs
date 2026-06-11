@@ -1,14 +1,20 @@
 use super::*;
 use sqlx::Row;
-use std::{collections::HashMap, process::Stdio};
+use std::{collections::HashMap, os::unix::fs::PermissionsExt, process::Stdio};
 
 const GIT_COMMAND_TIMEOUT_SECONDS: u64 = 30;
 const MAX_GIT_OUTPUT_BYTES: usize = 2 * 1024 * 1024;
 const MAX_RAW_FILE_BYTES: i64 = 10 * 1024 * 1024;
 
-pub(crate) async fn create_bare_repo(path: &PathBuf) -> ApiResult<()> {
+pub(crate) async fn create_bare_repo(
+    config: &Config,
+    owner: &str,
+    name: &str,
+    path: &PathBuf,
+) -> ApiResult<()> {
     if fs::try_exists(path).await? {
         ensure_bare_repo_head(path, "main").await?;
+        ensure_repo_post_receive_hook(config, owner, name, path).await?;
         return Ok(());
     }
     if let Some(parent) = path.parent() {
@@ -28,11 +34,14 @@ pub(crate) async fn create_bare_repo(path: &PathBuf) -> ApiResult<()> {
         ));
     }
     ensure_bare_repo_head(path, "main").await?;
+    ensure_repo_post_receive_hook(config, owner, name, path).await?;
     Ok(())
 }
 
-pub(crate) async fn ensure_repo_head(repo: &Repository) -> ApiResult<()> {
-    ensure_bare_repo_head(&PathBuf::from(&repo.local_path), &repo.default_branch).await
+pub(crate) async fn ensure_repo_head(repo: &Repository, config: &Config) -> ApiResult<()> {
+    let path = PathBuf::from(&repo.local_path);
+    ensure_bare_repo_head(&path, &repo.default_branch).await?;
+    ensure_repo_post_receive_hook(config, &repo.owner_handle, &repo.name, &path).await
 }
 
 async fn ensure_bare_repo_head(path: &PathBuf, branch: &str) -> ApiResult<()> {
@@ -55,6 +64,41 @@ async fn ensure_bare_repo_head(path: &PathBuf, branch: &str) -> ApiResult<()> {
     }
 
     Ok(())
+}
+
+async fn ensure_repo_post_receive_hook(
+    config: &Config,
+    owner: &str,
+    name: &str,
+    path: &PathBuf,
+) -> ApiResult<()> {
+    let hooks_dir = path.join("hooks");
+    fs::create_dir_all(&hooks_dir).await?;
+    let hook_path = hooks_dir.join("post-receive");
+    let url = format!(
+        "{}/internal/repos/{}/{}/git-updated",
+        config.app_base_url.trim_end_matches('/'),
+        owner,
+        name
+    );
+    let script = format!(
+        "#!/bin/sh\n\
+         # Managed by Diggit. Keep Redis and repository metadata fresh after direct pushes.\n\
+         if command -v curl >/dev/null 2>&1; then\n\
+         \tcurl -fsS -X POST -H {} {} >/dev/null 2>&1 || true\n\
+         fi\n",
+        shell_single_quote(&format!("x-diggit-internal-token: {}", config.jwt_secret)),
+        shell_single_quote(&url)
+    );
+    fs::write(&hook_path, script).await?;
+    let mut permissions = fs::metadata(&hook_path).await?.permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&hook_path, permissions).await?;
+    Ok(())
+}
+
+fn shell_single_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
 }
 
 pub(crate) async fn list_branches(repo: &Repository) -> ApiResult<Vec<RepositoryBranchResponse>> {
@@ -118,6 +162,14 @@ pub(crate) async fn repo_file_response(
     let commit_sha = resolve_git_ref(repo, ref_name)
         .await?
         .ok_or(ApiError::NotFound)?;
+    repo_file_response_at_commit(repo, path, &commit_sha).await
+}
+
+pub(crate) async fn repo_file_response_at_commit(
+    repo: &Repository,
+    path: &str,
+    commit_sha: &str,
+) -> ApiResult<RepositoryFileResponse> {
     let object = format!("{}:{}", commit_sha, path);
     let kind = run_git_command(
         repo,

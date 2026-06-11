@@ -34,7 +34,7 @@ export default async function RepositoryBlobPage({ params, searchParams }: Props
     getRepositoryTree(decodedOwner, decodedName, selectedRef, parentPath).catch(
       (): RepositoryTree => ({ ref_name: selectedRef, last_commit: null, entries: [] }),
     ),
-    getRepositoryTree(decodedOwner, decodedName, selectedRef, undefined, true).catch(
+    getRepositoryTree(decodedOwner, decodedName, selectedRef, undefined, { includeLastCommit: false, recursive: true }).catch(
       (): RepositoryTree => ({ ref_name: selectedRef, last_commit: null, entries: [] }),
     ),
     getRepositoryFile(decodedOwner, decodedName, filePath, selectedRef),

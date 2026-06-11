@@ -69,19 +69,29 @@ impl Cache {
         let Ok(mut connection) = client.get_multiplexed_async_connection().await else {
             return;
         };
-        let keys: redis::RedisResult<Vec<String>> = redis::cmd("KEYS")
-            .arg(pattern)
-            .query_async(&mut connection)
-            .await;
-        let Ok(keys) = keys else {
-            return;
-        };
-        if keys.is_empty() {
-            return;
-        }
-        let result: redis::RedisResult<()> = connection.del(keys).await;
-        if let Err(error) = result {
-            warn!(%error, "failed to invalidate redis cache");
+        let mut cursor = 0_u64;
+        loop {
+            let scan: redis::RedisResult<(u64, Vec<String>)> = redis::cmd("SCAN")
+                .arg(cursor)
+                .arg("MATCH")
+                .arg(pattern)
+                .arg("COUNT")
+                .arg(500)
+                .query_async(&mut connection)
+                .await;
+            let Ok((next_cursor, keys)) = scan else {
+                return;
+            };
+            if !keys.is_empty() {
+                let result: redis::RedisResult<()> = connection.del(keys).await;
+                if let Err(error) = result {
+                    warn!(%error, "failed to invalidate redis cache");
+                }
+            }
+            cursor = next_cursor;
+            if cursor == 0 {
+                break;
+            }
         }
     }
 

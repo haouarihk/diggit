@@ -62,7 +62,7 @@ pub(crate) async fn create_repo(
     }
 
     let local_path = repo_path(&state.config, &namespace.name, &name);
-    create_bare_repo(&local_path).await?;
+    create_bare_repo(state.config.as_ref(), &namespace.name, &name, &local_path).await?;
 
     let repo = sqlx::query_as::<_, Repository>(
         r#"
@@ -110,6 +110,26 @@ pub(crate) async fn delete_repo(
         fs::remove_dir_all(&local_path).await?;
     }
 
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub(crate) async fn record_direct_repo_update(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((owner, name)): Path<(String, String)>,
+) -> ApiResult<StatusCode> {
+    let token = headers
+        .get("x-diggit-internal-token")
+        .and_then(|value| value.to_str().ok());
+    if token != Some(state.config.jwt_secret.as_str()) {
+        return Err(ApiError::Unauthorized);
+    }
+    let repo = find_repo(&state.pool, &owner, &name).await?;
+    sqlx::query("UPDATE repositories SET updated_at = now() WHERE id = $1")
+        .bind(repo.id)
+        .execute(&state.pool)
+        .await?;
+    invalidate_repo_cache(&state, &repo.owner_handle, &repo.name).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -202,7 +222,7 @@ pub(crate) async fn update_repo_settings(
     .fetch_one(&state.pool)
     .await?;
 
-    ensure_repo_head(&updated).await?;
+    ensure_repo_head(&updated, state.config.as_ref()).await?;
     invalidate_repo_cache(&state, &old_owner, &old_name).await;
     invalidate_repo_cache(&state, &updated.owner_handle, &updated.name).await;
     Ok(Json(
@@ -464,11 +484,38 @@ pub(crate) async fn list_repo_tree(
         .as_deref()
         .map(normalize_repo_file_path)
         .transpose()?;
+    let recursive = query.recursive.unwrap_or(false);
+    let include_last_commit = query.include_last_commit.unwrap_or(true);
+    let recursive_key = if recursive { "recursive" } else { "direct" };
+    let last_commit_key = if include_last_commit {
+        "with-commits"
+    } else {
+        "no-commits"
+    };
+    let path_key = repo_cache_path_key(path.as_deref());
+    let cache_key = cache_key(&[
+        "repo",
+        &repo.owner_handle,
+        &repo.name,
+        "tree",
+        &commit_sha,
+        &ref_name,
+        &path_key,
+        recursive_key,
+        last_commit_key,
+    ]);
+    if let Some(cached) = state
+        .cache
+        .get_json::<RepositoryTreeResponse>(&cache_key)
+        .await
+    {
+        return Ok(Json(cached));
+    }
     let treeish = path
         .as_ref()
         .map(|path| format!("{commit_sha}:{path}"))
         .unwrap_or_else(|| commit_sha.clone());
-    let tree_args = if query.recursive.unwrap_or(false) {
+    let tree_args = if recursive {
         vec![
             "ls-tree".to_string(),
             "-l".to_string(),
@@ -492,7 +539,11 @@ pub(crate) async fn list_repo_tree(
                 .rsplit_once('/')
                 .map(|(_, name)| name.to_string())
                 .unwrap_or(entry_name);
-            let last_commit = git_last_commit(&repo, &commit_sha, Some(&entry_path)).await?;
+            let last_commit = if include_last_commit {
+                git_last_commit(&repo, &commit_sha, Some(&entry_path)).await?
+            } else {
+                None
+            };
             entries.push(RepositoryTreeEntryResponse {
                 extension: file_extension(&name),
                 name,
@@ -506,9 +557,14 @@ pub(crate) async fn list_repo_tree(
 
     let response = RepositoryTreeResponse {
         ref_name,
-        last_commit: git_last_commit(&repo, &commit_sha, None).await?,
+        last_commit: if include_last_commit {
+            git_last_commit(&repo, &commit_sha, None).await?
+        } else {
+            None
+        },
         entries,
     };
+    state.cache.set_json(&cache_key, &response).await;
     Ok(Json(response))
 }
 
@@ -1104,7 +1160,27 @@ pub(crate) async fn get_repo_file(
     let repo = find_repo(&state.pool, &owner, &name).await?;
     ensure_repo_visible(&state.pool, auth.as_ref(), &repo).await?;
     let path = normalize_repo_file_path(&query.path)?;
-    let response = repo_file_response(&repo, &path, query.ref_name.as_deref()).await?;
+    let commit_sha = resolve_git_ref(&repo, query.ref_name.as_deref())
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    let path_key = repo_cache_path_key(Some(&path));
+    let cache_key = cache_key(&[
+        "repo",
+        &repo.owner_handle,
+        &repo.name,
+        "file",
+        &commit_sha,
+        &path_key,
+    ]);
+    if let Some(cached) = state
+        .cache
+        .get_json::<RepositoryFileResponse>(&cache_key)
+        .await
+    {
+        return Ok(Json(cached));
+    }
+    let response = repo_file_response_at_commit(&repo, &path, &commit_sha).await?;
+    state.cache.set_json(&cache_key, &response).await;
     Ok(Json(response))
 }
 
@@ -1501,7 +1577,13 @@ pub(crate) async fn fork_repo(
     }
 
     let local_path = repo_path(&state.config, &namespace.name, &fork_name);
-    create_bare_repo(&local_path).await?;
+    create_bare_repo(
+        state.config.as_ref(),
+        &namespace.name,
+        &fork_name,
+        &local_path,
+    )
+    .await?;
 
     let repo = sqlx::query_as::<_, Repository>(
         r#"
@@ -4338,6 +4420,13 @@ fn issue_label_filter(value: Option<&str>) -> ApiResult<Vec<String>> {
         .filter(|label| !label.is_empty())
         .map(normalize_issue_label_name)
         .collect()
+}
+
+fn repo_cache_path_key(path: Option<&str>) -> String {
+    match path {
+        Some(path) => format!("{:x}", Sha256::digest(path.as_bytes())),
+        None => "root".to_string(),
+    }
 }
 
 fn normalize_issue_label_name(value: &str) -> ApiResult<String> {

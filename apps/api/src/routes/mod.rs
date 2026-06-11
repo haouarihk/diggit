@@ -82,6 +82,10 @@ pub(crate) fn router(state: AppState) -> Router {
         )
         .route("/search", get(search::search))
         .route(
+            "/internal/repos/{owner}/{name}/git-updated",
+            post(repositories::record_direct_repo_update),
+        )
+        .route(
             "/user/keys",
             get(keys::list_ssh_keys).post(keys::create_ssh_key),
         )

@@ -1150,6 +1150,7 @@ pub(crate) struct RepoTreeQuery {
     pub(crate) ref_name: Option<String>,
     pub(crate) path: Option<String>,
     pub(crate) recursive: Option<bool>,
+    pub(crate) include_last_commit: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]

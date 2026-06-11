@@ -3,21 +3,18 @@ import moment from "moment";
 import type { ReactNode } from "react";
 import {
   Archive,
-  ChevronDown,
-  ChevronRight,
   ChartPie,
   Code2,
   GitBranch,
   Tag,
   Users,
-  FolderOpen,
-  Folder,
 } from "lucide-react";
 import { CodeFileViewer } from "@/components/CodeFileViewer";
 import { FileDeleteButton } from "@/components/FileDeleteButton";
 import { MarkdownViewer } from "@/components/MarkdownViewer";
 import { repoHref } from "@/components/RepoHeader";
 import { RepositoryRefSelector } from "@/components/RepositoryRefSelector";
+import { RepositoryTreeNavigationSidebar } from "@/components/RepositoryTreeNavigationSidebar";
 import {
   repositoryRawFileUrl,
   type Repository,
@@ -107,6 +104,7 @@ export function RepositoryCodeBrowser({
             branches={branches}
             currentPath={currentPath}
             entries={fullTree?.entries ?? tree.entries}
+            key={`${selectedRef}:${currentPath}`}
             mode={mode}
             repo={repo}
             selectedPath={currentPath}
@@ -511,151 +509,6 @@ function RepositoryPathBreadcrumbs({
   );
 }
 
-function RepositoryTreeNavigationSidebar({
-  baseHref,
-  branches,
-  currentPath,
-  entries,
-  mode,
-  repo,
-  selectedPath,
-  selectedRef,
-  tags,
-}: {
-  baseHref: string;
-  branches: RepositoryBranch[];
-  currentPath: string;
-  entries: RepositoryTreeEntry[];
-  mode: "tree" | "blob";
-  repo: Repository;
-  selectedPath: string;
-  selectedRef: string;
-  tags: RepositoryTag[];
-}) {
-  const parentPath = parentDirectoryPath(currentPath);
-  const treeNodes = buildRepositoryTreeNodes(entries);
-
-  return (
-    <aside className="overflow-hidden rounded-2xl border border-[#d0d7de] bg-white shadow-sm xl:sticky xl:top-4 xl:max-h-[calc(100vh-2rem)]">
-      <div className="border-b border-[#d8dee4] p-4">
-        <Link className="block truncate text-base font-semibold text-[#0969da] hover:underline" href={baseHref}>
-          {repo.owner_handle}/{repo.name}
-        </Link>
-        <p className="mt-1 text-xs uppercase tracking-wide text-[#59636e]">
-          {mode === "blob" ? "File browser" : "Folder browser"}
-        </p>
-      </div>
-
-      <div className="grid gap-3 border-b border-[#d8dee4] p-3">
-        <div className="flex flex-wrap gap-2">
-          <RepositoryRefSelector baseHref={baseHref} branches={branches} key={selectedRef} selectedRef={selectedRef} tags={tags} />
-        </div>
-        <div className="grid gap-1">
-          <Link
-            className="flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-semibold text-[#1f2328] hover:bg-[#f6f8fa]"
-            href={codeHref(baseHref, undefined, selectedRef, "tree")}
-          >
-            <FolderOpen className="h-4 w-4 text-[#0969da]" aria-hidden="true" />
-            Repository root
-          </Link>
-          {currentPath ? (
-            <Link
-              className="flex items-center gap-2 rounded-xl px-3 py-2 text-sm text-[#59636e] hover:bg-[#f6f8fa] hover:text-[#1f2328]"
-              href={parentPath ? codeHref(baseHref, parentPath, selectedRef, "tree") : codeHref(baseHref, undefined, selectedRef, "tree")}
-            >
-              <Folder className="h-4 w-4" aria-hidden="true" />
-              Up one level
-            </Link>
-          ) : null}
-        </div>
-      </div>
-
-      <div className="max-h-[70vh] overflow-y-auto p-2 xl:max-h-[calc(100vh-19rem)]">
-        {treeNodes.length > 0 ? (
-          <div className="grid gap-1">
-            {treeNodes.map((node) => (
-              <RepositoryTreeNavigationNode
-                baseHref={baseHref}
-                depth={0}
-                key={node.entry.path}
-                node={node}
-                selectedPath={selectedPath}
-                selectedRef={selectedRef}
-              />
-            ))}
-          </div>
-        ) : (
-          <div className="rounded-xl border border-dashed border-[#d0d7de] p-4 text-sm text-[#59636e]">This folder is empty.</div>
-        )}
-      </div>
-    </aside>
-  );
-}
-
-type RepositoryTreeNode = {
-  children: RepositoryTreeNode[];
-  entry: RepositoryTreeEntry;
-};
-
-function RepositoryTreeNavigationNode({
-  baseHref,
-  depth,
-  node,
-  selectedPath,
-  selectedRef,
-}: {
-  baseHref: string;
-  depth: number;
-  node: RepositoryTreeNode;
-  selectedPath: string;
-  selectedRef: string;
-}) {
-  const { entry } = node;
-  const isSelected = entry.path === selectedPath;
-  const isDirectory = entry.kind === "directory";
-  const isExpanded = isDirectory && (isSelected || selectedPath.startsWith(`${entry.path}/`));
-  const hasChildren = node.children.length > 0;
-  const paddingLeft = `${0.75 + depth * 0.9}rem`;
-
-  return (
-    <div className="grid gap-1">
-      <Link
-        className={`group flex min-w-0 items-center gap-2 rounded-xl py-2 pr-3 transition ${isSelected ? "bg-[#ddf4ff] text-[#0969da]" : "text-[#59636e] hover:bg-[#f6f8fa] hover:text-[#1f2328]"
-          }`}
-        href={codeHref(baseHref, entry.path, selectedRef, isDirectory ? "tree" : "blob")}
-        style={{ paddingLeft }}
-      >
-        {isDirectory ? (
-          isExpanded ? (
-            <ChevronDown className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-          ) : (
-            <ChevronRight className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-          )
-        ) : (
-          <span className="w-3.5 shrink-0" />
-        )}
-        <IconForFile active={isSelected} entry={entry} />
-        <span className="min-w-0 flex-1 truncate text-sm font-semibold">{entry.name}</span>
-      </Link>
-      {isExpanded && hasChildren ? (
-        <div className="grid gap-1">
-          {node.children.map((child) => (
-            <RepositoryTreeNavigationNode
-              baseHref={baseHref}
-              depth={depth + 1}
-              key={child.entry.path}
-              node={child}
-              selectedPath={selectedPath}
-              selectedRef={selectedRef}
-            />
-          ))}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-
 function RepositoryReadme({ readme }: { readme?: RepositoryFile | null }) {
   if (!readme) {
     return null;
@@ -718,86 +571,6 @@ function RelativeTime({ value }: { value?: string | null }) {
 
 
 
-
-type MutableRepositoryTreeNode = RepositoryTreeNode & {
-  childrenByPath: Map<string, MutableRepositoryTreeNode>;
-};
-
-function buildRepositoryTreeNodes(entries: RepositoryTreeEntry[]): RepositoryTreeNode[] {
-  const rootNodes = new Map<string, MutableRepositoryTreeNode>();
-
-  for (const entry of sortTreeEntries(entries)) {
-    const segments = entry.path.split("/").filter(Boolean);
-    let children = rootNodes;
-    let path = "";
-
-    segments.forEach((segment, index) => {
-      path = path ? `${path}/${segment}` : segment;
-      const isLeaf = index === segments.length - 1;
-      const existing = children.get(path);
-      const node =
-        existing ??
-        createMutableTreeNode({
-          extension: null,
-          kind: isLeaf ? entry.kind : "directory",
-          last_commit: null,
-          name: segment,
-          path,
-          size: null,
-        });
-
-      if (isLeaf) {
-        node.entry = entry;
-      }
-
-      children.set(path, node);
-      children = node.childrenByPath;
-    });
-  }
-
-  return finalizeTreeNodes([...rootNodes.values()]);
-}
-
-function createMutableTreeNode(entry: RepositoryTreeEntry): MutableRepositoryTreeNode {
-  return {
-    children: [],
-    childrenByPath: new Map(),
-    entry,
-  };
-}
-
-function finalizeTreeNodes(nodes: MutableRepositoryTreeNode[]): RepositoryTreeNode[] {
-  return sortTreeNodes(nodes).map((node) => ({
-    children: finalizeTreeNodes([...node.childrenByPath.values()]),
-    entry: node.entry,
-  }));
-}
-
-function sortTreeNodes(nodes: MutableRepositoryTreeNode[]) {
-  return nodes.sort((a, b) => {
-    if (a.entry.kind !== b.entry.kind) {
-      return a.entry.kind === "directory" ? -1 : 1;
-    }
-
-    return a.entry.name.localeCompare(b.entry.name);
-  });
-}
-
-function sortTreeEntries(entries: RepositoryTreeEntry[]) {
-  return [...entries].sort((a, b) => {
-    if (a.kind !== b.kind) {
-      return a.kind === "directory" ? -1 : 1;
-    }
-
-    return a.name.localeCompare(b.name);
-  });
-}
-
-function parentDirectoryPath(path: string) {
-  const parts = path.split("/").filter(Boolean);
-  parts.pop();
-  return parts.length > 0 ? parts.join("/") : undefined;
-}
 
 function CloneUrl({ label, value }: { label: string; value: string }) {
   return (

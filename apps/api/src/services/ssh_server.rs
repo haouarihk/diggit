@@ -390,11 +390,11 @@ async fn prepare_git_ssh_command(
     match parsed.service {
         GitSshService::UploadPack => {
             ensure_repo_visible(&state.pool, Some(auth), &repo).await?;
-            ensure_repo_head(&repo).await?;
+            ensure_repo_head(&repo, state.config.as_ref()).await?;
         }
         GitSshService::ReceivePack => {
             resolve_writable_namespace(&state.pool, auth, &repo.owner_handle).await?;
-            ensure_repo_head(&repo).await?;
+            ensure_repo_head(&repo, state.config.as_ref()).await?;
         }
     }
 

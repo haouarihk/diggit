@@ -383,7 +383,13 @@ pub(crate) async fn federated_fork(
     }
 
     let local_path = repo_path(&state.config, &user.username, &fork_name);
-    create_bare_repo(&local_path).await?;
+    create_bare_repo(
+        state.config.as_ref(),
+        &user.username,
+        &fork_name,
+        &local_path,
+    )
+    .await?;
 
     let repo = sqlx::query_as::<_, Repository>(
         r#"

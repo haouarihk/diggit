@@ -499,7 +499,13 @@ export function getRepository(owner: string, name: string) {
   return apiFetch<Repository>(`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`);
 }
 
-export function getRepositoryTree(owner: string, name: string, refName?: string, path?: string, recursive = false) {
+export function getRepositoryTree(
+  owner: string,
+  name: string,
+  refName?: string,
+  path?: string,
+  options: { includeLastCommit?: boolean; recursive?: boolean } = {},
+) {
   const searchParams = new URLSearchParams();
   if (refName) {
     searchParams.set("ref", refName);
@@ -507,8 +513,11 @@ export function getRepositoryTree(owner: string, name: string, refName?: string,
   if (path) {
     searchParams.set("path", path);
   }
-  if (recursive) {
+  if (options.recursive) {
     searchParams.set("recursive", "true");
+  }
+  if (options.includeLastCommit === false) {
+    searchParams.set("include_last_commit", "false");
   }
   const query = searchParams.toString();
   return apiFetch<RepositoryTree>(

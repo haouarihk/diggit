@@ -462,7 +462,7 @@ async fn smart_git_http(
     };
     let repo = find_repo(&state.pool, &owner, &name).await?;
     ensure_oauth_repo_visible(&state, &auth, &repo).await?;
-    ensure_repo_head(&repo).await?;
+    ensure_repo_head(&repo, state.config.as_ref()).await?;
     let before_tips = if dispatch_push_webhooks {
         git_webhook_ref_tips(&repo).await.unwrap_or_default()
     } else {
