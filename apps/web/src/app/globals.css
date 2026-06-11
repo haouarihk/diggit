@@ -181,6 +181,24 @@ textarea {
   color: var(--color-fg-inverse) !important;
 }
 
+.code-file-viewer .shiki {
+  background: transparent !important;
+  color: var(--shiki-light);
+  margin: 0;
+}
+
+.code-file-viewer .shiki span {
+  color: var(--shiki-light);
+}
+
+:root[data-theme="dark"] .code-file-viewer .shiki {
+  color: var(--shiki-dark);
+}
+
+:root[data-theme="dark"] .code-file-viewer .shiki span {
+  color: var(--shiki-dark);
+}
+
 [class~="border-[#d0d7de]"],
 [class~="hover:border-[#d0d7de]"]:hover,
 [class~="focus-within:border-[#d0d7de]"]:focus-within {

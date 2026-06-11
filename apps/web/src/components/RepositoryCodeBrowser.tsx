@@ -13,6 +13,7 @@ import {
   FolderOpen,
   Folder,
 } from "lucide-react";
+import { CodeFileViewer } from "@/components/CodeFileViewer";
 import { FileDeleteButton } from "@/components/FileDeleteButton";
 import { MarkdownViewer } from "@/components/MarkdownViewer";
 import { repoHref } from "@/components/RepoHeader";
@@ -701,17 +702,7 @@ function RepositoryFilePreview({ file, rawUrl, repo }: { file: RepositoryFile | 
   if (file.extension === "md" || file.extension === "mdx") {
     return <MarkdownViewer content={file.content} fileName={file.path} />;
   }
-  return (
-    <div className="rounded-b-md border border-t-0 border-[#d0d7de] bg-white">
-      <div className="flex items-center justify-between gap-3 border-b border-[#d8dee4] px-4 py-3">
-        <span className="truncate font-semibold">{file.path}</span>
-        <span className="text-xs text-[#59636e]">{formatBytes(file.size)}</span>
-      </div>
-      <pre className="max-h-[560px] overflow-auto p-4 text-sm leading-6">
-        <code>{file.content}</code>
-      </pre>
-    </div>
-  );
+  return <CodeFileViewer file={file} />;
 }
 
 function RelativeTime({ value }: { value?: string | null }) {
@@ -837,12 +828,6 @@ function cloneCommand(url: string, ref: string, defaultBranch: string, refExists
 
 function shellArg(value: string) {
   return /^[A-Za-z0-9_./:@-]+$/.test(value) ? value : `'${value.replaceAll("'", "'\\''")}'`;
-}
-
-function formatBytes(size: number) {
-  if (size < 1024) return `${size} B`;
-  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
-  return `${(size / 1024 / 1024).toFixed(1)} MB`;
 }
 
 function formatCount(value: number) {
