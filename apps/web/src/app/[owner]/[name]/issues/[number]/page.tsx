@@ -1,13 +1,13 @@
 import { IssueDetailPanel } from "@/components/IssueDetailPanel";
-import { RepoHeader, repoHref } from "@/components/RepoHeader";
+import { RepoHeader, RepoPageContent, repoHref } from "@/components/RepoHeader";
 import {
   getRepository,
   getRepositoryIssue,
+  listRepositoryIssueActivity,
   listPullRequests,
-  listRepositoryIssueComments,
   listRepositoryIssues,
+  type ActivityItem,
   type Issue,
-  type IssueComment,
 } from "@/lib/api";
 
 type Props = {
@@ -20,12 +20,12 @@ export default async function RepositoryIssuePage({ params }: Props) {
   const decodedName = decodeURIComponent(name);
   const issueNumber = Number.parseInt(number, 10);
   const baseHref = repoHref(decodedOwner, decodedName);
-  const [repo, pullRequests, issueCount, issue, comments] = await Promise.all([
+  const [repo, pullRequests, issueCount, issue, activity] = await Promise.all([
     getRepository(decodedOwner, decodedName),
     listPullRequests(decodedOwner, decodedName).catch(() => ({ data: [] })),
     listRepositoryIssues(decodedOwner, decodedName, { page: 1, limit: 1, status: "open" }).catch(() => emptyIssues()),
     getRepositoryIssue(decodedOwner, decodedName, issueNumber),
-    listRepositoryIssueComments(decodedOwner, decodedName, issueNumber, 1, 100).catch(() => emptyComments()),
+    listRepositoryIssueActivity(decodedOwner, decodedName, issueNumber, 1, 100).catch(() => emptyActivity()),
   ]);
 
   return (
@@ -36,13 +36,15 @@ export default async function RepositoryIssuePage({ params }: Props) {
         pullRequestsCount={pullRequests.data.length}
         repo={repo}
       />
-      <IssueDetailPanel
-        baseHref={baseHref}
-        comments={comments.data}
-        issue={issue}
-        name={decodedName}
-        owner={decodedOwner}
-      />
+      <RepoPageContent>
+        <IssueDetailPanel
+          baseHref={baseHref}
+          activity={activity.data}
+          issue={issue}
+          name={decodedName}
+          owner={decodedOwner}
+        />
+      </RepoPageContent>
     </div>
   );
 }
@@ -54,9 +56,9 @@ function emptyIssues() {
   };
 }
 
-function emptyComments() {
+function emptyActivity() {
   return {
-    data: [] as IssueComment[],
+    data: [] as ActivityItem[],
     pagination: { page: 1, limit: 100, total: 0, totalPages: 0 },
   };
 }

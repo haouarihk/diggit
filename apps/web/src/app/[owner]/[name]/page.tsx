@@ -1,4 +1,4 @@
-import { RepoHeader, repoHref } from "@/components/RepoHeader";
+import { RepoHeader, RepoPageContent, repoHref } from "@/components/RepoHeader";
 import { RepositoryCodeBrowser } from "@/components/RepositoryCodeBrowser";
 import {
   getRepository,
@@ -49,21 +49,23 @@ export default async function RepoPage({ params, searchParams }: Props) {
   return (
     <div className="grid gap-6">
       <RepoHeader activeTab="code" pullRequestsCount={pullRequests.data.length} repo={repo} />
-      <RepositoryCodeBrowser
-        baseHref={baseHref}
-        branches={branches.data}
-        mode="tree"
-        contributors={contributors.data}
-        languages={languages.data}
-        owner={decodedOwner}
-        query={q}
-        readme={readme}
-        repo={repo}
-        selectedRef={selectedRef}
-        stats={stats}
-        tags={tags.data}
-        tree={tree}
-      />
+      <RepoPageContent>
+        <RepositoryCodeBrowser
+          baseHref={baseHref}
+          branches={branches.data}
+          mode="tree"
+          contributors={contributors.data}
+          languages={languages.data}
+          owner={decodedOwner}
+          query={q}
+          readme={readme}
+          repo={repo}
+          selectedRef={selectedRef}
+          stats={stats}
+          tags={tags.data}
+          tree={tree}
+        />
+      </RepoPageContent>
     </div>
   );
 }

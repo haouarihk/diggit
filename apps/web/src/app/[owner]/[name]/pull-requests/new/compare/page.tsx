@@ -1,5 +1,5 @@
 import { PullRequestCompareStep } from "@/components/PullRequestFlow";
-import { RepoHeader, repoHref } from "@/components/RepoHeader";
+import { RepoHeader, RepoPageContent, repoHref } from "@/components/RepoHeader";
 import {
   comparePullRequestBranches,
   getPullRequestOptions,
@@ -69,26 +69,28 @@ export default async function ComparePullRequestPage({ params, searchParams }: P
     <div className="grid gap-6">
       <RepoHeader activeTab="pull-requests" pullRequestsCount={pullRequests.data.length} repo={repo} />
 
-      <section className="grid gap-4">
-        <div>
-          <h2 className="text-2xl font-semibold tracking-tight">New pull request</h2>
-          <p className="text-[#59636e]">Review the branch diff before creating the pull request.</p>
-        </div>
+      <RepoPageContent>
+        <section className="grid gap-4">
+          <div>
+            <h2 className="text-2xl font-semibold tracking-tight">New pull request</h2>
+            <p className="text-[#59636e]">Review the branch diff before creating the pull request.</p>
+          </div>
 
-        <PullRequestCompareStep
-          baseHref={baseHref}
-          fromOptions={sourceData.groups}
-          initialCompare={compare}
-          name={decodedName}
-          owner={decodedOwner}
-          selectedFrom={selectedFrom}
-          selectedTarget={selectedTarget}
-          serverName={server}
-          sourceMode={sourceMode}
-          targetOptions={targetBranches.map((branch) => ({ label: branchLabel(branch), value: branch.name }))}
-          upstreamLabel={options.upstream ? `${options.upstream.owner_handle}/${options.upstream.name}` : undefined}
-        />
-      </section>
+          <PullRequestCompareStep
+            baseHref={baseHref}
+            fromOptions={sourceData.groups}
+            initialCompare={compare}
+            name={decodedName}
+            owner={decodedOwner}
+            selectedFrom={selectedFrom}
+            selectedTarget={selectedTarget}
+            serverName={server}
+            sourceMode={sourceMode}
+            targetOptions={targetBranches.map((branch) => ({ label: branchLabel(branch), value: branch.name }))}
+            upstreamLabel={options.upstream ? `${options.upstream.owner_handle}/${options.upstream.name}` : undefined}
+          />
+        </section>
+      </RepoPageContent>
     </div>
   );
 }

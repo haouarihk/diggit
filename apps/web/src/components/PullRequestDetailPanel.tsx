@@ -3,7 +3,7 @@
 import { ConversationPanel } from "@/components/ConversationPanel";
 import { MarkdownViewer } from "@/components/MarkdownViewer";
 import { authHeaders } from "@/lib/auth-session";
-import type { PullRequest, PullRequestComment } from "@/lib/api";
+import type { ActivityItem, PullRequest } from "@/lib/api";
 import { apiBaseUrl } from "@/lib/runtime-config";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
@@ -11,16 +11,16 @@ import { useState } from "react";
 const API_URL = apiBaseUrl();
 
 type PullRequestDetailPanelProps = {
+  activity: ActivityItem[];
   baseHref: string;
-  comments: PullRequestComment[];
   name: string;
   owner: string;
   pullRequest: PullRequest;
 };
 
 export function PullRequestDetailPanel({
+  activity: initialActivity,
   baseHref,
-  comments: initialComments,
   name,
   owner,
   pullRequest: initialPullRequest,
@@ -30,14 +30,15 @@ export function PullRequestDetailPanel({
   const [message, setMessage] = useState("");
   const [isBusy, setIsBusy] = useState(false);
 
-  const commentsUrl = `${API_URL}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pull-requests/${encodeURIComponent(pullRequest.id)}/comments`;
+  const commentsUrl = `${API_URL}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pull-requests/${encodeURIComponent(String(pullRequest.id))}/comments`;
+  const activityUrl = `${API_URL}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pull/${encodeURIComponent(String(pullRequest.id))}/activity`;
   const attachmentUploadUrl = `${API_URL}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/comment-attachments`;
 
   async function updateStatus(status: "open" | "closed") {
     setIsBusy(true);
     setMessage("");
     const response = await fetch(
-      `${API_URL}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pull-requests/${encodeURIComponent(pullRequest.id)}`,
+      `${API_URL}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pull-requests/${encodeURIComponent(String(pullRequest.id))}`,
       {
         method: "PATCH",
         headers: { "content-type": "application/json", ...authHeaders() },
@@ -60,7 +61,7 @@ export function PullRequestDetailPanel({
     setIsBusy(true);
     setMessage("");
     const response = await fetch(
-      `${API_URL}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pull-requests/${encodeURIComponent(pullRequest.id)}/merge`,
+      `${API_URL}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pull-requests/${encodeURIComponent(String(pullRequest.id))}/merge`,
       {
         method: "POST",
         headers: authHeaders(),
@@ -142,7 +143,7 @@ export function PullRequestDetailPanel({
 
       {message ? <p className="text-sm text-[#59636e]">{message}</p> : null}
 
-      <ConversationPanel attachmentUploadUrl={attachmentUploadUrl} comments={initialComments} commentsUrl={commentsUrl} />
+      <ConversationPanel activity={initialActivity} activityUrl={activityUrl} attachmentUploadUrl={attachmentUploadUrl} commentsUrl={commentsUrl} />
     </main>
   );
 }

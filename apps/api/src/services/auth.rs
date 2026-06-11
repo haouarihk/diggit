@@ -358,6 +358,7 @@ mod tests {
             app_base_url: "https://visited.example.com".to_string(),
             public_web_url: "https://visited.example.com".to_string(),
             git_storage_path: PathBuf::new(),
+            attachment_storage_path: PathBuf::new(),
             jwt_secret: "test-secret".to_string(),
             admin_usernames: vec!["alice".to_string()],
             signups_enabled: true,

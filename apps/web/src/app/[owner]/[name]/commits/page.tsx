@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { BookOpen, GitCommit, History } from "lucide-react";
 import { CopyShaButton } from "@/components/CopyShaButton";
-import { RepoHeader, repoHref } from "@/components/RepoHeader";
+import { RepoHeader, RepoPageContent, repoHref } from "@/components/RepoHeader";
 import { getRepository, listCommits, listPullRequests, type RepositoryCommit } from "@/lib/api";
 
 type Props = {
@@ -31,57 +31,59 @@ export default async function CommitsPage({ params, searchParams }: Props) {
   return (
     <div className="grid gap-6">
       <RepoHeader activeTab="code" pullRequestsCount={pullRequests.data.length} repo={repo} />
-      <section className="overflow-hidden rounded-md border border-[#d0d7de] bg-white">
-        <header className="flex flex-wrap items-center justify-between gap-3 border-b border-[#d8dee4] bg-[#f6f8fa] px-4 py-3">
-          <div>
-            <h2 className="font-semibold">Commit history for {selectedBranch}</h2>
-            <p className="text-sm text-[#59636e]">{commits.data.length} commits grouped by date</p>
-          </div>
-          <History className="h-5 w-5 text-[#59636e]" aria-hidden="true" />
-        </header>
-        {commits.data.length === 0 ? (
-          <p className="p-4 text-[#59636e]">No commits found.</p>
-        ) : (
-          <div className="grid">
-            {commitGroups.map((group) => (
-              <section className="border-b border-[#d8dee4] last:border-b-0" key={group.key}>
-                <div className="border-b border-[#d8dee4] bg-[#f6f8fa] px-4 py-2 text-sm font-semibold text-[#59636e]">
-                  {group.label}
-                </div>
-                {group.commits.map((commit) => (
-                  <article className="flex flex-col gap-3 border-b border-[#d8dee4] p-4 last:border-b-0 md:flex-row md:items-center md:justify-between" key={commit.sha}>
-                    <div className="min-w-0">
-                      <Link className="font-semibold text-[#0969da] hover:underline" href={`${baseHref}/commits/${commit.sha}`}>
-                        {commit.message}
-                      </Link>
-                      <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-[#59636e]">
-                        <CommitAuthor commit={commit} />
-                        <span aria-hidden="true">&middot;</span>
-                        <span>{formatTime(commit.created_at)}</span>
+      <RepoPageContent>
+        <section className="overflow-hidden rounded-md border border-[#d0d7de] bg-white">
+          <header className="flex flex-wrap items-center justify-between gap-3 border-b border-[#d8dee4] bg-[#f6f8fa] px-4 py-3">
+            <div>
+              <h2 className="font-semibold">Commit history for {selectedBranch}</h2>
+              <p className="text-sm text-[#59636e]">{commits.data.length} commits grouped by date</p>
+            </div>
+            <History className="h-5 w-5 text-[#59636e]" aria-hidden="true" />
+          </header>
+          {commits.data.length === 0 ? (
+            <p className="p-4 text-[#59636e]">No commits found.</p>
+          ) : (
+            <div className="grid">
+              {commitGroups.map((group) => (
+                <section className="border-b border-[#d8dee4] last:border-b-0" key={group.key}>
+                  <div className="border-b border-[#d8dee4] bg-[#f6f8fa] px-4 py-2 text-sm font-semibold text-[#59636e]">
+                    {group.label}
+                  </div>
+                  {group.commits.map((commit) => (
+                    <article className="flex flex-col gap-3 border-b border-[#d8dee4] p-4 last:border-b-0 md:flex-row md:items-center md:justify-between" key={commit.sha}>
+                      <div className="min-w-0">
+                        <Link className="font-semibold text-[#0969da] hover:underline" href={`${baseHref}/commits/${commit.sha}`}>
+                          {commit.message}
+                        </Link>
+                        <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-[#59636e]">
+                          <CommitAuthor commit={commit} />
+                          <span aria-hidden="true">&middot;</span>
+                          <span>{formatTime(commit.created_at)}</span>
+                        </div>
                       </div>
-                    </div>
-                    <div className="flex shrink-0 items-center gap-2">
-                      <span className="inline-flex items-center gap-1 rounded-md border border-[#d0d7de] bg-[#f6f8fa] px-2 py-1 font-mono text-xs text-[#59636e]" title={commit.sha}>
-                        <GitCommit className="h-3.5 w-3.5" aria-hidden="true" />
-                        {commit.sha.slice(0, 12)}
-                      </span>
-                      <CopyShaButton sha={commit.sha} />
-                      <Link
-                        aria-label="Browse repository at this commit"
-                        className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-[#d0d7de] bg-white text-[#59636e] hover:border-[#0969da] hover:text-[#0969da]"
-                        href={`${baseHref}?ref=${encodeURIComponent(commit.sha)}`}
-                        title="Browse repository at this commit"
-                      >
-                        <BookOpen className="h-4 w-4" aria-hidden="true" />
-                      </Link>
-                    </div>
-                  </article>
-                ))}
-              </section>
-            ))}
-          </div>
-        )}
-      </section>
+                      <div className="flex shrink-0 items-center gap-2">
+                        <span className="inline-flex items-center gap-1 rounded-md border border-[#d0d7de] bg-[#f6f8fa] px-2 py-1 font-mono text-xs text-[#59636e]" title={commit.sha}>
+                          <GitCommit className="h-3.5 w-3.5" aria-hidden="true" />
+                          {commit.sha.slice(0, 12)}
+                        </span>
+                        <CopyShaButton sha={commit.sha} />
+                        <Link
+                          aria-label="Browse repository at this commit"
+                          className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-[#d0d7de] bg-white text-[#59636e] hover:border-[#0969da] hover:text-[#0969da]"
+                          href={`${baseHref}?ref=${encodeURIComponent(commit.sha)}`}
+                          title="Browse repository at this commit"
+                        >
+                          <BookOpen className="h-4 w-4" aria-hidden="true" />
+                        </Link>
+                      </div>
+                    </article>
+                  ))}
+                </section>
+              ))}
+            </div>
+          )}
+        </section>
+      </RepoPageContent>
     </div>
   );
 }

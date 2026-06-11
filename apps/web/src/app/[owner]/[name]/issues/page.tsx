@@ -1,4 +1,4 @@
-import { RepoHeader, repoHref } from "@/components/RepoHeader";
+import { RepoHeader, RepoPageContent, repoHref } from "@/components/RepoHeader";
 import { RepositoryIssuesPanel } from "@/components/RepositoryIssuesPanel";
 import { getRepository, listIssueLabels, listPullRequests, listRepositoryIssues, type Issue } from "@/lib/api";
 
@@ -42,17 +42,19 @@ export default async function RepositoryIssuesPage({ params, searchParams }: Pro
         repo={repo}
       />
 
-      <RepositoryIssuesPanel
-        baseHref={baseHref}
-        issues={issues.data}
-        labels={issueLabels.data}
-        name={decodedName}
-        owner={decodedOwner}
-        pagination={issues.pagination}
-        query={q ?? ""}
-        selectedLabels={labels ?? ""}
-        status={status}
-      />
+      <RepoPageContent>
+        <RepositoryIssuesPanel
+          baseHref={baseHref}
+          issues={issues.data}
+          labels={issueLabels.data}
+          name={decodedName}
+          owner={decodedOwner}
+          pagination={issues.pagination}
+          query={q ?? ""}
+          selectedLabels={labels ?? ""}
+          status={status}
+        />
+      </RepoPageContent>
     </div>
   );
 }

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { RepoHeader, repoHref } from "@/components/RepoHeader";
+import { RepoHeader, RepoPageContent, repoHref } from "@/components/RepoHeader";
 import { getRepository, listPullRequests } from "@/lib/api";
 
 type Props = {
@@ -23,18 +23,22 @@ export default async function RepositoryActionsPage({ params }: Props) {
     <div className="grid gap-6">
       <RepoHeader activeTab="actions" pullRequestsCount={pullRequests.data.length} repo={repo} />
 
-      <section className="grid gap-4 rounded-md border border-[#d0d7de] bg-white p-6">
-        <div>
-          <h2 className="text-lg font-semibold">Actions</h2>
-          <p className="text-[#59636e]">Manage repository automation and runner capacity.</p>
-        </div>
-        <Link
-          className="inline-flex w-fit rounded-md border border-black/15 bg-white px-3 py-1.5 font-bold text-[#1f2328]"
-          href={`${baseHref}/settings/runners`}
-        >
-          Manage runners
-        </Link>
-      </section>
+      <RepoPageContent>
+        <section>
+          <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+            <div>
+              <h2 className="text-base font-semibold">Actions</h2>
+              <p className="text-sm text-[#59636e]">Manage repository automation and runner capacity.</p>
+            </div>
+            <Link
+              className="inline-flex rounded-md border border-black/15 bg-[#1a7f37] px-3 py-1.5 font-bold text-white hover:bg-[#116329]"
+              href={`${baseHref}/settings/runners`}
+            >
+              Manage runners
+            </Link>
+          </div>
+        </section>
+      </RepoPageContent>
     </div>
   );
 }

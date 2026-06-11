@@ -1,4 +1,4 @@
-import { RepoHeader, repoHref } from "@/components/RepoHeader";
+import { RepoHeader, RepoPageContent, repoHref } from "@/components/RepoHeader";
 import { PullRequestSourceStep } from "@/components/PullRequestFlow";
 import { getPullRequestOptions, getRepository, listPullRequests } from "@/lib/api";
 
@@ -24,13 +24,15 @@ export default async function NewPullRequestPage({ params }: Props) {
     <div className="grid gap-6">
       <RepoHeader activeTab="pull-requests" pullRequestsCount={pullRequests.data.length} repo={repo} />
 
-      <section className="grid gap-4">
-        <div>
-          <h2 className="text-2xl font-semibold tracking-tight">New pull request</h2>
-          <p className="text-[#59636e]">Compare a source repository and branch with this repository.</p>
-        </div>
-        <PullRequestSourceStep baseHref={baseHref} options={options} />
-      </section>
+      <RepoPageContent>
+        <section className="grid gap-4">
+          <div>
+            <h2 className="text-2xl font-semibold tracking-tight">New pull request</h2>
+            <p className="text-[#59636e]">Compare a source repository and branch with this repository.</p>
+          </div>
+          <PullRequestSourceStep baseHref={baseHref} options={options} />
+        </section>
+      </RepoPageContent>
     </div>
   );
 }

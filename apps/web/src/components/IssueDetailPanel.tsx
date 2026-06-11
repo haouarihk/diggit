@@ -4,7 +4,7 @@ import { ConversationPanel } from "@/components/ConversationPanel";
 import { MarkdownViewer } from "@/components/MarkdownViewer";
 import { IssueLabels } from "@/components/RepositoryIssuesPanel";
 import { authHeaders } from "@/lib/auth-session";
-import type { Issue, IssueComment } from "@/lib/api";
+import type { ActivityItem, Issue } from "@/lib/api";
 import { apiBaseUrl } from "@/lib/runtime-config";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
@@ -12,18 +12,19 @@ import { useState } from "react";
 const API_URL = apiBaseUrl();
 
 type IssueDetailPanelProps = {
+  activity: ActivityItem[];
   baseHref: string;
-  comments: IssueComment[];
   issue: Issue;
   name: string;
   owner: string;
 };
 
-export function IssueDetailPanel({ baseHref, comments: initialComments, issue: initialIssue, name, owner }: IssueDetailPanelProps) {
+export function IssueDetailPanel({ activity: initialActivity, baseHref, issue: initialIssue, name, owner }: IssueDetailPanelProps) {
   const router = useRouter();
   const [issue, setIssue] = useState(initialIssue);
   const [message, setMessage] = useState("");
   const commentsUrl = `${API_URL}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/issues/${issue.number}/comments`;
+  const activityUrl = `${API_URL}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/issues/${issue.number}/activity`;
   const attachmentUploadUrl = `${API_URL}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/comment-attachments`;
 
   async function setIssueStatus(nextStatus: "open" | "closed") {
@@ -70,7 +71,7 @@ export function IssueDetailPanel({ baseHref, comments: initialComments, issue: i
 
       {message ? <p className="text-sm text-[#59636e]">{message}</p> : null}
 
-      <ConversationPanel attachmentUploadUrl={attachmentUploadUrl} comments={initialComments} commentsUrl={commentsUrl} title="Comments" />
+      <ConversationPanel activity={initialActivity} activityUrl={activityUrl} attachmentUploadUrl={attachmentUploadUrl} commentsUrl={commentsUrl} />
     </main>
   );
 }

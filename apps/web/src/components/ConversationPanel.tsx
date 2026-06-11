@@ -3,104 +3,31 @@
 import { Drawer } from "@/components/Drawer";
 import { MarkdownEditor } from "@/components/MarkdownEditor";
 import { MarkdownViewer } from "@/components/MarkdownViewer";
+import { ReactionControls } from "@/components/ReactionControls";
 import { authHeaders } from "@/lib/auth-session";
-import type { CommentAttachment, CommentReaction, IssueComment } from "@/lib/api";
-import { SmilePlus } from "lucide-react";
+import type { ActivityItem, CommentAttachment, CommentReaction, IssueComment, TimelineEvent } from "@/lib/api";
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
 
-const EMOJI_OPTIONS = [
-  { emoji: "👍", label: "thumbs up", keywords: "like approve yes" },
-  { emoji: "👎", label: "thumbs down", keywords: "dislike no reject" },
-  { emoji: "👌", label: "ok hand", keywords: "ok perfect" },
-  { emoji: "👏", label: "clap", keywords: "applause nice" },
-  { emoji: "🙌", label: "raised hands", keywords: "celebrate hooray" },
-  { emoji: "🙏", label: "pray", keywords: "please thanks" },
-  { emoji: "🤝", label: "handshake", keywords: "deal agreement" },
-  { emoji: "💪", label: "muscle", keywords: "strong effort" },
-  { emoji: "👀", label: "eyes", keywords: "watch looking review" },
-  { emoji: "🧠", label: "brain", keywords: "smart idea think" },
-  { emoji: "💅", label: "polish", keywords: "style clean" },
-  { emoji: "😄", label: "smile", keywords: "happy laugh" },
-  { emoji: "😁", label: "grin", keywords: "happy smile" },
-  { emoji: "😂", label: "joy", keywords: "laugh funny" },
-  { emoji: "🤣", label: "rolling laugh", keywords: "funny lol" },
-  { emoji: "😊", label: "blush", keywords: "happy nice" },
-  { emoji: "😍", label: "heart eyes", keywords: "love awesome" },
-  { emoji: "🥰", label: "smiling hearts", keywords: "love thanks" },
-  { emoji: "😎", label: "cool", keywords: "sunglasses" },
-  { emoji: "🤔", label: "thinking", keywords: "question consider" },
-  { emoji: "😕", label: "confused", keywords: "unsure concern" },
-  { emoji: "😢", label: "cry", keywords: "sad" },
-  { emoji: "😭", label: "sob", keywords: "sad cry" },
-  { emoji: "😡", label: "angry", keywords: "mad issue" },
-  { emoji: "🤯", label: "mind blown", keywords: "wow surprise" },
-  { emoji: "😱", label: "scream", keywords: "shock" },
-  { emoji: "🥳", label: "party face", keywords: "celebrate" },
-  { emoji: "🎉", label: "party popper", keywords: "celebrate ship" },
-  { emoji: "✨", label: "sparkles", keywords: "new shiny" },
-  { emoji: "🔥", label: "fire", keywords: "hot great" },
-  { emoji: "💯", label: "hundred", keywords: "perfect agree" },
-  { emoji: "✅", label: "check", keywords: "done pass" },
-  { emoji: "❌", label: "cross", keywords: "fail no" },
-  { emoji: "⚠️", label: "warning", keywords: "caution risk" },
-  { emoji: "🚀", label: "rocket", keywords: "ship launch" },
-  { emoji: "🐛", label: "bug", keywords: "issue defect" },
-  { emoji: "🛠️", label: "tools", keywords: "fix work" },
-  { emoji: "📌", label: "pin", keywords: "important" },
-  { emoji: "📎", label: "paperclip", keywords: "attachment file" },
-  { emoji: "📝", label: "memo", keywords: "notes docs" },
-  { emoji: "📚", label: "books", keywords: "docs learn" },
-  { emoji: "🔍", label: "search", keywords: "inspect review" },
-  { emoji: "💡", label: "bulb", keywords: "idea suggestion" },
-  { emoji: "💬", label: "speech bubble", keywords: "comment chat" },
-  { emoji: "❤️", label: "red heart", keywords: "love" },
-  { emoji: "🧡", label: "orange heart", keywords: "love" },
-  { emoji: "💛", label: "yellow heart", keywords: "love" },
-  { emoji: "💚", label: "green heart", keywords: "love" },
-  { emoji: "💙", label: "blue heart", keywords: "love" },
-  { emoji: "💜", label: "purple heart", keywords: "love" },
-  { emoji: "🖤", label: "black heart", keywords: "love" },
-  { emoji: "🤍", label: "white heart", keywords: "love" },
-  { emoji: "⭐", label: "star", keywords: "favorite" },
-  { emoji: "🌟", label: "glowing star", keywords: "favorite great" },
-  { emoji: "🏆", label: "trophy", keywords: "win" },
-  { emoji: "🍕", label: "pizza", keywords: "food" },
-  { emoji: "☕", label: "coffee", keywords: "drink" },
-  { emoji: "🍻", label: "beers", keywords: "cheers" },
-  { emoji: "🌈", label: "rainbow", keywords: "color" },
-  { emoji: "🎯", label: "target", keywords: "goal focus" },
-  { emoji: "⏳", label: "hourglass", keywords: "waiting time" },
-  { emoji: "⌛", label: "hourglass done", keywords: "time" },
-  { emoji: "🔒", label: "lock", keywords: "secure" },
-  { emoji: "🔓", label: "unlock", keywords: "open" },
-  { emoji: "📦", label: "package", keywords: "release bundle" },
-  { emoji: "🧪", label: "test tube", keywords: "test experiment" },
-  { emoji: "🧹", label: "broom", keywords: "cleanup" },
-  { emoji: "🔧", label: "wrench", keywords: "fix tool" },
-  { emoji: "🎨", label: "palette", keywords: "design" },
-  { emoji: "⚡", label: "zap", keywords: "fast performance" },
-  { emoji: "🌍", label: "globe", keywords: "world server federation" },
-  { emoji: "📣", label: "megaphone", keywords: "announce" },
-];
-
 type ConversationPanelProps = {
+  activity: ActivityItem[];
+  activityUrl: string;
   attachmentUploadUrl: string;
-  comments: IssueComment[];
   commentsUrl: string;
   emptyLabel?: string;
   title?: string;
 };
 
 export function ConversationPanel({
+  activity: initialActivity,
+  activityUrl,
   attachmentUploadUrl,
-  comments: initialComments,
   commentsUrl,
-  emptyLabel = "No comments yet.",
-  title = "Conversation",
+  emptyLabel = "No activity yet.",
+  title = "Activity",
 }: ConversationPanelProps) {
   const router = useRouter();
-  const [comments, setComments] = useState(initialComments);
+  const [activity, setActivity] = useState(initialActivity);
   const [message, setMessage] = useState("");
   const [commentBusyId, setCommentBusyId] = useState<string | null>(null);
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
@@ -109,17 +36,25 @@ export function ConversationPanel({
   const [newBody, setNewBody] = useState("");
   const [newAttachments, setNewAttachments] = useState<CommentAttachment[]>([]);
   const [pendingDelete, setPendingDelete] = useState<IssueComment | null>(null);
-  const [emojiPickerCommentId, setEmojiPickerCommentId] = useState<string | null>(null);
-  const [emojiSearch, setEmojiSearch] = useState("");
 
-  async function refreshComments() {
-    const response = await fetch(`${commentsUrl}?limit=100`, { headers: authHeaders() });
+  async function refreshActivity() {
+    const response = await fetch(`${activityUrl}?limit=100`, { headers: authHeaders() });
     if (!response.ok) {
-      setMessage(`Failed to refresh comments: ${response.status}`);
+      setMessage(`Failed to refresh activity: ${response.status}`);
       return;
     }
-    const body = (await response.json()) as { data: IssueComment[] };
-    setComments(body.data);
+    const body = (await response.json()) as { data: ActivityItem[] };
+    setActivity(body.data);
+  }
+
+  function updateCommentInActivity(updated: IssueComment) {
+    setActivity((current) =>
+      current.map((item) =>
+        item.kind === "comment" && item.comment.id === updated.id
+          ? { ...item, comment: updated, created_at: updated.created_at }
+          : item,
+      ),
+    );
   }
 
   async function addComment(event: FormEvent<HTMLFormElement>) {
@@ -138,7 +73,7 @@ export function ConversationPanel({
     }
     setNewBody("");
     setNewAttachments([]);
-    await refreshComments();
+    await refreshActivity();
     setMessage("Comment added.");
     router.refresh();
   }
@@ -160,7 +95,7 @@ export function ConversationPanel({
       return;
     }
     const updated = (await response.json()) as IssueComment;
-    setComments((current) => current.map((comment) => (comment.id === updated.id ? updated : comment)));
+    updateCommentInActivity(updated);
     setEditingCommentId(null);
     setEditBody("");
     setEditAttachments([]);
@@ -183,7 +118,7 @@ export function ConversationPanel({
       return;
     }
     const updated = (await response.json()) as IssueComment;
-    setComments((current) => current.map((comment) => (comment.id === updated.id ? updated : comment)));
+    updateCommentInActivity(updated);
     setPendingDelete(null);
     setMessage("Comment deleted.");
     router.refresh();
@@ -202,22 +137,23 @@ export function ConversationPanel({
       return;
     }
     const updated = (await response.json()) as IssueComment;
-    setComments((current) => current.map((item) => (item.id === updated.id ? updated : item)));
-    setEmojiPickerCommentId(null);
-    setEmojiSearch("");
+    updateCommentInActivity(updated);
   }
-
-  const filteredEmojiOptions = emojiOptionsForSearch(emojiSearch);
 
   return (
     <section className="grid gap-3">
       <h2 className="font-semibold">{title}</h2>
       {message ? <p className="text-sm text-[#59636e]">{message}</p> : null}
-      {comments.length === 0 ? (
+      {activity.length === 0 ? (
         <p className="rounded-xl border border-[#d0d7de] bg-white p-4 text-[#59636e]">{emptyLabel}</p>
       ) : (
-        comments.map((comment) => (
-          <div className="flex items-start gap-3" key={comment.id}>
+        activity.map((item) => {
+          if (item.kind === "event") {
+            return <EventActivityItem event={item.event} key={`event-${item.event.id}`} />;
+          }
+          const comment = item.comment;
+          return (
+          <div className="flex items-start gap-3" key={`comment-${comment.id}`}>
             <Avatar comment={comment} />
             <article className="relative grid min-w-0 flex-1 gap-3 rounded-2xl border border-[#d0d7de] bg-white p-4 shadow-sm before:absolute before:left-[-7px] before:top-5 before:h-3 before:w-3 before:rotate-45 before:border-b before:border-l before:border-[#d0d7de] before:bg-white before:content-['']">
               <div className="min-w-0">
@@ -258,77 +194,11 @@ export function ConversationPanel({
 
               {!comment.deleted_at ? (
                 <div className="flex flex-wrap items-end justify-between gap-3">
-                <div className="flex flex-wrap items-center gap-1.5">
-                    {comment.reactions.map((reaction) => (
-                      <button
-                        className={`rounded-full border px-2 py-1 text-sm ${
-                          reaction.viewer_reacted
-                            ? "border-[#0969da] bg-[#ddf4ff] text-[#0969da]"
-                            : "border-[#d0d7de] bg-[#f6f8fa] text-[#24292f]"
-                        } disabled:opacity-60`}
-                        disabled={commentBusyId === comment.id}
-                        key={reaction.emoji}
-                        title={`${reaction.viewer_reacted ? "Remove" : "Add"} ${reaction.emoji} reaction`}
-                        type="button"
-                        onClick={() => void toggleReaction(comment, reaction)}
-                      >
-                        <span>{reaction.emoji}</span>
-                        {reaction.count > 0 ? <span className="ml-1 font-semibold">{reaction.count}</span> : null}
-                      </button>
-                    ))}
-                  <div className="relative">
-                    <button
-                      aria-expanded={emojiPickerCommentId === comment.id}
-                      aria-label="Add emoji reaction"
-                      className="grid h-8 w-8 place-items-center rounded-full border border-[#d0d7de] bg-white text-[#59636e] hover:border-[#0969da] hover:bg-[#ddf4ff] hover:text-[#0969da] disabled:opacity-60"
-                      disabled={commentBusyId === comment.id}
-                      title="Add reaction"
-                      type="button"
-                      onClick={() => {
-                        setEmojiPickerCommentId(emojiPickerCommentId === comment.id ? null : comment.id);
-                        setEmojiSearch("");
-                      }}
-                    >
-                      <SmilePlus aria-hidden="true" size={16} />
-                    </button>
-                    {emojiPickerCommentId === comment.id ? (
-                      <div className="absolute bottom-full left-0 z-10 mb-2 grid w-72 gap-2 rounded-xl border border-[#d0d7de] bg-white p-3 shadow-lg">
-                        <input
-                          autoFocus
-                          className="w-full rounded-md border border-[#d0d7de] px-3 py-2 text-sm"
-                          placeholder="Search emoji"
-                          value={emojiSearch}
-                          onChange={(event) => setEmojiSearch(event.target.value)}
-                        />
-                        <div className="grid max-h-64 grid-cols-8 gap-1 overflow-y-auto pr-1">
-                          {filteredEmojiOptions.map((option) => {
-                            const existing = comment.reactions.find((reaction) => reaction.emoji === option.emoji);
-                            return (
-                              <button
-                                className={`grid h-8 w-8 place-items-center rounded-md text-lg hover:bg-[#f6f8fa] ${
-                                  existing?.viewer_reacted ? "bg-[#ddf4ff] ring-1 ring-[#0969da]" : ""
-                                }`}
-                                key={option.emoji}
-                                title={option.label}
-                                type="button"
-                                onClick={() =>
-                                  void toggleReaction(comment, {
-                                    count: existing?.count ?? 0,
-                                    emoji: option.emoji,
-                                    viewer_reacted: existing?.viewer_reacted ?? false,
-                                  })
-                                }
-                              >
-                                {option.emoji}
-                              </button>
-                            );
-                          })}
-                        </div>
-                        {filteredEmojiOptions.length === 0 ? <p className="text-sm text-[#59636e]">No emoji found.</p> : null}
-                      </div>
-                    ) : null}
-                  </div>
-                  </div>
+                <ReactionControls
+                  disabled={commentBusyId === comment.id}
+                  reactions={comment.reactions}
+                  onToggle={(reaction) => void toggleReaction(comment, reaction)}
+                />
                   <div className="relative flex flex-wrap justify-end gap-2">
                     {comment.viewer_can_update ? (
                       <>
@@ -357,7 +227,8 @@ export function ConversationPanel({
               ) : null}
             </article>
           </div>
-        ))
+          );
+        })
       )}
 
       <MarkdownEditor
@@ -373,7 +244,7 @@ export function ConversationPanel({
 
       <Drawer isOpen={pendingDelete !== null} title="Delete comment" onClose={() => setPendingDelete(null)}>
         <div className="grid gap-4">
-          <p className="text-[#59636e]">Delete this comment? The message body, attachments, and reactions will be removed, but the conversation order will be preserved.</p>
+          <p className="text-[#59636e]">Delete this comment? The message body, attachments, and reactions will be removed, but the activity order will be preserved.</p>
           <div className="flex flex-wrap justify-end gap-2">
             <button className="rounded-md border border-[#d0d7de] bg-white px-3 py-1.5 font-semibold" type="button" onClick={() => setPendingDelete(null)}>
               Cancel
@@ -393,16 +264,6 @@ export function ConversationPanel({
   );
 }
 
-function emojiOptionsForSearch(search: string) {
-  const normalized = search.trim().toLowerCase();
-  if (!normalized) {
-    return EMOJI_OPTIONS;
-  }
-  return EMOJI_OPTIONS.filter((option) =>
-    [option.emoji, option.label, option.keywords].join(" ").toLowerCase().includes(normalized),
-  );
-}
-
 function AttachmentList({ attachments }: { attachments: CommentAttachment[] }) {
   if (attachments.length === 0) {
     return null;
@@ -418,15 +279,63 @@ function AttachmentList({ attachments }: { attachments: CommentAttachment[] }) {
   );
 }
 
+function EventActivityItem({ event }: { event: TimelineEvent }) {
+  const label = event.actor_display_name || event.actor_handle;
+  return (
+    <div className="flex items-start gap-3">
+      <EventAvatar event={event} />
+      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2 rounded-xl border border-[#d0d7de] bg-[#f6f8fa] px-4 py-3 text-sm text-[#59636e]">
+        <span className="font-semibold text-[#1f2328]">{label}</span>
+        <span>{event.body || eventLabel(event.event_type)}</span>
+        <span>{formatDate(event.created_at)}</span>
+        {event.remote_server ? <span className="rounded-full bg-white px-2 py-0.5 text-xs font-semibold text-[#59636e]">{event.remote_server}</span> : null}
+      </div>
+    </div>
+  );
+}
+
+function EventAvatar({ event }: { event: TimelineEvent }) {
+  const label = event.actor_display_name || event.actor_handle;
+  if (event.actor_avatar_url) {
+    // Federated avatars can come from arbitrary hosts, which Next Image cannot preconfigure.
+    // eslint-disable-next-line @next/next/no-img-element
+    return <img alt="" className="h-8 w-8 rounded-full border border-[#d0d7de] object-cover" src={event.actor_avatar_url} />;
+  }
+  return (
+    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-[#d0d7de] bg-white text-xs font-bold text-[#59636e]">
+      {avatarFallback(label)}
+    </span>
+  );
+}
+
+function eventLabel(eventType: string) {
+  switch (eventType) {
+    case "opened":
+      return "opened this item";
+    case "closed":
+      return "closed this item";
+    case "reopened":
+      return "reopened this item";
+    case "merged":
+      return "merged this pull request";
+    case "renamed":
+      return "renamed this item";
+    case "mentioned":
+      return "mentioned someone";
+    default:
+      return eventType.split("_").join(" ");
+  }
+}
+
 function Avatar({ comment }: { comment: IssueComment }) {
   const label = comment.author_display_name || comment.author_handle;
   if (comment.author_avatar_url) {
     // Federated avatars can come from arbitrary hosts, which Next Image cannot preconfigure.
     // eslint-disable-next-line @next/next/no-img-element
-    return <img alt="" className="h-10 w-10 rounded-full border border-[#d0d7de] object-cover" src={comment.author_avatar_url} />;
+    return <img alt="" className="mt-4 h-10 w-10 rounded-full border border-[#d0d7de] object-cover" src={comment.author_avatar_url} />;
   }
   return (
-    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-[#d0d7de] bg-[#f6f8fa] text-sm font-bold text-[#59636e]">
+    <span className="mt-4 flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-[#d0d7de] bg-[#f6f8fa] text-sm font-bold text-[#59636e]">
       {avatarFallback(label)}
     </span>
   );

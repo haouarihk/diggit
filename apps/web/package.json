@@ -10,6 +10,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "framer-motion": "^12.40.0",
     "lucide-react": "^1.17.0",
     "moment": "^2.30.1",
     "next": "^16.0.7",

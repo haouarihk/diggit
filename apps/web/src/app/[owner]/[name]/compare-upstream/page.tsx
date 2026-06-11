@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { CodeDiff } from "@/components/CodeDiff";
-import { RepoHeader, repoHref } from "@/components/RepoHeader";
+import { RepoHeader, RepoPageContent, repoHref } from "@/components/RepoHeader";
 import { SyncForkButton } from "@/components/SyncForkButton";
 import { compareUpstream, getRepository, listPullRequests, type RepositoryCommit } from "@/lib/api";
 
@@ -25,40 +25,42 @@ export default async function CompareUpstreamPage({ params }: Props) {
   return (
     <div className="grid gap-6">
       <RepoHeader activeTab="code" pullRequestsCount={pullRequests.data.length} repo={repo} />
-      <section className="grid gap-3 rounded-md border border-[#d0d7de] bg-white p-4">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h2 className="text-xl font-semibold">Compare with upstream</h2>
-            <p className="text-[#59636e]">
-              {compare.source ? (
-                <>
-                  Original repository:{" "}
-                  <Link className="font-semibold text-[#0969da] hover:underline" href={compare.source.url}>
-                    {compare.source.owner_handle}/{compare.source.name}
-                  </Link>
-                </>
-              ) : (
-                "Original repository unavailable."
-              )}
-            </p>
+      <RepoPageContent>
+        <section className="grid gap-3 border-b dark:border-gray-700/50 border-gray-200 p-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="text-xl font-semibold">Compare with upstream</h2>
+              <p className="text-[#59636e]">
+                {compare.source ? (
+                  <>
+                    Original repository:{" "}
+                    <Link className="font-semibold text-[#0969da] hover:underline" href={compare.source.url}>
+                      {compare.source.owner_handle}/{compare.source.name}
+                    </Link>
+                  </>
+                ) : (
+                  "Original repository unavailable."
+                )}
+              </p>
+            </div>
+            {compare.behind_by > 0 ? <SyncForkButton name={decodedName} owner={decodedOwner} /> : null}
           </div>
-          {compare.behind_by > 0 ? <SyncForkButton name={decodedName} owner={decodedOwner} /> : null}
+          {compare.status === "unavailable" ? (
+            <p className="text-[#59636e]">{compare.message ?? "Upstream comparison is unavailable."}</p>
+          ) : (
+            <div className="flex flex-wrap items-center gap-3 text-sm text-[#59636e]">
+              <span>{compare.ahead_by} commits ahead</span>
+              <span>{compare.behind_by} commits behind</span>
+              <span className="rounded-full border border-[#d0d7de] px-2 py-0.5">{compare.status.replaceAll("_", " ")}</span>
+            </div>
+          )}
+        </section>
+        <div className="grid gap-6 lg:grid-cols-2">
+          <CommitList commits={compare.ahead_commits} emptyLabel="No commits ahead of upstream." title="Ahead commits" />
+          <CommitList commits={compare.behind_commits} emptyLabel="No upstream commits to sync." title="Behind commits" />
         </div>
-        {compare.status === "unavailable" ? (
-          <p className="text-[#59636e]">{compare.message ?? "Upstream comparison is unavailable."}</p>
-        ) : (
-          <div className="flex flex-wrap items-center gap-3 text-sm text-[#59636e]">
-            <span>{compare.ahead_by} commits ahead</span>
-            <span>{compare.behind_by} commits behind</span>
-            <span className="rounded-full border border-[#d0d7de] px-2 py-0.5">{compare.status.replaceAll("_", " ")}</span>
-          </div>
-        )}
-      </section>
-      <div className="grid gap-6 lg:grid-cols-2">
-        <CommitList commits={compare.ahead_commits} emptyLabel="No commits ahead of upstream." title="Ahead commits" />
-        <CommitList commits={compare.behind_commits} emptyLabel="No upstream commits to sync." title="Behind commits" />
-      </div>
-      <CodeDiff emptyLabel="No diff to show between this fork and upstream." files={compare.files} />
+        <CodeDiff emptyLabel="No diff to show between this fork and upstream." files={compare.files} />
+      </RepoPageContent>
     </div>
   );
 }

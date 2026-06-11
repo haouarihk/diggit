@@ -179,6 +179,82 @@ pub(crate) struct RepositoryTagListResponse {
     pub(crate) data: Vec<RepositoryTagResponse>,
 }
 
+#[derive(Debug, Serialize, Deserialize, FromRow)]
+pub(crate) struct Release {
+    pub(crate) id: Uuid,
+    pub(crate) repository_id: Uuid,
+    pub(crate) tag_name: String,
+    pub(crate) target_commit_sha: String,
+    pub(crate) title: String,
+    pub(crate) body: String,
+    pub(crate) body_html: String,
+    pub(crate) author_actor_url: String,
+    pub(crate) author_handle: String,
+    pub(crate) author_display_name: String,
+    pub(crate) status: String,
+    pub(crate) is_prerelease: bool,
+    pub(crate) activity_id: Option<String>,
+    pub(crate) published_at: Option<DateTime<Utc>>,
+    pub(crate) created_at: DateTime<Utc>,
+    pub(crate) updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize, Deserialize, FromRow)]
+pub(crate) struct ReleaseAsset {
+    pub(crate) id: Uuid,
+    pub(crate) release_id: Uuid,
+    pub(crate) uploaded_by_actor_url: String,
+    pub(crate) runner_id: Option<Uuid>,
+    pub(crate) original_filename: String,
+    pub(crate) content_type: String,
+    pub(crate) byte_size: i64,
+    pub(crate) sha256: String,
+    pub(crate) storage_key: String,
+    pub(crate) download_count: i64,
+    pub(crate) created_at: DateTime<Utc>,
+    pub(crate) deleted_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct ReleaseAssetResponse {
+    pub(crate) id: Uuid,
+    pub(crate) filename: String,
+    #[serde(rename = "contentType")]
+    pub(crate) content_type: String,
+    pub(crate) size: i64,
+    pub(crate) sha256: String,
+    pub(crate) url: String,
+    pub(crate) markdown: String,
+    #[serde(rename = "isImage")]
+    pub(crate) is_image: bool,
+    pub(crate) download_count: i64,
+    pub(crate) created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct ReleaseResponse {
+    pub(crate) id: Uuid,
+    pub(crate) repository_id: Uuid,
+    pub(crate) tag_name: String,
+    pub(crate) target_commit_sha: String,
+    pub(crate) title: String,
+    pub(crate) body: String,
+    pub(crate) body_html: String,
+    pub(crate) author_actor_url: String,
+    pub(crate) author_handle: String,
+    pub(crate) author_display_name: String,
+    pub(crate) status: String,
+    pub(crate) is_prerelease: bool,
+    pub(crate) activity_id: Option<String>,
+    pub(crate) assets: Vec<ReleaseAssetResponse>,
+    pub(crate) reactions: Vec<CommentReactionResponse>,
+    pub(crate) last_commit: Option<RepositoryCommitResponse>,
+    pub(crate) viewer_can_update: bool,
+    pub(crate) published_at: Option<DateTime<Utc>>,
+    pub(crate) created_at: DateTime<Utc>,
+    pub(crate) updated_at: DateTime<Utc>,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct RepositoryDiffLineResponse {
     pub(crate) kind: String,
@@ -274,7 +350,8 @@ pub(crate) struct Namespace {
 
 #[derive(Debug, Serialize, Deserialize, FromRow)]
 pub(crate) struct PullRequest {
-    pub(crate) id: Uuid,
+    pub(crate) id: i64,
+    pub(crate) legacy_uuid: Option<Uuid>,
     pub(crate) target_repository_id: Uuid,
     pub(crate) source_repository_id: Option<Uuid>,
     pub(crate) title: String,
@@ -291,7 +368,7 @@ pub(crate) struct PullRequest {
 
 #[derive(Debug, Serialize)]
 pub(crate) struct PullRequestResponse {
-    pub(crate) id: Uuid,
+    pub(crate) id: i64,
     pub(crate) target_repository_id: Uuid,
     pub(crate) source_repository_id: Option<Uuid>,
     pub(crate) title: String,
@@ -348,7 +425,8 @@ pub(crate) struct Issue {
 pub(crate) struct IssueComment {
     pub(crate) id: Uuid,
     pub(crate) repository_id: Option<Uuid>,
-    pub(crate) pull_request_id: Option<Uuid>,
+    pub(crate) pull_request_id: Option<i64>,
+    pub(crate) pull_request_uuid: Option<Uuid>,
     pub(crate) issue_id: Option<Uuid>,
     pub(crate) author_handle: String,
     pub(crate) author_actor_url: Option<String>,
@@ -403,7 +481,7 @@ pub(crate) struct CommentAttachmentResponse {
 pub(crate) struct CommentResponse {
     pub(crate) id: Uuid,
     pub(crate) repository_id: Option<Uuid>,
-    pub(crate) pull_request_id: Option<Uuid>,
+    pub(crate) pull_request_id: Option<i64>,
     pub(crate) issue_id: Option<Uuid>,
     pub(crate) author_handle: String,
     pub(crate) author_actor_url: Option<String>,
@@ -419,6 +497,45 @@ pub(crate) struct CommentResponse {
     pub(crate) created_at: DateTime<Utc>,
     pub(crate) updated_at: DateTime<Utc>,
     pub(crate) deleted_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Serialize, Deserialize, FromRow)]
+pub(crate) struct TimelineEvent {
+    pub(crate) id: Uuid,
+    pub(crate) repository_id: Uuid,
+    pub(crate) issue_id: Option<Uuid>,
+    pub(crate) pull_request_id: Option<i64>,
+    pub(crate) actor_handle: String,
+    pub(crate) actor_actor_url: Option<String>,
+    pub(crate) actor_display_name: String,
+    pub(crate) actor_avatar_url: Option<String>,
+    pub(crate) remote_server: Option<String>,
+    pub(crate) event_type: String,
+    pub(crate) body: String,
+    pub(crate) metadata: Value,
+    pub(crate) created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct TimelineEventResponse {
+    pub(crate) id: Uuid,
+    pub(crate) event_type: String,
+    pub(crate) body: String,
+    pub(crate) actor_handle: String,
+    pub(crate) actor_actor_url: Option<String>,
+    pub(crate) actor_display_name: String,
+    pub(crate) actor_avatar_url: Option<String>,
+    pub(crate) remote_server: Option<String>,
+    pub(crate) metadata: Value,
+    pub(crate) created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct ActivityItemResponse {
+    pub(crate) kind: String,
+    pub(crate) comment: Option<CommentResponse>,
+    pub(crate) event: Option<TimelineEventResponse>,
+    pub(crate) created_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Serialize)]
@@ -922,6 +1039,26 @@ pub(crate) struct UpsertRunnerVariableRequest {
 }
 
 #[derive(Debug, Deserialize)]
+pub(crate) struct CreateReleaseRequest {
+    pub(crate) tag_name: String,
+    pub(crate) target_ref: Option<String>,
+    pub(crate) title: Option<String>,
+    pub(crate) body: Option<String>,
+    pub(crate) status: Option<String>,
+    pub(crate) is_prerelease: Option<bool>,
+    pub(crate) generate_notes: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct UpdateReleaseRequest {
+    pub(crate) title: Option<String>,
+    pub(crate) body: Option<String>,
+    pub(crate) status: Option<String>,
+    pub(crate) is_prerelease: Option<bool>,
+    pub(crate) generate_notes: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
 pub(crate) struct ForkRepoRequest {
     pub(crate) name: Option<String>,
 }
@@ -1035,6 +1172,13 @@ pub(crate) struct IssueListQuery {
     pub(crate) status: Option<String>,
     pub(crate) q: Option<String>,
     pub(crate) labels: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct ReleaseListQuery {
+    pub(crate) page: Option<i64>,
+    pub(crate) limit: Option<i64>,
+    pub(crate) status: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

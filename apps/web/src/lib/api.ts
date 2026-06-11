@@ -118,7 +118,7 @@ export type Collaborator = {
 };
 
 export type PullRequest = {
-  id: string;
+  id: number;
   target_repository_id: string;
   source_repository_id: string | null;
   title: string;
@@ -184,7 +184,7 @@ export type IssueLabel = {
 export type IssueComment = {
   id: string;
   repository_id: string | null;
-  pull_request_id: string | null;
+  pull_request_id: number | null;
   issue_id: string | null;
   author_handle: string;
   author_actor_url: string | null;
@@ -220,6 +220,33 @@ export type CommentAttachment = {
 };
 
 export type PullRequestComment = IssueComment;
+
+export type TimelineEvent = {
+  id: string;
+  event_type: "opened" | "closed" | "reopened" | "merged" | "renamed" | string;
+  body: string;
+  actor_handle: string;
+  actor_actor_url: string | null;
+  actor_display_name: string;
+  actor_avatar_url: string | null;
+  remote_server: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+};
+
+export type ActivityItem =
+  | {
+      kind: "comment";
+      comment: IssueComment;
+      event: null;
+      created_at: string;
+    }
+  | {
+      kind: "event";
+      comment: null;
+      event: TimelineEvent;
+      created_at: string;
+    };
 
 export type RepositoryCommit = {
   sha: string;
@@ -263,6 +290,42 @@ export type RepositoryStats = {
 export type RepositoryTag = {
   name: string;
   commit_sha: string | null;
+};
+
+export type ReleaseAsset = {
+  id: string;
+  filename: string;
+  contentType: string;
+  size: number;
+  sha256: string;
+  url: string;
+  markdown: string;
+  isImage: boolean;
+  download_count: number;
+  created_at: string;
+};
+
+export type Release = {
+  id: string;
+  repository_id: string;
+  tag_name: string;
+  target_commit_sha: string;
+  title: string;
+  body: string;
+  body_html: string;
+  author_actor_url: string;
+  author_handle: string;
+  author_display_name: string;
+  status: "draft" | "published" | string;
+  is_prerelease: boolean;
+  activity_id: string | null;
+  assets: ReleaseAsset[];
+  reactions: CommentReaction[];
+  last_commit: RepositoryCommit | null;
+  viewer_can_update: boolean;
+  published_at: string | null;
+  created_at: string;
+  updated_at: string;
 };
 
 export type RepositoryDiffLine = {
@@ -463,6 +526,79 @@ export function listRepositoryTags(owner: string, name: string) {
   return apiFetch<Collection<RepositoryTag>>(`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/tags`);
 }
 
+export function listReleases(
+  owner: string,
+  name: string,
+  params?: { limit?: number; page?: number; status?: "draft" | "published" | "all" },
+) {
+  const searchParams = new URLSearchParams();
+  if (params?.page) {
+    searchParams.set("page", String(params.page));
+  }
+  if (params?.limit) {
+    searchParams.set("limit", String(params.limit));
+  }
+  if (params?.status) {
+    searchParams.set("status", params.status);
+  }
+  const query = searchParams.toString();
+  return apiFetch<PaginatedCollection<Release>>(
+    `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/releases${query ? `?${query}` : ""}`,
+  );
+}
+
+export function getRelease(owner: string, name: string, tag: string) {
+  return apiFetch<Release>(
+    `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/releases/${encodeURIComponent(tag)}`,
+  );
+}
+
+export function createRelease(
+  owner: string,
+  name: string,
+  input: {
+    body?: string;
+    generate_notes?: boolean;
+    is_prerelease?: boolean;
+    status?: "draft" | "published";
+    tag_name: string;
+    target_ref?: string;
+    title?: string;
+  },
+) {
+  return apiFetch<Release>(`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/releases`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function updateRelease(
+  owner: string,
+  name: string,
+  tag: string,
+  input: {
+    body?: string;
+    generate_notes?: boolean;
+    is_prerelease?: boolean;
+    status?: "draft" | "published";
+    title?: string;
+  },
+) {
+  return apiFetch<Release>(
+    `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/releases/${encodeURIComponent(tag)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(input),
+    },
+  );
+}
+
+export function compareRefs(owner: string, name: string, range: string) {
+  return apiFetch<RepositoryCompare>(
+    `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/compare/${encodeURIComponent(range)}`,
+  );
+}
+
 export function getRepositoryStats(owner: string, name: string, refName?: string) {
   const searchParams = new URLSearchParams();
   if (refName) {
@@ -573,9 +709,9 @@ export function listPullRequests(owner: string, name: string) {
   );
 }
 
-export function getPullRequest(owner: string, name: string, id: string) {
+export function getPullRequest(owner: string, name: string, id: number | string) {
   return apiFetch<PullRequest>(
-    `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pull-requests/${encodeURIComponent(id)}`,
+    `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pull/${encodeURIComponent(String(id))}`,
   );
 }
 
@@ -622,6 +758,13 @@ export function listRepositoryIssueComments(owner: string, name: string, number:
   );
 }
 
+export function listRepositoryIssueActivity(owner: string, name: string, number: number, page = 1, limit = 100) {
+  const searchParams = new URLSearchParams({ page: String(page), limit: String(limit) });
+  return apiFetch<PaginatedCollection<ActivityItem>>(
+    `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/issues/${number}/activity?${searchParams.toString()}`,
+  );
+}
+
 export function updateRepositoryIssueComment(owner: string, name: string, number: number, commentId: string, body: string, attachmentIds: string[] = []) {
   return apiFetch<IssueComment>(
     `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/issues/${number}/comments/${encodeURIComponent(commentId)}`,
@@ -632,16 +775,23 @@ export function updateRepositoryIssueComment(owner: string, name: string, number
   );
 }
 
-export function listPullRequestComments(owner: string, name: string, id: string, page = 1, limit = 100) {
+export function listPullRequestComments(owner: string, name: string, id: number | string, page = 1, limit = 100) {
   const searchParams = new URLSearchParams({ page: String(page), limit: String(limit) });
   return apiFetch<PaginatedCollection<PullRequestComment>>(
-    `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pull-requests/${encodeURIComponent(id)}/comments?${searchParams.toString()}`,
+    `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pull-requests/${encodeURIComponent(String(id))}/comments?${searchParams.toString()}`,
   );
 }
 
-export function updatePullRequestComment(owner: string, name: string, id: string, commentId: string, body: string, attachmentIds: string[] = []) {
+export function listPullRequestActivity(owner: string, name: string, id: number | string, page = 1, limit = 100) {
+  const searchParams = new URLSearchParams({ page: String(page), limit: String(limit) });
+  return apiFetch<PaginatedCollection<ActivityItem>>(
+    `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pull/${encodeURIComponent(String(id))}/activity?${searchParams.toString()}`,
+  );
+}
+
+export function updatePullRequestComment(owner: string, name: string, id: number | string, commentId: string, body: string, attachmentIds: string[] = []) {
   return apiFetch<PullRequestComment>(
-    `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pull-requests/${encodeURIComponent(id)}/comments/${encodeURIComponent(commentId)}`,
+    `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pull-requests/${encodeURIComponent(String(id))}/comments/${encodeURIComponent(commentId)}`,
     {
       method: "PATCH",
       body: JSON.stringify({ attachment_ids: attachmentIds, body }),

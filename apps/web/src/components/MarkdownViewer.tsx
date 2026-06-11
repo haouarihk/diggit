@@ -1,4 +1,5 @@
 import type { ElementType, ReactNode } from "react";
+import IconForFile, { FileTypeIcon, README_ENTRY } from "./IconForFile";
 
 type MarkdownViewerProps = {
   content: string;
@@ -16,6 +17,9 @@ type MarkdownBlock =
   | { type: "list"; items: string[] }
   | { type: "paragraph"; text: string };
 
+
+
+
 export function MarkdownViewer({ content, fileName, className = "", sanitizedHtml, variant = "file" }: MarkdownViewerProps) {
   const blocks = parseMarkdown(sanitizeMarkdownContent(content));
   const shell = variant === "comment" ? `grid gap-3 ${className}` : `rounded-b-md border border-t-0 border-[#d0d7de] bg-white p-5 ${className}`;
@@ -25,7 +29,7 @@ export function MarkdownViewer({ content, fileName, className = "", sanitizedHtm
     <article className={shell}>
       {fileName ? (
         <div className="mb-5 flex items-center gap-2 border-b border-[#d8dee4] pb-3 text-sm text-[#59636e]">
-          {fileIcon(fileName)}
+          <FileTypeIcon entry={README_ENTRY} />
           <span className="font-semibold text-[#1f2328]">{fileName}</span>
         </div>
       ) : null}

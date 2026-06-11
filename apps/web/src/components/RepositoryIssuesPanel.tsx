@@ -53,26 +53,26 @@ export function RepositoryIssuesPanel({ baseHref, issues, labels, name, owner, p
   }
 
   return (
-    <section className="rounded-md border border-[#d0d7de] bg-white">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#d8dee4] bg-[#f6f8fa] px-4 py-3">
+    <section>
+      <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
         <div>
           <h2 className="text-base font-semibold">Issues</h2>
           <p className="text-sm text-[#59636e]">Track bugs, ideas, and federated discussion for this repository.</p>
         </div>
-        <button className="rounded-md border border-black/15 bg-[#1a7f37] px-3 py-1.5 font-bold text-white" type="button" onClick={() => setIsCreateOpen(true)}>
-          New issue
-        </button>
+        <div className="flex flex-wrap items-center gap-6">
+          <div className="flex flex-wrap gap-2">
+            <IssueFilter active={status === "open"} href={issueListHref(baseHref, { labels: selectedLabels, q: query, status: "open" })} label="Open" />
+            <IssueFilter active={status === "closed"} href={issueListHref(baseHref, { labels: selectedLabels, q: query, status: "closed" })} label="Closed" />
+            <IssueFilter active={status === "all"} href={issueListHref(baseHref, { labels: selectedLabels, q: query, status: "all" })} label="All" />
+          </div>
+          <span className="text-[#59636e]">{pagination.total} total</span>
+          <button className="rounded-md border border-black/15 bg-[#1a7f37] px-3 py-1.5 font-bold text-white" type="button" onClick={() => setIsCreateOpen(true)}>
+            New issue
+          </button>
+        </div>
       </div>
 
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#d8dee4] px-4 py-3 text-sm">
-        <div className="flex flex-wrap gap-2">
-          <IssueFilter active={status === "open"} href={issueListHref(baseHref, { labels: selectedLabels, q: query, status: "open" })} label="Open" />
-          <IssueFilter active={status === "closed"} href={issueListHref(baseHref, { labels: selectedLabels, q: query, status: "closed" })} label="Closed" />
-          <IssueFilter active={status === "all"} href={issueListHref(baseHref, { labels: selectedLabels, q: query, status: "all" })} label="All" />
-        </div>
-        <span className="text-[#59636e]">{pagination.total} total</span>
-      </div>
-      <form className="grid gap-3 border-b border-[#d8dee4] px-4 py-3 sm:grid-cols-[minmax(0,1fr)_220px_auto]" action={`${baseHref}/issues`}>
+      <form className="grid gap-3 px-4 py-3 sm:grid-cols-[minmax(0,1fr)_220px_auto]" action={`${baseHref}/issues`}>
         <input name="status" type="hidden" value={status} />
         <input className="rounded-md border border-[#d0d7de] bg-white px-3 py-2" defaultValue={query} name="q" placeholder="Search issues by name..." />
         <select className="rounded-md border border-[#d0d7de] bg-white px-3 py-2" defaultValue={selectedLabels} name="labels">
@@ -88,7 +88,7 @@ export function RepositoryIssuesPanel({ baseHref, issues, labels, name, owner, p
         </button>
       </form>
 
-      {message ? <div className="border-b border-[#d8dee4] px-4 py-2 text-sm text-[#59636e]">{message}</div> : null}
+      {message ? <div className="px-4 py-2 text-sm text-[#59636e]">{message}</div> : null}
 
       {issues.length === 0 ? (
         <div className="grid gap-2 p-6 text-center">
@@ -96,9 +96,9 @@ export function RepositoryIssuesPanel({ baseHref, issues, labels, name, owner, p
           <p className="text-[#59636e]">Create an issue to start tracking work or discussion.</p>
         </div>
       ) : (
-        <div className="grid">
+        <div className="flex flex-col gap-12 p-4">
           {issues.map((issue) => (
-            <article className="grid gap-2 border-b border-[#d8dee4] p-4 last:border-b-0" key={issue.id}>
+            <article className="grid gap-3 border-2 border-black/10 p-4 dark:border-white/10" key={issue.id}>
               <div className="flex flex-wrap items-center gap-2">
                 <Link className="text-left font-semibold text-[#0969da] hover:underline" href={`${baseHref}/issues/${issue.number}`}>
                   {issue.title}

@@ -55,7 +55,7 @@ export function RepositoryList({ repositories, emptyLabel }: RepositoryListProps
   );
 }
 
-function OwnerBadge({ owner, ownerHandle }: { owner: Repository["owner"]; ownerHandle: string }) {
+export function OwnerBadge({ owner, ownerHandle, withoutHandle }: { owner: Repository["owner"]; ownerHandle: string; withoutHandle?: boolean }) {
   const safeOwner = owner ?? {
     avatar_fallback: ownerHandle.slice(0, 2).toUpperCase(),
     avatar_url: null,
@@ -75,7 +75,7 @@ function OwnerBadge({ owner, ownerHandle }: { owner: Repository["owner"]; ownerH
         </span>
       )}
       <span className="font-medium text-[#1f2328]">{safeOwner.display_name}</span>
-      <span className="text-[#59636e]">@{safeOwner.handle}</span>
+      {!withoutHandle ? <span className="text-[#59636e]">@{safeOwner.handle}</span> : null}
     </>
   );
 

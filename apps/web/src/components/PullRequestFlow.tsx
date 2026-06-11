@@ -320,7 +320,7 @@ export function PullRequestCreateForm({ baseHref, defaultTitle, name, owner, sel
     }
 
     const pullRequest = (await response.json()) as PullRequest;
-    router.push(`${baseHref}/pull-requests/${encodeURIComponent(pullRequest.id)}`);
+    router.push(`${baseHref}/pull/${encodeURIComponent(String(pullRequest.id))}`);
   }
 
   return (

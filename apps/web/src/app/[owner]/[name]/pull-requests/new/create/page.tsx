@@ -1,5 +1,5 @@
 import { PullRequestCreateForm } from "@/components/PullRequestFlow";
-import { RepoHeader, repoHref } from "@/components/RepoHeader";
+import { RepoHeader, RepoPageContent, repoHref } from "@/components/RepoHeader";
 import { comparePullRequestBranches, getRepository, listPullRequests, type RepositoryCompare } from "@/lib/api";
 import { decodePullRequestSource } from "@/lib/pull-request-flow";
 import Link from "next/link";
@@ -38,31 +38,33 @@ export default async function CreatePullRequestPage({ params, searchParams }: Pr
     <div className="grid gap-6">
       <RepoHeader activeTab="pull-requests" pullRequestsCount={pullRequests.data.length} repo={repo} />
 
-      <section className="grid gap-4">
-        <div>
-          <h2 className="text-2xl font-semibold tracking-tight">New pull request</h2>
-          <p className="text-[#59636e]">Add the final details and create the pull request.</p>
-        </div>
-
-        {selection && targetBranch ? (
-          <PullRequestCreateForm
-            baseHref={baseHref}
-            defaultTitle={defaultTitle}
-            name={decodedName}
-            owner={decodedOwner}
-            selection={selection}
-            targetBranch={targetBranch}
-          />
-        ) : (
-          <div className="grid gap-3 rounded-2xl border border-[#d0d7de] bg-white p-6 text-center">
-            <h3 className="text-lg font-semibold">Choose branches first</h3>
-            <p className="text-[#59636e]">A source and target branch are required before creating a pull request.</p>
-            <Link className="justify-self-center rounded-lg border border-[#d0d7de] bg-white px-4 py-2 font-semibold" href={`${baseHref}/pull-requests/new`}>
-              Start over
-            </Link>
+      <RepoPageContent>
+        <section className="grid gap-4">
+          <div>
+            <h2 className="text-2xl font-semibold tracking-tight">New pull request</h2>
+            <p className="text-[#59636e]">Add the final details and create the pull request.</p>
           </div>
-        )}
-      </section>
+
+          {selection && targetBranch ? (
+            <PullRequestCreateForm
+              baseHref={baseHref}
+              defaultTitle={defaultTitle}
+              name={decodedName}
+              owner={decodedOwner}
+              selection={selection}
+              targetBranch={targetBranch}
+            />
+          ) : (
+            <div className="grid gap-3 rounded-2xl border border-[#d0d7de] bg-white p-6 text-center">
+              <h3 className="text-lg font-semibold">Choose branches first</h3>
+              <p className="text-[#59636e]">A source and target branch are required before creating a pull request.</p>
+              <Link className="justify-self-center rounded-lg border border-[#d0d7de] bg-white px-4 py-2 font-semibold" href={`${baseHref}/pull-requests/new`}>
+                Start over
+              </Link>
+            </div>
+          )}
+        </section>
+      </RepoPageContent>
     </div>
   );
 }

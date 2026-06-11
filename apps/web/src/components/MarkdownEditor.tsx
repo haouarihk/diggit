@@ -129,7 +129,7 @@ export function MarkdownEditor({
       onDrop={handleDrop}
       onSubmit={onSubmit}
     >
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#d8dee4] bg-linear-to-r from-[#f6f8fa] to-white px-4 py-3">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#d8dee4] bg-[#f6f8fa] px-4 py-3">
         <div>
           <span className="font-semibold text-[#1f2328]">{label}</span>
           <p className="text-xs text-[#59636e]">Markdown, files, paste and drag-drop supported.</p>

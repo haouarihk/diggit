@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { RepoHeader, repoHref } from "@/components/RepoHeader";
+import { RepoHeader, RepoPageContent, repoHref } from "@/components/RepoHeader";
 import { getRepository, listPullRequests } from "@/lib/api";
 
 type RepositorySettingsLayoutProps = {
@@ -23,17 +23,19 @@ export default async function RepositorySettingsLayout({ children, params }: Rep
   return (
     <div className="grid gap-6">
       <RepoHeader activeTab="settings" pullRequestsCount={pullRequests.data.length} repo={repo} />
-      <div className="grid gap-6 lg:grid-cols-[240px_minmax(0,1fr)]">
-        <aside className="self-start rounded-md border border-[#d0d7de] bg-white">
-          <nav aria-label="Repository settings" className="grid p-2">
-            <SettingsLink href={settingsHref} label="General" />
-            <SettingsLink href={`${settingsHref}/collaborators`} label="Collaborators" />
-            <SettingsLink href={`${settingsHref}/secrets`} label="Secrets and variables" />
-            <SettingsLink href={`${settingsHref}/webhooks`} label="Webhooks" />
-          </nav>
-        </aside>
-        {children}
-      </div>
+      <RepoPageContent>
+        <div className="grid gap-6 lg:grid-cols-[240px_minmax(0,1fr)]">
+          <aside className="self-start rounded-md border border-[#d0d7de] bg-white">
+            <nav aria-label="Repository settings" className="grid p-2">
+              <SettingsLink href={settingsHref} label="General" />
+              <SettingsLink href={`${settingsHref}/collaborators`} label="Collaborators" />
+              <SettingsLink href={`${settingsHref}/secrets`} label="Secrets and variables" />
+              <SettingsLink href={`${settingsHref}/webhooks`} label="Webhooks" />
+            </nav>
+          </aside>
+          {children}
+        </div>
+      </RepoPageContent>
     </div>
   );
 }

@@ -809,6 +809,45 @@ pub(crate) async fn dispatch_repository_webhooks(
     Ok(())
 }
 
+pub(crate) async fn dispatch_release_webhooks(
+    state: &AppState,
+    repo: &Repository,
+    release: &Release,
+    action: &str,
+) -> ApiResult<()> {
+    let webhooks = sqlx::query_as::<_, RepositoryWebhook>(
+        "SELECT * FROM repository_webhooks WHERE repository_id = $1 AND active = TRUE AND 'releases' = ANY(events)",
+    )
+    .bind(repo.id)
+    .fetch_all(&state.pool)
+    .await?;
+    if webhooks.is_empty() {
+        return Ok(());
+    }
+    let payload = json!({
+        "object_kind": "release",
+        "event_name": "release",
+        "action": action.to_lowercase(),
+        "name": release.title,
+        "description": release.body,
+        "tag": release.tag_name,
+        "ref": format!("refs/tags/{}", release.tag_name),
+        "checkout_sha": release.target_commit_sha,
+        "released_at": release.published_at,
+        "url": format!("{}/{}/{}/releases/{}", state.config.public_web_url.trim_end_matches('/'), repo.owner_handle, repo.name, release.tag_name),
+        "author": {
+            "name": release.author_display_name,
+            "username": release.author_handle
+        },
+        "project": gitlab_project_payload(state, repo).await?,
+        "repository": gitlab_repository_payload(state, repo).await?
+    });
+    for webhook in &webhooks {
+        deliver_repository_webhook(state, webhook, &payload).await;
+    }
+    Ok(())
+}
+
 pub(crate) async fn record_successful_http_push(
     state: &AppState,
     repo: &Repository,
@@ -1593,6 +1632,7 @@ async fn deliver_repository_webhook(
     payload: &Value,
 ) {
     let event_header = match payload.get("object_kind").and_then(Value::as_str) {
+        Some("release") => "Release Hook",
         Some("tag_push") => "Tag Push Hook",
         Some("push") => "Push Hook",
         _ => "Hook",

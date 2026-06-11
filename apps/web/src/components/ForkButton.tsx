@@ -17,6 +17,7 @@ type ForkButtonProps = {
 export function ForkButton({ owner, name, initialForks }: ForkButtonProps) {
   const router = useRouter();
   const [forks, setForks] = useState(initialForks);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [message, setMessage] = useState("");
 
   async function fork() {
@@ -26,54 +27,63 @@ export function ForkButton({ owner, name, initialForks }: ForkButtonProps) {
       return;
     }
 
-    if (session.kind === "federated") {
-      const response = await fetch(`${session.homeServer}/auth/federated/fork`, {
-        method: "POST",
-        headers: {
-          authorization: `Bearer ${session.homeToken}`,
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({
-          source_repo_url: `${PUBLIC_API_URL}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`,
-        }),
-      });
+    setIsSubmitting(true);
 
-      if (!response.ok) {
-        setMessage(`Failed: ${response.status}`);
+    try {
+      if (session.kind === "federated") {
+        const response = await fetch(`${session.homeServer}/auth/federated/fork`, {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${session.homeToken}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            source_repo_url: `${PUBLIC_API_URL}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`,
+          }),
+        });
+
+        if (!response.ok) {
+          setMessage(await responseErrorMessage(response));
+          return;
+        }
+
+        const forkedRepo = (await response.json()) as { http_url: string; owner_handle: string; name: string };
+        setForks((value) => value + 1);
+        setMessage("Fork created on your home server.");
+        window.location.href = forkedRepo.http_url.replace(/\.git$/, "");
         return;
       }
 
-      const forkedRepo = (await response.json()) as { http_url: string; owner_handle: string; name: string };
+      const response = await fetch(`${API_URL}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/fork`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${session.token}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({}),
+      });
+
+      if (!response.ok) {
+        setMessage(await responseErrorMessage(response));
+        return;
+      }
+
+      const forkedRepo = (await response.json()) as { owner_handle: string; name: string };
       setForks((value) => value + 1);
-      setMessage("Fork created on your home server.");
-      window.location.href = forkedRepo.http_url.replace(/\.git$/, "");
-      return;
+      setMessage("");
+      router.push(`/${encodeURIComponent(forkedRepo.owner_handle)}/${encodeURIComponent(forkedRepo.name)}`);
+    } catch {
+      setMessage("Failed to fork repository");
+    } finally {
+      setIsSubmitting(false);
     }
-
-    const response = await fetch(`${API_URL}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/fork`, {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${session.token}`,
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({}),
-    });
-
-    if (!response.ok) {
-      setMessage(`Failed: ${response.status}`);
-      return;
-    }
-
-    const forkedRepo = (await response.json()) as { owner_handle: string; name: string };
-    setForks((value) => value + 1);
-    setMessage("");
-    router.push(`/${encodeURIComponent(forkedRepo.owner_handle)}/${encodeURIComponent(forkedRepo.name)}`);
   }
 
   return (
     <div className="flex items-center gap-2">
       <button
         className="cursor-pointer rounded-md border border-[#d0d7de] bg-[#f6f8fa] px-2.5 py-1 font-semibold hover:border-[#0969da] hover:text-[#0969da]"
+        disabled={isSubmitting}
         type="button"
         onClick={fork}
       >
@@ -83,4 +93,16 @@ export function ForkButton({ owner, name, initialForks }: ForkButtonProps) {
       {message ? <span className="text-xs text-[#59636e]">{message}</span> : null}
     </div>
   );
+}
+
+async function responseErrorMessage(response: Response) {
+  try {
+    const payload = (await response.json()) as { error?: string };
+    if (payload.error) {
+      return payload.error;
+    }
+  } catch {
+    // Fall through to the status-based message.
+  }
+  return `Failed: ${response.status}`;
 }

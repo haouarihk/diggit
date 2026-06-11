@@ -1,9 +1,10 @@
-import { repoHref } from "@/components/RepoHeader";
+import { RepoHeader, RepoPageContent, repoHref } from "@/components/RepoHeader";
 import { RepositoryCodeBrowser } from "@/components/RepositoryCodeBrowser";
 import {
   getRepository,
   getRepositoryFile,
   getRepositoryTree,
+  listPullRequests,
   listRepositoryBranches,
   listRepositoryTags,
   type RepositoryTree,
@@ -24,7 +25,8 @@ export default async function RepositoryBlobPage({ params, searchParams }: Props
   const repo = await getRepository(decodedOwner, decodedName);
   const selectedRef = ref || repo.default_branch;
   const baseHref = repoHref(decodedOwner, decodedName);
-  const [branches, tags, tree, fullTree, file] = await Promise.all([
+  const [pullRequests, branches, tags, tree, fullTree, file] = await Promise.all([
+    listPullRequests(decodedOwner, decodedName).catch(() => ({ data: [] })),
     listRepositoryBranches(decodedOwner, decodedName).catch(() => ({
       data: [{ name: repo.default_branch, is_default: true, commit_sha: null }],
     })),
@@ -40,19 +42,22 @@ export default async function RepositoryBlobPage({ params, searchParams }: Props
 
   return (
     <div className="grid gap-6">
-      <RepositoryCodeBrowser
-        baseHref={baseHref}
-        branches={branches.data}
-        currentPath={filePath}
-        file={file}
-        fullTree={fullTree}
-        mode="blob"
-        owner={decodedOwner}
-        repo={repo}
-        selectedRef={selectedRef}
-        tags={tags.data}
-        tree={tree}
-      />
+      <RepoHeader activeTab="code" pullRequestsCount={pullRequests.data.length} repo={repo} />
+      <RepoPageContent>
+        <RepositoryCodeBrowser
+          baseHref={baseHref}
+          branches={branches.data}
+          currentPath={filePath}
+          file={file}
+          fullTree={fullTree}
+          mode="blob"
+          owner={decodedOwner}
+          repo={repo}
+          selectedRef={selectedRef}
+          tags={tags.data}
+          tree={tree}
+        />
+      </RepoPageContent>
     </div>
   );
 }

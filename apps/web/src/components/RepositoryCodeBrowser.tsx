@@ -3,31 +3,24 @@ import moment from "moment";
 import type { ReactNode } from "react";
 import {
   Archive,
-  Braces,
   ChevronDown,
   ChevronRight,
   ChartPie,
   Code2,
-  Database,
-  File,
-  FileText,
-  Folder,
-  FolderOpen,
   GitBranch,
-  ImageIcon,
-  Music,
   Tag,
   Users,
-  Video,
+  FolderOpen,
+  Folder,
 } from "lucide-react";
 import { FileDeleteButton } from "@/components/FileDeleteButton";
 import { MarkdownViewer } from "@/components/MarkdownViewer";
 import { repoHref } from "@/components/RepoHeader";
+import { RepositoryRefSelector } from "@/components/RepositoryRefSelector";
 import {
   repositoryRawFileUrl,
   type Repository,
   type RepositoryBranch,
-  type RepositoryCommit,
   type RepositoryContributor,
   type RepositoryFile,
   type RepositoryLanguage,
@@ -36,6 +29,8 @@ import {
   type RepositoryTree,
   type RepositoryTreeEntry,
 } from "@/lib/api";
+import { OwnerBadge } from "./RepositoryList";
+import IconForFile, { FileTypeIcon, README_ENTRY } from "./IconForFile";
 
 type RepositoryCodeBrowserProps = {
   baseHref: string;
@@ -135,13 +130,14 @@ export function RepositoryCodeBrowser({
         />
         <section>
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-t-md border border-[#d0d7de] bg-[#f6f8fa] px-4 py-3">
-            <div className="min-w-0">
-              <div className="truncate font-semibold">{currentPath || repo.name}</div>
+            <div className="flex items-center  gap-2 flex-wrap min-w-0">
+              <div className="truncate font-semibold">
+                <OwnerBadge owner={repo.owner} ownerHandle={repo.owner_handle} withoutHandle />
+              </div>
               <div className="text-xs text-[#59636e]">
                 {tree.last_commit ? (
                   <>
-                    {tree.last_commit.author_name} committed{" "}
-                    <Link className="font-semibold text-[#0969da] hover:underline" href={commitHref(baseHref, tree.last_commit.sha, currentPath)}>
+                    <Link className="font-semibold opacity-50 hover:opacity-100 hover:text-blue-500 hover:underline" href={commitHref(baseHref, tree.last_commit.sha, currentPath)}>
                       {tree.last_commit.message}
                     </Link>
                   </>
@@ -150,22 +146,29 @@ export function RepositoryCodeBrowser({
                 )}
               </div>
             </div>
-            {mode === "blob" && file ? (
-              <div className="flex flex-wrap items-center gap-2">
-                {!file.is_binary && canModifySelectedBranch ? (
-                  <Link
-                    className="inline-flex rounded-md border border-[#d0d7de] bg-white px-3 py-1.5 text-xs font-semibold text-[#1f2328] hover:border-[#0969da] hover:text-[#0969da]"
-                    href={`${baseHref}/edit?file=${encodeURIComponent(file.path)}`}
-                  >
-                    Edit
-                  </Link>
-                ) : null}
-                {canModifySelectedBranch ? (
-                  <FileDeleteButton name={repo.name} owner={owner} path={file.path} redirectTo={baseHref} variant="danger" />
-                ) : null}
+            <div className="flex flex-wrap items-center gap-2">
+              {mode === "blob" && file ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  {!file.is_binary && canModifySelectedBranch ? (
+                    <Link
+                      className="inline-flex rounded-md border border-[#d0d7de] bg-white px-3 py-1.5 text-xs font-semibold text-[#1f2328] hover:border-[#0969da] hover:text-[#0969da]"
+                      href={`${baseHref}/edit?file=${encodeURIComponent(file.path)}`}
+                    >
+                      Edit
+                    </Link>
+                  ) : null}
+                  {canModifySelectedBranch ? (
+                    <FileDeleteButton name={repo.name} owner={owner} path={file.path} redirectTo={baseHref} variant="danger" />
+                  ) : null}
+                </div>
+              ) : null}
+
+              <div>{tree.last_commit?.created_at ? <span className="text-xs text-[#59636e] pr-15">{moment(tree.last_commit.created_at).fromNow()}</span> : null}
               </div>
-            ) : null}
+            </div>
           </div>
+
+
           {mode === "blob" && file ? (
             <RepositoryFilePreview file={file} rawUrl={repositoryRawFileUrl(owner, repo.name, file.path, selectedRef)} repo={repo} />
           ) : (
@@ -194,7 +197,7 @@ function RepositoryAboutCard({ repo, stats }: { repo: Repository; stats?: Reposi
   };
 
   return (
-    <section className="grid gap-3 rounded-md border border-[#d0d7de] bg-white p-4">
+    <section className="grid gap-3 p-4 border-b dark:border-gray-700/50 border-gray-200">
       <h2 className="text-base font-semibold">About</h2>
       <p className="text-[#59636e]">{repo.description || "No description provided."}</p>
       <div className="grid gap-2 border-t border-[#d8dee4] pt-3 text-sm">
@@ -243,7 +246,7 @@ function RepositoryContributorsCard({ contributors }: { contributors: Repository
   const hiddenContributors = contributors.slice(5);
 
   return (
-    <section className="grid gap-3 rounded-md border border-[#d0d7de] bg-white p-4">
+    <section className="grid gap-3 border-b dark:border-gray-700/50 border-gray-200 p-4">
       <h2 className="inline-flex items-center gap-2 text-base font-semibold">
         <Users className="h-4 w-4 text-[#59636e]" aria-hidden="true" />
         Contributors
@@ -302,7 +305,7 @@ function ContributorListItem({ contributor }: { contributor: RepositoryContribut
 
 function RepositoryLanguagesCard({ languages }: { languages: RepositoryLanguage[] }) {
   return (
-    <section className="grid gap-3 rounded-md border border-[#d0d7de] bg-white p-4">
+    <section className="grid gap-3 p-4">
       <h2 className="inline-flex items-center gap-2 text-base font-semibold">
         <ChartPie className="h-4 w-4 text-[#59636e]" aria-hidden="true" />
         Languages
@@ -344,12 +347,11 @@ function RepositoryCodeToolbar({
   selectedRef: string;
   tags: RepositoryTag[];
 }) {
-  const branchExists = Boolean(branches.find((branch) => branch.name === selectedRef)?.commit_sha);
+  const selectedRefExists = Boolean(branches.find((branch) => branch.name === selectedRef)?.commit_sha || tags.find((tag) => tag.name === selectedRef)?.commit_sha);
   return (
     <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-[#d0d7de] bg-white p-3">
       <div className="flex flex-wrap items-center gap-2">
-        <RefSelector baseHref={baseHref} label="Branch" refs={branches.map(branchRefSelectorItem)} selectedRef={selectedRef} />
-        <RefSelector baseHref={baseHref} label="Tags" refs={tags.map((tag) => ({ name: tag.name }))} selectedRef={selectedRef} />
+        <RepositoryRefSelector baseHref={baseHref} branches={branches} key={selectedRef} selectedRef={selectedRef} tags={tags} />
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <form action={baseHref} className="flex gap-2">
@@ -361,50 +363,13 @@ function RepositoryCodeToolbar({
             Code
           </summary>
           <div className="absolute right-0 z-20 mt-2 grid w-80 gap-3 rounded-md border border-[#d0d7de] bg-white p-3 shadow-lg">
-            <CloneUrl label="SSH" value={cloneCommand(repo.ssh_url, selectedRef, repo.default_branch, branchExists)} />
-            <CloneUrl label="HTTP" value={cloneCommand(repo.http_url, selectedRef, repo.default_branch, branchExists)} />
+            <CloneUrl label="SSH" value={cloneCommand(repo.ssh_url, selectedRef, repo.default_branch, selectedRefExists)} />
+            <CloneUrl label="HTTP" value={cloneCommand(repo.http_url, selectedRef, repo.default_branch, selectedRefExists)} />
           </div>
         </details>
       </div>
     </div>
   );
-}
-
-type RefSelectorItem = {
-  isDefault?: boolean;
-  name: string;
-};
-
-function branchRefSelectorItem(branch: RepositoryBranch): RefSelectorItem {
-  return { isDefault: branch.is_default, name: branch.name };
-}
-
-function RefSelector({ baseHref, label, refs, selectedRef }: { baseHref: string; label: string; refs: RefSelectorItem[]; selectedRef: string }) {
-  if (refs.length === 0) {
-    return null;
-  }
-  const selected = refs.find((ref) => ref.name === selectedRef);
-  return (
-    <details className="relative">
-      <summary className="flex cursor-pointer list-none items-center gap-2 rounded-md border border-[#d0d7de] bg-white px-3 py-1.5 text-sm font-semibold">
-        <span>{label}: {selectedRef}</span>
-        {selected?.isDefault ? <DefaultBranchBadge /> : null}
-        <span className="text-xs text-[#59636e]">▼</span>
-      </summary>
-      <div className="absolute left-0 z-20 mt-2 max-h-80 min-w-56 overflow-auto rounded-md border border-[#d0d7de] bg-white py-2 shadow-lg">
-        {refs.map((ref) => (
-          <Link className="flex items-center justify-between gap-3 px-3 py-2 text-sm hover:bg-[#f6f8fa]" href={codeHref(baseHref, undefined, ref.name, "tree")} key={ref.name}>
-            <span className="truncate">{ref.name}</span>
-            {ref.isDefault ? <DefaultBranchBadge /> : null}
-          </Link>
-        ))}
-      </div>
-    </details>
-  );
-}
-
-function DefaultBranchBadge() {
-  return <span className="rounded-full border border-[#d0d7de] bg-[#f6f8fa] px-2 py-0.5 text-[11px] font-semibold text-[#59636e]">Default</span>;
 }
 
 function RepositoryFileTable({ baseHref, entries, selectedRef }: { baseHref: string; entries: RepositoryTreeEntry[]; selectedRef: string }) {
@@ -413,15 +378,15 @@ function RepositoryFileTable({ baseHref, entries, selectedRef }: { baseHref: str
   }
   return (
     <div className="overflow-hidden rounded-b-md border border-t-0 border-[#d0d7de] bg-white">
-      <div className="hidden grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)_150px] gap-4 border-b border-[#d8dee4] bg-[#f6f8fa] px-4 py-2 text-xs font-semibold uppercase tracking-wide text-[#59636e] md:grid">
+      {/* <div className="hidden grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)_150px] gap-4 border-b border-[#d8dee4] bg-[#f6f8fa] px-4 py-2 text-xs font-semibold uppercase tracking-wide text-[#59636e] md:grid">
         <span>Name</span>
         <span>Last commit</span>
         <span>Last edit</span>
-      </div>
+      </div> */}
       {entries.map((entry) => (
-        <div className="grid gap-2 border-b border-[#d8dee4] px-4 py-3 last:border-b-0 md:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)_150px] md:gap-4" key={entry.path}>
+        <div className="grid gap-2 border-b border-[#d8dee4] opacity-80 hover:opacity-100 px-4 py-3 last:border-b-0 md:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)_150px] md:gap-4" key={entry.path}>
           <div className="flex min-w-0 items-center gap-3">
-            <FileIcon entry={entry} />
+            <IconForFile entry={entry} />
             <Link className="truncate font-semibold text-[#0969da] hover:underline" href={codeHref(baseHref, entry.path, selectedRef, entry.kind === "directory" ? "tree" : "blob")}>
               {entry.name}
             </Link>
@@ -582,8 +547,7 @@ function RepositoryTreeNavigationSidebar({
 
       <div className="grid gap-3 border-b border-[#d8dee4] p-3">
         <div className="flex flex-wrap gap-2">
-          <RefSelector baseHref={baseHref} label="Branch" refs={branches.map(branchRefSelectorItem)} selectedRef={selectedRef} />
-          <RefSelector baseHref={baseHref} label="Tags" refs={tags.map((tag) => ({ name: tag.name }))} selectedRef={selectedRef} />
+          <RepositoryRefSelector baseHref={baseHref} branches={branches} key={selectedRef} selectedRef={selectedRef} tags={tags} />
         </div>
         <div className="grid gap-1">
           <Link
@@ -669,7 +633,7 @@ function RepositoryTreeNavigationNode({
         ) : (
           <span className="w-3.5 shrink-0" />
         )}
-        <FileIcon active={isSelected} entry={entry} />
+        <IconForFile active={isSelected} entry={entry} />
         <span className="min-w-0 flex-1 truncate text-sm font-semibold">{entry.name}</span>
       </Link>
       {isExpanded && hasChildren ? (
@@ -690,6 +654,7 @@ function RepositoryTreeNavigationNode({
   );
 }
 
+
 function RepositoryReadme({ readme }: { readme?: RepositoryFile | null }) {
   if (!readme) {
     return null;
@@ -697,7 +662,11 @@ function RepositoryReadme({ readme }: { readme?: RepositoryFile | null }) {
 
   return (
     <section className="mt-6">
-      <div className="rounded-t-md border border-[#d0d7de] bg-[#f6f8fa] px-4 py-3 font-semibold">README.md</div>
+      <div className="flex items-center gap-2 rounded-t-md border border-[#d0d7de] bg-[#f6f8fa] px-4 py-3 font-semibold">
+        <FileTypeIcon entry={README_ENTRY} />
+        <span className="font-semibold">{README_ENTRY.name}</span>
+
+      </div>
       <MarkdownViewer content={readme.content} />
     </section>
   );
@@ -756,40 +725,8 @@ function RelativeTime({ value }: { value?: string | null }) {
   );
 }
 
-function FileIcon({ active = false, entry }: { active?: boolean; entry: Pick<RepositoryTreeEntry, "extension" | "kind" | "name"> }) {
-  return (
-    <span
-      className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border ${active ? "border-[#0969da] bg-white text-[#0969da]" : "border-[#d0d7de] bg-[#f6f8fa] text-[#59636e]"
-        }`}
-    >
-      {entry.kind === "directory" ? (
-        active ? (
-          <FolderOpen className="h-4 w-4" aria-hidden="true" />
-        ) : (
-          <Folder className="h-4 w-4" aria-hidden="true" />
-        )
-      ) : (
-        <FileTypeIcon entry={entry} />
-      )}
-    </span>
-  );
-}
 
-function FileTypeIcon({ entry }: { entry: Pick<RepositoryTreeEntry, "extension" | "name"> }) {
-  const extension = (entry.extension || entry.name.split(".").pop() || "").toLowerCase();
 
-  if (["md", "mdx", "txt", "rst"].includes(extension)) return <FileText className="h-4 w-4" aria-hidden="true" />;
-  if (["ts", "tsx", "js", "jsx", "rs", "go", "py", "css", "html", "sh"].includes(extension)) {
-    return <Code2 className="h-4 w-4" aria-hidden="true" />;
-  }
-  if (["json", "lock", "toml", "yml", "yaml"].includes(extension)) return <Braces className="h-4 w-4" aria-hidden="true" />;
-  if (["png", "jpg", "jpeg", "gif", "svg", "webp", "ico"].includes(extension)) return <ImageIcon className="h-4 w-4" aria-hidden="true" />;
-  if (["mp4", "mov", "webm", "mkv"].includes(extension)) return <Video className="h-4 w-4" aria-hidden="true" />;
-  if (["mp3", "wav", "ogg", "flac"].includes(extension)) return <Music className="h-4 w-4" aria-hidden="true" />;
-  if (["zip", "tar", "gz", "rar", "7z"].includes(extension)) return <Archive className="h-4 w-4" aria-hidden="true" />;
-  if (["sql", "db", "sqlite"].includes(extension)) return <Database className="h-4 w-4" aria-hidden="true" />;
-  return <File className="h-4 w-4" aria-hidden="true" />;
-}
 
 type MutableRepositoryTreeNode = RepositoryTreeNode & {
   childrenByPath: Map<string, MutableRepositoryTreeNode>;

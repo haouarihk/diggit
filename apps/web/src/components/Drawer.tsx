@@ -12,6 +12,11 @@ type DrawerProps = {
 
 export function Drawer({ children, isOpen, onClose, subtitle, title }: DrawerProps) {
   const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const onCloseRef = useRef(onClose);
+
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -24,7 +29,7 @@ export function Drawer({ children, isOpen, onClose, subtitle, title }: DrawerPro
 
     function closeOnEscape(event: KeyboardEvent) {
       if (event.key === "Escape") {
-        onClose();
+        onCloseRef.current();
       }
     }
 
@@ -33,7 +38,7 @@ export function Drawer({ children, isOpen, onClose, subtitle, title }: DrawerPro
       document.body.style.overflow = previousOverflow;
       window.removeEventListener("keydown", closeOnEscape);
     };
-  }, [isOpen, onClose]);
+  }, [isOpen]);
 
   if (!isOpen) {
     return null;

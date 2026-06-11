@@ -202,13 +202,12 @@ pub(crate) async fn accept_pull_request(state: &AppState, activity: &Activity) -
     sqlx::query(
         r#"
         INSERT INTO pull_requests
-          (id, target_repository_id, title, body, author_handle, source_repo_url,
+          (target_repository_id, title, body, author_handle, source_repo_url,
            source_branch, target_branch, status, activity_id)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'open', $9)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, 'open', $8)
         ON CONFLICT (activity_id) DO NOTHING
         "#,
     )
-    .bind(Uuid::now_v7())
     .bind(target.id)
     .bind(title)
     .bind(

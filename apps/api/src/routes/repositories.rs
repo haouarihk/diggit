@@ -12,6 +12,7 @@ use pulldown_cmark::{Options as MarkdownOptions, Parser as MarkdownParser, html}
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use sqlx::Row;
+use std::collections::BTreeSet;
 use std::path::{Path as FsPath, PathBuf};
 use tokio::fs;
 use uuid::Uuid;
@@ -31,6 +32,7 @@ const FIXED_COMMENT_REACTIONS: [&str; 72] = [
     "📦", "🧪", "🧹", "🔧", "🎨", "⚡", "🌍", "📣",
 ];
 const MAX_COMMENT_ATTACHMENT_BYTES: usize = 10 * 1024 * 1024;
+const MAX_RELEASE_ASSET_BYTES: usize = 100 * 1024 * 1024;
 
 pub(crate) async fn create_repo(
     State(state): State<AppState>,
@@ -579,6 +581,481 @@ pub(crate) async fn get_repo_stats(
     ))
 }
 
+pub(crate) async fn list_releases(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((owner, name)): Path<(String, String)>,
+    Query(query): Query<ReleaseListQuery>,
+) -> ApiResult<Json<PaginatedResponse<ReleaseResponse>>> {
+    let auth = optional_auth(&state, &headers)?;
+    let repo = find_repo(&state.pool, &owner, &name).await?;
+    ensure_repo_visible(&state.pool, auth.as_ref(), &repo).await?;
+    let can_manage = release_viewer_can_manage(&state, auth.as_ref(), &repo).await?;
+    let status = normalize_release_status_filter(query.status.as_deref())?;
+    let (page, limit, offset) = pagination_input(query.page, query.limit);
+    let total: (i64,) = sqlx::query_as(
+        r#"
+        SELECT COUNT(*)
+        FROM releases
+        WHERE repository_id = $1
+          AND ($2::TEXT IS NULL OR status = $2)
+          AND ($3 OR status = 'published')
+        "#,
+    )
+    .bind(repo.id)
+    .bind(&status)
+    .bind(can_manage)
+    .fetch_one(&state.pool)
+    .await?;
+    let releases = sqlx::query_as::<_, Release>(
+        r#"
+        SELECT *
+        FROM releases
+        WHERE repository_id = $1
+          AND ($2::TEXT IS NULL OR status = $2)
+          AND ($3 OR status = 'published')
+        ORDER BY COALESCE(published_at, created_at) DESC, created_at DESC
+        LIMIT $4 OFFSET $5
+        "#,
+    )
+    .bind(repo.id)
+    .bind(&status)
+    .bind(can_manage)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(&state.pool)
+    .await?;
+    let mut data = Vec::with_capacity(releases.len());
+    for release in releases {
+        data.push(release_response(&state, &repo, release, auth.as_ref()).await?);
+    }
+    Ok(Json(PaginatedResponse {
+        data,
+        pagination: pagination(page, limit, total.0),
+    }))
+}
+
+pub(crate) async fn get_release(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((owner, name, tag)): Path<(String, String, String)>,
+) -> ApiResult<Json<ReleaseResponse>> {
+    let auth = optional_auth(&state, &headers)?;
+    let repo = find_repo(&state.pool, &owner, &name).await?;
+    ensure_repo_visible(&state.pool, auth.as_ref(), &repo).await?;
+    let release = find_release_by_tag(&state, repo.id, &tag).await?;
+    if release.status != "published"
+        && !release_viewer_can_manage(&state, auth.as_ref(), &repo).await?
+    {
+        return Err(ApiError::NotFound);
+    }
+    Ok(Json(
+        release_response(&state, &repo, release, auth.as_ref()).await?,
+    ))
+}
+
+pub(crate) async fn create_release(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((owner, name)): Path<(String, String)>,
+    Json(input): Json<CreateReleaseRequest>,
+) -> ApiResult<Json<ReleaseResponse>> {
+    let repo = find_repo(&state.pool, &owner, &name).await?;
+    let auth = require_release_write_auth(&state, &headers, &repo).await?;
+    let actor = release_actor(&state, &auth);
+    let tag_name = validate_release_tag_name(&input.tag_name)?;
+    let existing: Option<Uuid> =
+        sqlx::query_scalar("SELECT id FROM releases WHERE repository_id = $1 AND tag_name = $2")
+            .bind(repo.id)
+            .bind(&tag_name)
+            .fetch_optional(&state.pool)
+            .await?;
+    if existing.is_some() {
+        return Err(ApiError::Conflict(
+            "release already exists for this tag".to_string(),
+        ));
+    }
+    let target_commit_sha =
+        resolve_or_create_release_tag(&repo, &tag_name, input.target_ref.as_deref()).await?;
+    let title = input
+        .title
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(&tag_name)
+        .to_string();
+    let body =
+        release_body_from_input(&state, &repo, &tag_name, input.body, input.generate_notes).await?;
+    let status = normalize_release_status(input.status.as_deref())?.unwrap_or("draft");
+    let activity_id = if status == "published" {
+        Some(new_activity_id(&state))
+    } else {
+        None
+    };
+    let release = sqlx::query_as::<_, Release>(
+        r#"
+        INSERT INTO releases
+          (id, repository_id, tag_name, target_commit_sha, title, body, body_html,
+           author_actor_url, author_handle, author_display_name, status, is_prerelease,
+           activity_id, published_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
+                CASE WHEN $11 = 'published' THEN now() ELSE NULL END)
+        RETURNING *
+        "#,
+    )
+    .bind(Uuid::now_v7())
+    .bind(repo.id)
+    .bind(&tag_name)
+    .bind(target_commit_sha)
+    .bind(title)
+    .bind(&body)
+    .bind(sanitize_markdown_html(&body))
+    .bind(actor.actor_url)
+    .bind(actor.handle)
+    .bind(actor.display_name)
+    .bind(status)
+    .bind(input.is_prerelease.unwrap_or(false))
+    .bind(&activity_id)
+    .fetch_one(&state.pool)
+    .await?;
+
+    if release.status == "published" {
+        deliver_release_activity(&state, &repo, &release, "Create").await?;
+    }
+    invalidate_repo_cache(&state, &repo.owner_handle, &repo.name).await;
+    Ok(Json(
+        release_response(&state, &repo, release, local_auth_from_release_write(&auth)).await?,
+    ))
+}
+
+pub(crate) async fn update_release(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((owner, name, tag)): Path<(String, String, String)>,
+    Json(input): Json<UpdateReleaseRequest>,
+) -> ApiResult<Json<ReleaseResponse>> {
+    let repo = find_repo(&state.pool, &owner, &name).await?;
+    let auth = require_release_write_auth(&state, &headers, &repo).await?;
+    let current = find_release_by_tag(&state, repo.id, &tag).await?;
+    let body_was_provided = input.body.is_some();
+    let body = release_body_from_input(
+        &state,
+        &repo,
+        &current.tag_name,
+        input.body,
+        input.generate_notes,
+    )
+    .await?
+    .trim_end()
+    .to_string();
+    let next_body = if !body_was_provided && input.generate_notes != Some(true) {
+        current.body.clone()
+    } else {
+        body
+    };
+    let status = normalize_release_status(input.status.as_deref())?
+        .unwrap_or(current.status.as_str())
+        .to_string();
+    let activity_id = if status == "published" {
+        current
+            .activity_id
+            .clone()
+            .or_else(|| Some(new_activity_id(&state)))
+    } else {
+        None
+    };
+    let release = sqlx::query_as::<_, Release>(
+        r#"
+        UPDATE releases
+        SET title = $3,
+            body = $4,
+            body_html = $5,
+            status = $6,
+            is_prerelease = $7,
+            activity_id = $8,
+            published_at = CASE
+              WHEN $6 = 'published' THEN COALESCE(published_at, now())
+              ELSE NULL
+            END,
+            updated_at = now()
+        WHERE id = $1 AND repository_id = $2
+        RETURNING *
+        "#,
+    )
+    .bind(current.id)
+    .bind(repo.id)
+    .bind(
+        input
+            .title
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or(&current.title),
+    )
+    .bind(&next_body)
+    .bind(sanitize_markdown_html(&next_body))
+    .bind(&status)
+    .bind(input.is_prerelease.unwrap_or(current.is_prerelease))
+    .bind(&activity_id)
+    .fetch_one(&state.pool)
+    .await?;
+
+    if current.status != "published" && release.status == "published" {
+        deliver_release_activity(&state, &repo, &release, "Create").await?;
+    }
+    invalidate_repo_cache(&state, &repo.owner_handle, &repo.name).await;
+    Ok(Json(
+        release_response(&state, &repo, release, local_auth_from_release_write(&auth)).await?,
+    ))
+}
+
+pub(crate) async fn delete_release(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((owner, name, tag)): Path<(String, String, String)>,
+) -> ApiResult<StatusCode> {
+    let repo = find_repo(&state.pool, &owner, &name).await?;
+    require_release_write_auth(&state, &headers, &repo).await?;
+    let result = sqlx::query("DELETE FROM releases WHERE repository_id = $1 AND tag_name = $2")
+        .bind(repo.id)
+        .bind(tag)
+        .execute(&state.pool)
+        .await?;
+    if result.rows_affected() == 0 {
+        return Err(ApiError::NotFound);
+    }
+    invalidate_repo_cache(&state, &repo.owner_handle, &repo.name).await;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub(crate) async fn upload_release_asset(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((owner, name, tag)): Path<(String, String, String)>,
+    mut multipart: Multipart,
+) -> ApiResult<Json<ReleaseAssetResponse>> {
+    let repo = find_repo(&state.pool, &owner, &name).await?;
+    let auth = require_release_write_auth(&state, &headers, &repo).await?;
+    let actor = release_actor(&state, &auth);
+    let release = find_release_by_tag(&state, repo.id, &tag).await?;
+
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?
+    {
+        if field.name() != Some("file") {
+            continue;
+        }
+        let filename = sanitize_attachment_filename(field.file_name().unwrap_or("asset"));
+        let content_type = field
+            .content_type()
+            .map(str::to_string)
+            .unwrap_or_else(|| "application/octet-stream".to_string());
+        let bytes = field
+            .bytes()
+            .await
+            .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+        if bytes.is_empty() {
+            return Err(ApiError::BadRequest("asset is empty".to_string()));
+        }
+        if bytes.len() > MAX_RELEASE_ASSET_BYTES {
+            return Err(ApiError::BadRequest("asset is too large".to_string()));
+        }
+
+        let id = Uuid::now_v7();
+        let storage_key = format!("{}/{}", release.id, id);
+        let storage_path = release_asset_storage_path(&state, &storage_key);
+        if let Some(parent) = storage_path.parent() {
+            fs::create_dir_all(parent).await?;
+        }
+        fs::write(&storage_path, &bytes).await?;
+        let asset = sqlx::query_as::<_, ReleaseAsset>(
+            r#"
+            INSERT INTO release_assets
+              (id, release_id, uploaded_by_actor_url, runner_id, original_filename,
+               content_type, byte_size, sha256, storage_key)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            RETURNING *
+            "#,
+        )
+        .bind(id)
+        .bind(release.id)
+        .bind(actor.actor_url)
+        .bind(actor.runner_id)
+        .bind(filename)
+        .bind(content_type)
+        .bind(bytes.len() as i64)
+        .bind(format!("{:x}", Sha256::digest(&bytes)))
+        .bind(storage_key)
+        .fetch_one(&state.pool)
+        .await?;
+        return Ok(Json(release_asset_response(
+            &state.config.app_base_url,
+            &repo,
+            &release,
+            asset,
+        )));
+    }
+
+    Err(ApiError::BadRequest("file field is required".to_string()))
+}
+
+pub(crate) async fn get_release_asset(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((owner, name, tag, asset_id, _filename)): Path<(String, String, String, Uuid, String)>,
+) -> ApiResult<Response> {
+    let auth = optional_auth(&state, &headers)?;
+    let repo = find_repo(&state.pool, &owner, &name).await?;
+    ensure_repo_visible(&state.pool, auth.as_ref(), &repo).await?;
+    let release = find_release_by_tag(&state, repo.id, &tag).await?;
+    if release.status != "published"
+        && !release_viewer_can_manage(&state, auth.as_ref(), &repo).await?
+    {
+        return Err(ApiError::NotFound);
+    }
+    let asset = sqlx::query_as::<_, ReleaseAsset>(
+        r#"
+        UPDATE release_assets
+        SET download_count = download_count + 1
+        WHERE id = $1 AND release_id = $2 AND deleted_at IS NULL
+        RETURNING *
+        "#,
+    )
+    .bind(asset_id)
+    .bind(release.id)
+    .fetch_one(&state.pool)
+    .await?;
+    let bytes = fs::read(release_asset_storage_path(&state, &asset.storage_key)).await?;
+    let mut response = Body::from(bytes).into_response();
+    let headers = response.headers_mut();
+    headers.insert(
+        CONTENT_TYPE,
+        asset
+            .content_type
+            .parse()
+            .unwrap_or_else(|_| "application/octet-stream".parse().unwrap()),
+    );
+    headers.insert(CONTENT_LENGTH, asset.byte_size.to_string().parse().unwrap());
+    headers.insert(
+        CONTENT_DISPOSITION,
+        format!(
+            "attachment; filename=\"{}\"",
+            header_safe_filename(&asset.original_filename)
+        )
+        .parse()
+        .unwrap(),
+    );
+    headers.insert("x-content-type-options", "nosniff".parse().unwrap());
+    Ok(response)
+}
+
+pub(crate) async fn delete_release_asset(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((owner, name, tag, asset_id)): Path<(String, String, String, Uuid)>,
+) -> ApiResult<StatusCode> {
+    let repo = find_repo(&state.pool, &owner, &name).await?;
+    require_release_write_auth(&state, &headers, &repo).await?;
+    let release = find_release_by_tag(&state, repo.id, &tag).await?;
+    let result = sqlx::query(
+        "UPDATE release_assets SET deleted_at = COALESCE(deleted_at, now()) WHERE id = $1 AND release_id = $2",
+    )
+    .bind(asset_id)
+    .bind(release.id)
+    .execute(&state.pool)
+    .await?;
+    if result.rows_affected() == 0 {
+        return Err(ApiError::NotFound);
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub(crate) async fn create_release_reaction(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((owner, name, tag)): Path<(String, String, String)>,
+    Json(input): Json<CommentReactionRequest>,
+) -> ApiResult<Json<ReleaseResponse>> {
+    let auth = require_repo_action_auth(&state, &headers, "repo:comment")?;
+    let repo = find_repo(&state.pool, &owner, &name).await?;
+    ensure_repo_action_visible(&state.pool, &auth, &repo).await?;
+    let release = find_release_by_tag(&state, repo.id, &tag).await?;
+    add_reaction(
+        &state,
+        &auth,
+        ReactionTarget::Release(release.id),
+        &input.emoji,
+    )
+    .await?;
+    Ok(Json(
+        release_response(
+            &state,
+            &repo,
+            release,
+            local_auth_from_repo_action(Some(&auth)),
+        )
+        .await?,
+    ))
+}
+
+pub(crate) async fn delete_release_reaction(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((owner, name, tag)): Path<(String, String, String)>,
+    Json(input): Json<CommentReactionRequest>,
+) -> ApiResult<Json<ReleaseResponse>> {
+    let auth = require_repo_action_auth(&state, &headers, "repo:comment")?;
+    let repo = find_repo(&state.pool, &owner, &name).await?;
+    ensure_repo_action_visible(&state.pool, &auth, &repo).await?;
+    let release = find_release_by_tag(&state, repo.id, &tag).await?;
+    remove_reaction(
+        &state,
+        &auth,
+        ReactionTarget::Release(release.id),
+        &input.emoji,
+    )
+    .await?;
+    Ok(Json(
+        release_response(
+            &state,
+            &repo,
+            release,
+            local_auth_from_repo_action(Some(&auth)),
+        )
+        .await?,
+    ))
+}
+
+pub(crate) async fn compare_repo_refs(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((owner, name, range)): Path<(String, String, String)>,
+) -> ApiResult<Json<RepositoryCompareResponse>> {
+    let auth = optional_auth(&state, &headers)?;
+    enforce_rate_limit(
+        &state,
+        "repo-compare-refs",
+        &format!("{owner}/{name}"),
+        20,
+        60,
+    )
+    .await?;
+    let repo = find_repo(&state.pool, &owner, &name).await?;
+    ensure_repo_visible(&state.pool, auth.as_ref(), &repo).await?;
+    let (base, head) = parse_compare_range(&range)?;
+    Ok(Json(
+        compare_refs(
+            &repo,
+            None,
+            &format!("refs/tags/{base}"),
+            &format!("refs/tags/{head}"),
+        )
+        .await?,
+    ))
+}
+
 pub(crate) async fn list_repo_languages(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -981,8 +1458,28 @@ pub(crate) async fn fork_repo(
     let source = find_repo(&state.pool, &owner, &name).await?;
     ensure_repo_visible(&state.pool, Some(&auth), &source).await?;
     let requested_name = input.name.is_some();
-    let fork_name = normalize_name(input.name.as_deref().unwrap_or(&source.name))?;
     let namespace = resolve_writable_namespace(&state.pool, &auth, &auth.username).await?;
+
+    if !requested_name {
+        let existing_fork = sqlx::query_as::<_, Repository>(
+            "SELECT * FROM repositories WHERE owner_handle = $1 AND source_repository_id = $2 LIMIT 1",
+        )
+        .bind(&namespace.name)
+        .bind(source.id)
+        .fetch_optional(&state.pool)
+        .await?;
+        if let Some(existing_fork) = existing_fork {
+            return Ok(Json(
+                repository_response(&state.pool, &state.config, existing_fork).await?,
+            ));
+        }
+    }
+
+    let fork_name = if let Some(name) = input.name.as_deref() {
+        normalize_name(name)?
+    } else {
+        available_fork_name(&state.pool, &namespace.name, &source.name).await?
+    };
     let existing = sqlx::query_as::<_, Repository>(
         "SELECT * FROM repositories WHERE owner_handle = $1 AND name = $2",
     )
@@ -1079,6 +1576,37 @@ pub(crate) async fn fork_repo(
     ))
 }
 
+async fn available_fork_name(
+    pool: &sqlx::PgPool,
+    owner: &str,
+    source_name: &str,
+) -> ApiResult<String> {
+    let base_name = normalize_name(source_name)?;
+    let mut candidate = base_name.clone();
+    let mut suffix = 0;
+
+    loop {
+        let exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM repositories WHERE owner_handle = $1 AND name = $2)",
+        )
+        .bind(owner)
+        .bind(&candidate)
+        .fetch_one(pool)
+        .await?;
+
+        if !exists {
+            return Ok(candidate);
+        }
+
+        suffix += 1;
+        candidate = if suffix == 1 {
+            format!("{base_name}-fork")
+        } else {
+            format!("{base_name}-fork-{suffix}")
+        };
+    }
+}
+
 pub(crate) async fn create_pull_request(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1105,13 +1633,12 @@ pub(crate) async fn create_pull_request(
     let pr = sqlx::query_as::<_, PullRequest>(
         r#"
         INSERT INTO pull_requests
-          (id, target_repository_id, source_repository_id, title, body, author_handle,
+          (target_repository_id, source_repository_id, title, body, author_handle,
            source_repo_url, source_branch, target_branch, status, activity_id)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'open', $10)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'open', $9)
         RETURNING *
         "#,
     )
-    .bind(Uuid::now_v7())
     .bind(target.id)
     .bind(input.source_repository_id)
     .bind(input.title)
@@ -1127,6 +1654,27 @@ pub(crate) async fn create_pull_request(
     .bind(&activity_id)
     .fetch_one(&state.pool)
     .await?;
+    let timeline_author = issue_author(&state, &RepoActionAuth::Local(auth.clone())).await?;
+    record_timeline_event(
+        &state,
+        target.id,
+        None,
+        Some(pr.id),
+        &timeline_author,
+        "opened",
+        "opened this pull request",
+        json!({ "title": pr.title.clone() }),
+    )
+    .await?;
+    record_mention_events(
+        &state,
+        target.id,
+        None,
+        Some(pr.id),
+        &timeline_author,
+        &format!("{} {}", pr.title, pr.body),
+    )
+    .await?;
 
     let activity = json!({
         "@context": "https://www.w3.org/ns/activitystreams",
@@ -1135,7 +1683,7 @@ pub(crate) async fn create_pull_request(
         "actor": state.config.actor_url(&auth.username),
         "object": {
             "type": "PullRequest",
-            "id": format!("{}/pull-requests/{}", state.config.app_base_url, pr.id),
+            "id": format!("{}/pull/{}", state.config.app_base_url.trim_end_matches('/'), pr.id),
             "target": repo_activity_url(&state.config, &target),
             "source": pr.source_repo_url,
             "sourceBranch": pr.source_branch,
@@ -1259,7 +1807,7 @@ pub(crate) async fn compare_pull_request(
 pub(crate) async fn get_pull_request(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Path((owner, name, id)): Path<(String, String, Uuid)>,
+    Path((owner, name, id)): Path<(String, String, i64)>,
 ) -> ApiResult<Json<PullRequestResponse>> {
     let auth = optional_auth(&state, &headers)?;
     let target = find_repo(&state.pool, &owner, &name).await?;
@@ -1273,7 +1821,7 @@ pub(crate) async fn get_pull_request(
 pub(crate) async fn update_pull_request(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Path((owner, name, id)): Path<(String, String, Uuid)>,
+    Path((owner, name, id)): Path<(String, String, i64)>,
     Json(input): Json<UpdatePullRequestRequest>,
 ) -> ApiResult<Json<PullRequestResponse>> {
     let auth = require_auth(&state, &headers)?;
@@ -1297,9 +1845,31 @@ pub(crate) async fn update_pull_request(
     )
     .bind(id)
     .bind(target.id)
-    .bind(status)
+    .bind(status.clone())
     .fetch_one(&state.pool)
     .await?;
+    if current.status != pr.status {
+        let timeline_author = issue_author(&state, &RepoActionAuth::Local(auth.clone())).await?;
+        record_timeline_event(
+            &state,
+            target.id,
+            None,
+            Some(pr.id),
+            &timeline_author,
+            if pr.status == "closed" {
+                "closed"
+            } else {
+                "reopened"
+            },
+            if pr.status == "closed" {
+                "closed this pull request"
+            } else {
+                "reopened this pull request"
+            },
+            json!({ "from": current.status.clone(), "to": pr.status.clone() }),
+        )
+        .await?;
+    }
 
     invalidate_repo_cache(&state, &target.owner_handle, &target.name).await;
     Ok(Json(
@@ -1310,7 +1880,7 @@ pub(crate) async fn update_pull_request(
 pub(crate) async fn merge_pull_request(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Path((owner, name, id)): Path<(String, String, Uuid)>,
+    Path((owner, name, id)): Path<(String, String, i64)>,
 ) -> ApiResult<Json<PullRequestResponse>> {
     let auth = require_auth(&state, &headers)?;
     let target = find_repo(&state.pool, &owner, &name).await?;
@@ -1344,6 +1914,18 @@ pub(crate) async fn merge_pull_request(
         .bind(target.id)
         .execute(&state.pool)
         .await?;
+    let timeline_author = issue_author(&state, &RepoActionAuth::Local(auth.clone())).await?;
+    record_timeline_event(
+        &state,
+        target.id,
+        None,
+        Some(pr.id),
+        &timeline_author,
+        "merged",
+        "merged this pull request",
+        json!({ "from": current.status.clone(), "to": pr.status.clone() }),
+    )
+    .await?;
 
     invalidate_repo_cache(&state, &target.owner_handle, &target.name).await;
     Ok(Json(
@@ -1510,11 +2092,11 @@ pub(crate) async fn create_issue(
     .bind(repo.id)
     .bind(title)
     .bind(input.body.unwrap_or_default())
-    .bind(author.handle)
-    .bind(author.actor_url)
-    .bind(author.display_name)
-    .bind(author.avatar_url)
-    .bind(author.remote_server)
+    .bind(&author.handle)
+    .bind(&author.actor_url)
+    .bind(&author.display_name)
+    .bind(&author.avatar_url)
+    .bind(&author.remote_server)
     .bind(&activity_id)
     .fetch_one(&state.pool)
     .await?;
@@ -1523,6 +2105,26 @@ pub(crate) async fn create_issue(
         replace_issue_labels(&state, repo.id, issue_id.0, &labels).await?;
     }
     let issue = find_issue_by_id(&state, issue_id.0).await?;
+    record_timeline_event(
+        &state,
+        repo.id,
+        Some(issue.id),
+        None,
+        &author,
+        "opened",
+        "opened this issue",
+        json!({ "title": issue.title.clone() }),
+    )
+    .await?;
+    record_mention_events(
+        &state,
+        repo.id,
+        Some(issue.id),
+        None,
+        &author,
+        &format!("{} {}", issue.title, issue.body),
+    )
+    .await?;
     deliver_issue_activity(&state, &repo, &issue, &activity_id, "Create").await?;
     Ok(Json(issue))
 }
@@ -1581,6 +2183,41 @@ pub(crate) async fn update_issue(
         replace_issue_labels(&state, repo.id, issue_id.0, &labels).await?;
     }
     let issue = find_issue_by_id(&state, issue_id.0).await?;
+    let timeline_author = issue_author(&state, &auth).await?;
+    if current.status != issue.status {
+        record_timeline_event(
+            &state,
+            repo.id,
+            Some(issue.id),
+            None,
+            &timeline_author,
+            if issue.status == "closed" {
+                "closed"
+            } else {
+                "reopened"
+            },
+            if issue.status == "closed" {
+                "closed this issue"
+            } else {
+                "reopened this issue"
+            },
+            json!({ "from": current.status.clone(), "to": issue.status.clone() }),
+        )
+        .await?;
+    }
+    if current.title != issue.title {
+        record_timeline_event(
+            &state,
+            repo.id,
+            Some(issue.id),
+            None,
+            &timeline_author,
+            "renamed",
+            "renamed this issue",
+            json!({ "from": current.title.clone(), "to": issue.title.clone() }),
+        )
+        .await?;
+    }
     let activity_id = format!(
         "{}/activities/{}",
         state.config.app_base_url.trim_end_matches('/'),
@@ -1638,6 +2275,79 @@ pub(crate) async fn list_issue_comments(
     }))
 }
 
+pub(crate) async fn list_issue_activity(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((owner, name, number)): Path<(String, String, i32)>,
+    Query(query): Query<IssueListQuery>,
+) -> ApiResult<Json<PaginatedResponse<ActivityItemResponse>>> {
+    let auth = optional_repo_action_auth(&state, &headers)?;
+    let repo = find_repo(&state.pool, &owner, &name).await?;
+    ensure_repo_visible(
+        &state.pool,
+        local_auth_from_repo_action(auth.as_ref()),
+        &repo,
+    )
+    .await?;
+    let issue = find_issue(&state, repo.id, number).await?;
+    let viewer_actor_url = auth
+        .as_ref()
+        .map(|auth| repo_action_actor_url(&state, auth));
+    let (page, limit, offset) = pagination_input(query.page, query.limit);
+    let total_comments: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM comments WHERE issue_id = $1")
+            .bind(issue.id)
+            .fetch_one(&state.pool)
+            .await?;
+    let total_events: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM timeline_events WHERE issue_id = $1")
+            .bind(issue.id)
+            .fetch_one(&state.pool)
+            .await?;
+    let query_limit = limit + offset;
+    let comments = sqlx::query_as::<_, IssueComment>(
+        r#"
+        SELECT *
+        FROM comments
+        WHERE issue_id = $1
+        ORDER BY created_at ASC
+        LIMIT $2
+        "#,
+    )
+    .bind(issue.id)
+    .bind(query_limit)
+    .fetch_all(&state.pool)
+    .await?;
+    let events = sqlx::query_as::<_, TimelineEvent>(
+        r#"
+        SELECT *
+        FROM timeline_events
+        WHERE issue_id = $1
+        ORDER BY created_at ASC
+        LIMIT $2
+        "#,
+    )
+    .bind(issue.id)
+    .bind(query_limit)
+    .fetch_all(&state.pool)
+    .await?;
+
+    let data = activity_items(
+        &state,
+        comments,
+        events,
+        viewer_actor_url.as_deref(),
+        offset,
+        limit,
+    )
+    .await?;
+
+    Ok(Json(PaginatedResponse {
+        data,
+        pagination: pagination(page, limit, total_comments.0 + total_events.0),
+    }))
+}
+
 pub(crate) async fn create_issue_comment(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1668,12 +2378,12 @@ pub(crate) async fn create_issue_comment(
     .bind(Uuid::now_v7())
     .bind(repo.id)
     .bind(issue.id)
-    .bind(author.handle)
-    .bind(author.actor_url)
-    .bind(author.display_name)
-    .bind(author.avatar_url)
-    .bind(author.remote_server)
-    .bind(body)
+    .bind(&author.handle)
+    .bind(&author.actor_url)
+    .bind(&author.display_name)
+    .bind(&author.avatar_url)
+    .bind(&author.remote_server)
+    .bind(&body)
     .bind(&activity_id)
     .fetch_one(&state.pool)
     .await?;
@@ -1687,6 +2397,15 @@ pub(crate) async fn create_issue_comment(
     )
     .await?;
     let comment = find_comment_by_id(&state, repo.id, comment.id).await?;
+    record_mention_events(
+        &state,
+        repo.id,
+        Some(issue.id),
+        None,
+        &author,
+        &comment.body,
+    )
+    .await?;
 
     deliver_issue_comment_activity(&state, &repo, &issue, &comment, &activity_id).await?;
     Ok(Json(
@@ -1753,7 +2472,7 @@ pub(crate) async fn delete_issue_comment(
     let issue = find_issue(&state, repo.id, number).await?;
     let current = find_issue_comment(&state, repo.id, issue.id, comment_id).await?;
     ensure_comment_author(&state, &current, &auth)?;
-    sqlx::query("DELETE FROM comment_reactions WHERE comment_id = $1")
+    sqlx::query("DELETE FROM reactions WHERE comment_id = $1")
         .bind(comment_id)
         .execute(&state.pool)
         .await?;
@@ -1792,7 +2511,13 @@ pub(crate) async fn create_issue_comment_reaction(
     ensure_repo_action_visible(&state.pool, &auth, &repo).await?;
     let issue = find_issue(&state, repo.id, number).await?;
     let comment = find_issue_comment(&state, repo.id, issue.id, comment_id).await?;
-    add_comment_reaction(&state, &auth, comment.id, &input.emoji).await?;
+    add_reaction(
+        &state,
+        &auth,
+        ReactionTarget::Comment(comment.id),
+        &input.emoji,
+    )
+    .await?;
     let actor_url = repo_action_actor_url(&state, &auth);
 
     Ok(Json(
@@ -1811,7 +2536,13 @@ pub(crate) async fn delete_issue_comment_reaction(
     ensure_repo_action_visible(&state.pool, &auth, &repo).await?;
     let issue = find_issue(&state, repo.id, number).await?;
     let comment = find_issue_comment(&state, repo.id, issue.id, comment_id).await?;
-    remove_comment_reaction(&state, &auth, comment.id, &input.emoji).await?;
+    remove_reaction(
+        &state,
+        &auth,
+        ReactionTarget::Comment(comment.id),
+        &input.emoji,
+    )
+    .await?;
     let actor_url = repo_action_actor_url(&state, &auth);
 
     Ok(Json(
@@ -1822,7 +2553,7 @@ pub(crate) async fn delete_issue_comment_reaction(
 pub(crate) async fn list_pull_request_comments(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Path((owner, name, id)): Path<(String, String, Uuid)>,
+    Path((owner, name, id)): Path<(String, String, i64)>,
     Query(query): Query<IssueListQuery>,
 ) -> ApiResult<Json<PaginatedResponse<CommentResponse>>> {
     let auth = optional_repo_action_auth(&state, &headers)?;
@@ -1867,10 +2598,83 @@ pub(crate) async fn list_pull_request_comments(
     }))
 }
 
+pub(crate) async fn list_pull_request_activity(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((owner, name, id)): Path<(String, String, i64)>,
+    Query(query): Query<IssueListQuery>,
+) -> ApiResult<Json<PaginatedResponse<ActivityItemResponse>>> {
+    let auth = optional_repo_action_auth(&state, &headers)?;
+    let repo = find_repo(&state.pool, &owner, &name).await?;
+    ensure_repo_visible(
+        &state.pool,
+        local_auth_from_repo_action(auth.as_ref()),
+        &repo,
+    )
+    .await?;
+    let pr = find_pull_request(&state, repo.id, id).await?;
+    let viewer_actor_url = auth
+        .as_ref()
+        .map(|auth| repo_action_actor_url(&state, auth));
+    let (page, limit, offset) = pagination_input(query.page, query.limit);
+    let total_comments: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM comments WHERE pull_request_id = $1")
+            .bind(pr.id)
+            .fetch_one(&state.pool)
+            .await?;
+    let total_events: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM timeline_events WHERE pull_request_id = $1")
+            .bind(pr.id)
+            .fetch_one(&state.pool)
+            .await?;
+    let query_limit = limit + offset;
+    let comments = sqlx::query_as::<_, IssueComment>(
+        r#"
+        SELECT *
+        FROM comments
+        WHERE pull_request_id = $1
+        ORDER BY created_at ASC
+        LIMIT $2
+        "#,
+    )
+    .bind(pr.id)
+    .bind(query_limit)
+    .fetch_all(&state.pool)
+    .await?;
+    let events = sqlx::query_as::<_, TimelineEvent>(
+        r#"
+        SELECT *
+        FROM timeline_events
+        WHERE pull_request_id = $1
+        ORDER BY created_at ASC
+        LIMIT $2
+        "#,
+    )
+    .bind(pr.id)
+    .bind(query_limit)
+    .fetch_all(&state.pool)
+    .await?;
+
+    let data = activity_items(
+        &state,
+        comments,
+        events,
+        viewer_actor_url.as_deref(),
+        offset,
+        limit,
+    )
+    .await?;
+
+    Ok(Json(PaginatedResponse {
+        data,
+        pagination: pagination(page, limit, total_comments.0 + total_events.0),
+    }))
+}
+
 pub(crate) async fn create_pull_request_comment(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Path((owner, name, id)): Path<(String, String, Uuid)>,
+    Path((owner, name, id)): Path<(String, String, i64)>,
     Json(input): Json<CreateIssueCommentRequest>,
 ) -> ApiResult<Json<CommentResponse>> {
     let auth = require_repo_action_auth(&state, &headers, "repo:comment")?;
@@ -1897,12 +2701,12 @@ pub(crate) async fn create_pull_request_comment(
     .bind(Uuid::now_v7())
     .bind(repo.id)
     .bind(pr.id)
-    .bind(author.handle)
-    .bind(author.actor_url)
-    .bind(author.display_name)
-    .bind(author.avatar_url)
-    .bind(author.remote_server)
-    .bind(body)
+    .bind(&author.handle)
+    .bind(&author.actor_url)
+    .bind(&author.display_name)
+    .bind(&author.avatar_url)
+    .bind(&author.remote_server)
+    .bind(&body)
     .bind(&activity_id)
     .fetch_one(&state.pool)
     .await?;
@@ -1916,6 +2720,7 @@ pub(crate) async fn create_pull_request_comment(
     )
     .await?;
     let comment = find_comment_by_id(&state, repo.id, comment.id).await?;
+    record_mention_events(&state, repo.id, None, Some(pr.id), &author, &comment.body).await?;
 
     Ok(Json(
         comment_response(&state, comment, Some(&viewer_actor_url)).await?,
@@ -1925,7 +2730,7 @@ pub(crate) async fn create_pull_request_comment(
 pub(crate) async fn update_pull_request_comment(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Path((owner, name, id, comment_id)): Path<(String, String, Uuid, Uuid)>,
+    Path((owner, name, id, comment_id)): Path<(String, String, i64, Uuid)>,
     Json(input): Json<UpdateCommentRequest>,
 ) -> ApiResult<Json<CommentResponse>> {
     let auth = require_repo_action_auth(&state, &headers, "repo:comment")?;
@@ -1973,7 +2778,7 @@ pub(crate) async fn update_pull_request_comment(
 pub(crate) async fn delete_pull_request_comment(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Path((owner, name, id, comment_id)): Path<(String, String, Uuid, Uuid)>,
+    Path((owner, name, id, comment_id)): Path<(String, String, i64, Uuid)>,
 ) -> ApiResult<Json<CommentResponse>> {
     let auth = require_repo_action_auth(&state, &headers, "repo:comment")?;
     let repo = find_repo(&state.pool, &owner, &name).await?;
@@ -1981,7 +2786,7 @@ pub(crate) async fn delete_pull_request_comment(
     let pr = find_pull_request(&state, repo.id, id).await?;
     let current = find_pull_request_comment(&state, repo.id, pr.id, comment_id).await?;
     ensure_comment_author(&state, &current, &auth)?;
-    sqlx::query("DELETE FROM comment_reactions WHERE comment_id = $1")
+    sqlx::query("DELETE FROM reactions WHERE comment_id = $1")
         .bind(comment_id)
         .execute(&state.pool)
         .await?;
@@ -2012,7 +2817,7 @@ pub(crate) async fn delete_pull_request_comment(
 pub(crate) async fn create_pull_request_comment_reaction(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Path((owner, name, id, comment_id)): Path<(String, String, Uuid, Uuid)>,
+    Path((owner, name, id, comment_id)): Path<(String, String, i64, Uuid)>,
     Json(input): Json<CommentReactionRequest>,
 ) -> ApiResult<Json<CommentResponse>> {
     let auth = require_repo_action_auth(&state, &headers, "repo:comment")?;
@@ -2025,26 +2830,14 @@ pub(crate) async fn create_pull_request_comment_reaction(
             "deleted comments cannot receive reactions".to_string(),
         ));
     }
-    let emoji = validate_comment_reaction(&input.emoji)?;
-    let actor = issue_author(&state, &auth).await?;
-    let actor_url = actor
-        .actor_url
-        .clone()
-        .ok_or_else(|| ApiError::Unauthorized)?;
-    sqlx::query(
-        r#"
-        INSERT INTO comment_reactions (comment_id, emoji, actor_url, actor_display_name, remote_server)
-        VALUES ($1, $2, $3, $4, $5)
-        ON CONFLICT (comment_id, actor_url, emoji) DO NOTHING
-        "#,
+    add_reaction(
+        &state,
+        &auth,
+        ReactionTarget::Comment(comment.id),
+        &input.emoji,
     )
-    .bind(comment_id)
-    .bind(emoji)
-    .bind(&actor_url)
-    .bind(actor.display_name)
-    .bind(actor.remote_server)
-    .execute(&state.pool)
     .await?;
+    let actor_url = repo_action_actor_url(&state, &auth);
 
     Ok(Json(
         comment_response(&state, comment, Some(&actor_url)).await?,
@@ -2054,7 +2847,7 @@ pub(crate) async fn create_pull_request_comment_reaction(
 pub(crate) async fn delete_pull_request_comment_reaction(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Path((owner, name, id, comment_id)): Path<(String, String, Uuid, Uuid)>,
+    Path((owner, name, id, comment_id)): Path<(String, String, i64, Uuid)>,
     Json(input): Json<CommentReactionRequest>,
 ) -> ApiResult<Json<CommentResponse>> {
     let auth = require_repo_action_auth(&state, &headers, "repo:comment")?;
@@ -2062,16 +2855,14 @@ pub(crate) async fn delete_pull_request_comment_reaction(
     ensure_repo_action_visible(&state.pool, &auth, &repo).await?;
     let pr = find_pull_request(&state, repo.id, id).await?;
     let comment = find_pull_request_comment(&state, repo.id, pr.id, comment_id).await?;
-    let emoji = validate_comment_reaction(&input.emoji)?;
-    let actor_url = repo_action_actor_url(&state, &auth);
-    sqlx::query(
-        "DELETE FROM comment_reactions WHERE comment_id = $1 AND emoji = $2 AND actor_url = $3",
+    remove_reaction(
+        &state,
+        &auth,
+        ReactionTarget::Comment(comment.id),
+        &input.emoji,
     )
-    .bind(comment_id)
-    .bind(emoji)
-    .bind(&actor_url)
-    .execute(&state.pool)
     .await?;
+    let actor_url = repo_action_actor_url(&state, &auth);
 
     Ok(Json(
         comment_response(&state, comment, Some(&actor_url)).await?,
@@ -2220,6 +3011,241 @@ struct CommentReactionAggregate {
     viewer_reacted: bool,
 }
 
+enum ReleaseWriteAuth {
+    User(AuthUser),
+    Runner(Runner),
+}
+
+struct ReleaseActor {
+    actor_url: String,
+    handle: String,
+    display_name: String,
+    runner_id: Option<Uuid>,
+}
+
+async fn release_viewer_can_manage(
+    state: &AppState,
+    auth: Option<&AuthUser>,
+    repo: &Repository,
+) -> ApiResult<bool> {
+    let Some(auth) = auth else {
+        return Ok(false);
+    };
+    can_update_pull_request(state, auth, repo).await
+}
+
+async fn require_release_write_auth(
+    state: &AppState,
+    headers: &HeaderMap,
+    repo: &Repository,
+) -> ApiResult<ReleaseWriteAuth> {
+    if let Ok(auth) = require_auth(state, headers) {
+        ensure_repo_visible(&state.pool, Some(&auth), repo).await?;
+        ensure_repo_writer(state, &auth, repo).await?;
+        return Ok(ReleaseWriteAuth::User(auth));
+    }
+
+    let token = bearer_token(headers).ok_or(ApiError::Unauthorized)?;
+    let runner = sqlx::query_as::<_, Runner>(
+        r#"
+        SELECT id, scope_kind, user_id, organization_id, repository_id, name, labels,
+               version, status, last_seen_at, created_at
+        FROM runners
+        WHERE token_hash = $1 AND status != 'disabled'
+        "#,
+    )
+    .bind(token_hash(token))
+    .fetch_optional(&state.pool)
+    .await?
+    .ok_or(ApiError::Unauthorized)?;
+    ensure_runner_can_release(state, &runner, repo).await?;
+    sqlx::query("UPDATE runners SET last_seen_at = now(), status = 'online' WHERE id = $1")
+        .bind(runner.id)
+        .execute(&state.pool)
+        .await?;
+    Ok(ReleaseWriteAuth::Runner(runner))
+}
+
+async fn ensure_runner_can_release(
+    state: &AppState,
+    runner: &Runner,
+    repo: &Repository,
+) -> ApiResult<()> {
+    match runner.scope_kind.as_str() {
+        "server" => Ok(()),
+        "repository" if runner.repository_id == Some(repo.id) => Ok(()),
+        "user" if runner.user_id == repo.owner_id => Ok(()),
+        "organization" => {
+            let organization_id: Option<Uuid> =
+                sqlx::query_scalar("SELECT organization_id FROM namespaces WHERE name = $1")
+                    .bind(&repo.owner_handle)
+                    .fetch_optional(&state.pool)
+                    .await?
+                    .flatten();
+            if organization_id.is_some() && organization_id == runner.organization_id {
+                Ok(())
+            } else {
+                Err(ApiError::Forbidden(
+                    "runner scope does not allow publishing this repository".to_string(),
+                ))
+            }
+        }
+        _ => Err(ApiError::Forbidden(
+            "runner scope does not allow publishing this repository".to_string(),
+        )),
+    }
+}
+
+fn release_actor(state: &AppState, auth: &ReleaseWriteAuth) -> ReleaseActor {
+    match auth {
+        ReleaseWriteAuth::User(auth) => ReleaseActor {
+            actor_url: state.config.actor_url(&auth.username),
+            handle: auth.username.clone(),
+            display_name: auth.username.clone(),
+            runner_id: None,
+        },
+        ReleaseWriteAuth::Runner(runner) => ReleaseActor {
+            actor_url: format!(
+                "{}/actions/runners/{}",
+                state.config.app_base_url.trim_end_matches('/'),
+                runner.id
+            ),
+            handle: runner.name.clone(),
+            display_name: format!("{} runner", runner.name),
+            runner_id: Some(runner.id),
+        },
+    }
+}
+
+fn local_auth_from_release_write(auth: &ReleaseWriteAuth) -> Option<&AuthUser> {
+    match auth {
+        ReleaseWriteAuth::User(auth) => Some(auth),
+        ReleaseWriteAuth::Runner(_) => None,
+    }
+}
+
+async fn find_release_by_tag(
+    state: &AppState,
+    repository_id: Uuid,
+    tag_name: &str,
+) -> ApiResult<Release> {
+    Ok(sqlx::query_as::<_, Release>(
+        "SELECT * FROM releases WHERE repository_id = $1 AND tag_name = $2",
+    )
+    .bind(repository_id)
+    .bind(tag_name)
+    .fetch_one(&state.pool)
+    .await?)
+}
+
+async fn release_response(
+    state: &AppState,
+    repo: &Repository,
+    release: Release,
+    viewer: Option<&AuthUser>,
+) -> ApiResult<ReleaseResponse> {
+    let assets = release_assets(state, repo, &release).await?;
+    let viewer_actor_url = viewer.map(|auth| state.config.actor_url(&auth.username));
+    let reactions = reactions_for_target(
+        state,
+        ReactionTarget::Release(release.id),
+        viewer_actor_url.as_deref(),
+    )
+    .await?;
+    let last_commit = git_last_commit(repo, &release.target_commit_sha, None).await?;
+    let viewer_can_update = match viewer {
+        Some(auth) => can_update_pull_request(state, auth, repo).await?,
+        None => false,
+    };
+    Ok(ReleaseResponse {
+        id: release.id,
+        repository_id: release.repository_id,
+        tag_name: release.tag_name,
+        target_commit_sha: release.target_commit_sha,
+        title: release.title,
+        body: release.body,
+        body_html: release.body_html,
+        author_actor_url: release.author_actor_url,
+        author_handle: release.author_handle,
+        author_display_name: release.author_display_name,
+        status: release.status,
+        is_prerelease: release.is_prerelease,
+        activity_id: release.activity_id,
+        assets,
+        reactions,
+        last_commit,
+        viewer_can_update,
+        published_at: release.published_at,
+        created_at: release.created_at,
+        updated_at: release.updated_at,
+    })
+}
+
+async fn release_assets(
+    state: &AppState,
+    repo: &Repository,
+    release: &Release,
+) -> ApiResult<Vec<ReleaseAssetResponse>> {
+    let assets = sqlx::query_as::<_, ReleaseAsset>(
+        r#"
+        SELECT *
+        FROM release_assets
+        WHERE release_id = $1 AND deleted_at IS NULL
+        ORDER BY created_at ASC
+        "#,
+    )
+    .bind(release.id)
+    .fetch_all(&state.pool)
+    .await?;
+    Ok(assets
+        .into_iter()
+        .map(|asset| release_asset_response(&state.config.app_base_url, repo, release, asset))
+        .collect())
+}
+
+fn release_asset_response(
+    app_base_url: &str,
+    repo: &Repository,
+    release: &Release,
+    asset: ReleaseAsset,
+) -> ReleaseAssetResponse {
+    let url = format!(
+        "{}/repos/{}/{}/releases/{}/assets/{}/{}",
+        app_base_url.trim_end_matches('/'),
+        url_path_segment(&repo.owner_handle),
+        url_path_segment(&repo.name),
+        url_path_segment(&release.tag_name),
+        asset.id,
+        url_path_segment(&asset.original_filename)
+    );
+    let is_image = attachment_is_inline_image(&asset.content_type);
+    let markdown = if is_image {
+        format!("![{}]({})", asset.original_filename, url)
+    } else {
+        format!("[{}]({})", asset.original_filename, url)
+    };
+    ReleaseAssetResponse {
+        id: asset.id,
+        filename: asset.original_filename,
+        content_type: asset.content_type,
+        size: asset.byte_size,
+        sha256: asset.sha256,
+        url,
+        markdown,
+        is_image,
+        download_count: asset.download_count,
+        created_at: asset.created_at,
+    }
+}
+
+fn release_asset_storage_path(state: &AppState, storage_key: &str) -> PathBuf {
+    state
+        .config
+        .attachment_storage_path
+        .join("releases")
+        .join(storage_key)
+}
+
 fn optional_repo_action_auth(
     state: &AppState,
     headers: &HeaderMap,
@@ -2270,7 +3296,7 @@ fn ensure_comment_author(
 async fn find_pull_request_comment(
     state: &AppState,
     repository_id: Uuid,
-    pull_request_id: Uuid,
+    pull_request_id: i64,
     comment_id: Uuid,
 ) -> ApiResult<IssueComment> {
     Ok(sqlx::query_as::<_, IssueComment>(
@@ -2329,7 +3355,7 @@ async fn comment_response(
     let reactions = if comment.deleted_at.is_some() {
         Vec::new()
     } else {
-        comment_reactions(state, comment.id, viewer_actor_url).await?
+        reactions_for_target(state, ReactionTarget::Comment(comment.id), viewer_actor_url).await?
     };
     let viewer_can_update = comment.deleted_at.is_none()
         && viewer_actor_url
@@ -2372,6 +3398,155 @@ async fn comment_response(
         updated_at: comment.updated_at,
         deleted_at: comment.deleted_at,
     })
+}
+
+async fn activity_items(
+    state: &AppState,
+    comments: Vec<IssueComment>,
+    events: Vec<TimelineEvent>,
+    viewer_actor_url: Option<&str>,
+    offset: i64,
+    limit: i64,
+) -> ApiResult<Vec<ActivityItemResponse>> {
+    let mut data = Vec::with_capacity(comments.len() + events.len());
+    for comment in comments {
+        let created_at = comment.created_at;
+        data.push(ActivityItemResponse {
+            kind: "comment".to_string(),
+            comment: Some(comment_response(state, comment, viewer_actor_url).await?),
+            event: None,
+            created_at,
+        });
+    }
+    for event in events {
+        let created_at = event.created_at;
+        data.push(ActivityItemResponse {
+            kind: "event".to_string(),
+            comment: None,
+            event: Some(timeline_event_response(event)),
+            created_at,
+        });
+    }
+    data.sort_by(|left, right| left.created_at.cmp(&right.created_at));
+    Ok(data
+        .into_iter()
+        .skip(offset as usize)
+        .take(limit as usize)
+        .collect())
+}
+
+fn timeline_event_response(event: TimelineEvent) -> TimelineEventResponse {
+    TimelineEventResponse {
+        id: event.id,
+        event_type: event.event_type,
+        body: event.body,
+        actor_handle: event.actor_handle,
+        actor_actor_url: event.actor_actor_url,
+        actor_display_name: event.actor_display_name,
+        actor_avatar_url: event.actor_avatar_url,
+        remote_server: event.remote_server,
+        metadata: event.metadata,
+        created_at: event.created_at,
+    }
+}
+
+async fn record_timeline_event(
+    state: &AppState,
+    repository_id: Uuid,
+    issue_id: Option<Uuid>,
+    pull_request_id: Option<i64>,
+    author: &IssueAuthor,
+    event_type: &str,
+    body: impl Into<String>,
+    metadata: Value,
+) -> ApiResult<()> {
+    sqlx::query(
+        r#"
+        INSERT INTO timeline_events
+          (id, repository_id, issue_id, pull_request_id, actor_handle, actor_actor_url,
+           actor_display_name, actor_avatar_url, remote_server, event_type, body, metadata)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        "#,
+    )
+    .bind(Uuid::now_v7())
+    .bind(repository_id)
+    .bind(issue_id)
+    .bind(pull_request_id)
+    .bind(&author.handle)
+    .bind(&author.actor_url)
+    .bind(&author.display_name)
+    .bind(&author.avatar_url)
+    .bind(&author.remote_server)
+    .bind(event_type)
+    .bind(body.into())
+    .bind(metadata)
+    .execute(&state.pool)
+    .await?;
+    Ok(())
+}
+
+async fn record_mention_events(
+    state: &AppState,
+    repository_id: Uuid,
+    issue_id: Option<Uuid>,
+    pull_request_id: Option<i64>,
+    author: &IssueAuthor,
+    content: &str,
+) -> ApiResult<()> {
+    let mentions = mentioned_handles(content);
+    if mentions.is_empty() {
+        return Ok(());
+    }
+    let body = format!(
+        "mentioned {}",
+        mentions
+            .iter()
+            .map(|mention| format!("@{mention}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    record_timeline_event(
+        state,
+        repository_id,
+        issue_id,
+        pull_request_id,
+        author,
+        "mentioned",
+        body,
+        json!({ "mentions": mentions }),
+    )
+    .await
+}
+
+fn mentioned_handles(content: &str) -> Vec<String> {
+    let mut mentions = BTreeSet::new();
+    let chars: Vec<char> = content.chars().collect();
+    let mut index = 0;
+    while index < chars.len() {
+        if chars[index] != '@' {
+            index += 1;
+            continue;
+        }
+        let previous = index
+            .checked_sub(1)
+            .and_then(|previous| chars.get(previous))
+            .copied();
+        if previous.is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-') {
+            index += 1;
+            continue;
+        }
+        let mut end = index + 1;
+        while end < chars.len()
+            && (chars[end].is_ascii_alphanumeric() || chars[end] == '_' || chars[end] == '-')
+        {
+            end += 1;
+        }
+        if end > index + 1 {
+            mentions.insert(chars[index + 1..end].iter().collect::<String>());
+        }
+        index = end.max(index + 1);
+    }
+    mentions.into_iter().collect()
 }
 
 async fn comment_attachments(
@@ -2452,80 +3627,142 @@ async fn sync_comment_attachments(
     Ok(())
 }
 
-async fn add_comment_reaction(
+#[derive(Clone, Copy)]
+enum ReactionTarget {
+    Comment(Uuid),
+    Release(Uuid),
+}
+
+async fn add_reaction(
     state: &AppState,
     auth: &RepoActionAuth,
-    comment_id: Uuid,
+    target: ReactionTarget,
     emoji: &str,
 ) -> ApiResult<()> {
-    let comment = sqlx::query_as::<_, IssueComment>("SELECT * FROM comments WHERE id = $1")
-        .bind(comment_id)
-        .fetch_one(&state.pool)
-        .await?;
-    if comment.deleted_at.is_some() {
-        return Err(ApiError::BadRequest(
-            "deleted comments cannot receive reactions".to_string(),
-        ));
-    }
     let emoji = validate_comment_reaction(emoji)?;
     let actor = issue_author(state, auth).await?;
     let actor_url = actor.actor_url.clone().ok_or(ApiError::Unauthorized)?;
-    sqlx::query(
-        r#"
-        INSERT INTO comment_reactions (comment_id, emoji, actor_url, actor_display_name, remote_server)
-        VALUES ($1, $2, $3, $4, $5)
-        ON CONFLICT (comment_id, actor_url, emoji) DO NOTHING
-        "#,
-    )
-    .bind(comment_id)
-    .bind(emoji)
-    .bind(actor_url)
-    .bind(actor.display_name)
-    .bind(actor.remote_server)
-    .execute(&state.pool)
-    .await?;
+    match target {
+        ReactionTarget::Comment(comment_id) => {
+            let comment = sqlx::query_as::<_, IssueComment>("SELECT * FROM comments WHERE id = $1")
+                .bind(comment_id)
+                .fetch_one(&state.pool)
+                .await?;
+            if comment.deleted_at.is_some() {
+                return Err(ApiError::BadRequest(
+                    "deleted comments cannot receive reactions".to_string(),
+                ));
+            }
+            sqlx::query(
+                r#"
+                INSERT INTO reactions (id, comment_id, emoji, actor_url, actor_display_name, remote_server)
+                VALUES ($1, $2, $3, $4, $5, $6)
+                ON CONFLICT DO NOTHING
+                "#,
+            )
+            .bind(Uuid::now_v7())
+            .bind(comment_id)
+            .bind(emoji)
+            .bind(&actor_url)
+            .bind(actor.display_name)
+            .bind(actor.remote_server)
+            .execute(&state.pool)
+            .await?;
+        }
+        ReactionTarget::Release(release_id) => {
+            sqlx::query(
+                r#"
+                INSERT INTO reactions (id, release_id, emoji, actor_url, actor_display_name, remote_server)
+                VALUES ($1, $2, $3, $4, $5, $6)
+                ON CONFLICT DO NOTHING
+                "#,
+            )
+            .bind(Uuid::now_v7())
+            .bind(release_id)
+            .bind(emoji)
+            .bind(&actor_url)
+            .bind(actor.display_name)
+            .bind(actor.remote_server)
+            .execute(&state.pool)
+            .await?;
+        }
+    }
     Ok(())
 }
 
-async fn remove_comment_reaction(
+async fn remove_reaction(
     state: &AppState,
     auth: &RepoActionAuth,
-    comment_id: Uuid,
+    target: ReactionTarget,
     emoji: &str,
 ) -> ApiResult<()> {
     let emoji = validate_comment_reaction(emoji)?;
     let actor_url = repo_action_actor_url(state, auth);
-    sqlx::query(
-        "DELETE FROM comment_reactions WHERE comment_id = $1 AND emoji = $2 AND actor_url = $3",
-    )
-    .bind(comment_id)
-    .bind(emoji)
-    .bind(actor_url)
-    .execute(&state.pool)
-    .await?;
+    match target {
+        ReactionTarget::Comment(comment_id) => {
+            sqlx::query(
+                "DELETE FROM reactions WHERE comment_id = $1 AND emoji = $2 AND actor_url = $3",
+            )
+            .bind(comment_id)
+            .bind(emoji)
+            .bind(actor_url)
+            .execute(&state.pool)
+            .await?;
+        }
+        ReactionTarget::Release(release_id) => {
+            sqlx::query(
+                "DELETE FROM reactions WHERE release_id = $1 AND emoji = $2 AND actor_url = $3",
+            )
+            .bind(release_id)
+            .bind(emoji)
+            .bind(actor_url)
+            .execute(&state.pool)
+            .await?;
+        }
+    }
     Ok(())
 }
 
-async fn comment_reactions(
+async fn reactions_for_target(
     state: &AppState,
-    comment_id: Uuid,
+    target: ReactionTarget,
     viewer_actor_url: Option<&str>,
 ) -> ApiResult<Vec<CommentReactionResponse>> {
     let viewer_actor_url = viewer_actor_url.unwrap_or("");
-    let aggregates = sqlx::query_as::<_, CommentReactionAggregate>(
-        r#"
-        SELECT emoji,
-               COUNT(*)::BIGINT AS count,
-               COALESCE(BOOL_OR(actor_url = $2), false) AS viewer_reacted
-        FROM comment_reactions
-        WHERE comment_id = $1
-        GROUP BY emoji
-        "#,
-    )
-    .bind(comment_id)
-    .bind(viewer_actor_url)
-    .fetch_all(&state.pool)
-    .await?;
+    let aggregates = match target {
+        ReactionTarget::Comment(comment_id) => {
+            sqlx::query_as::<_, CommentReactionAggregate>(
+                r#"
+                SELECT emoji,
+                       COUNT(*)::BIGINT AS count,
+                       COALESCE(BOOL_OR(actor_url = $2), false) AS viewer_reacted
+                FROM reactions
+                WHERE comment_id = $1
+                GROUP BY emoji
+                "#,
+            )
+            .bind(comment_id)
+            .bind(viewer_actor_url)
+            .fetch_all(&state.pool)
+            .await?
+        }
+        ReactionTarget::Release(release_id) => {
+            sqlx::query_as::<_, CommentReactionAggregate>(
+                r#"
+                SELECT emoji,
+                       COUNT(*)::BIGINT AS count,
+                       COALESCE(BOOL_OR(actor_url = $2), false) AS viewer_reacted
+                FROM reactions
+                WHERE release_id = $1
+                GROUP BY emoji
+                "#,
+            )
+            .bind(release_id)
+            .bind(viewer_actor_url)
+            .fetch_all(&state.pool)
+            .await?
+        }
+    };
 
     Ok(aggregates
         .into_iter()
@@ -2557,6 +3794,167 @@ fn sanitize_markdown_html(markdown: &str) -> String {
     let mut html_output = String::new();
     html::push_html(&mut html_output, parser);
     ammonia::clean(&html_output)
+}
+
+fn normalize_release_status(value: Option<&str>) -> ApiResult<Option<&'static str>> {
+    match value.map(str::trim).filter(|value| !value.is_empty()) {
+        None => Ok(None),
+        Some("draft") => Ok(Some("draft")),
+        Some("published") => Ok(Some("published")),
+        Some(_) => Err(ApiError::BadRequest("invalid release status".to_string())),
+    }
+}
+
+fn normalize_release_status_filter(value: Option<&str>) -> ApiResult<Option<String>> {
+    match value.map(str::trim).filter(|value| !value.is_empty()) {
+        None | Some("all") => Ok(None),
+        Some("draft") => Ok(Some("draft".to_string())),
+        Some("published") => Ok(Some("published".to_string())),
+        Some(_) => Err(ApiError::BadRequest("invalid release status".to_string())),
+    }
+}
+
+fn validate_release_tag_name(value: &str) -> ApiResult<String> {
+    let tag = value.trim();
+    if tag.is_empty()
+        || tag.starts_with('-')
+        || tag.starts_with('/')
+        || tag.ends_with('/')
+        || tag.contains('\0')
+        || tag.contains("..")
+        || tag.contains("//")
+        || tag.contains("@{")
+        || tag.chars().any(char::is_whitespace)
+        || tag.chars().any(char::is_control)
+    {
+        return Err(ApiError::BadRequest("invalid release tag".to_string()));
+    }
+    Ok(tag.to_string())
+}
+
+async fn resolve_or_create_release_tag(
+    repo: &Repository,
+    tag_name: &str,
+    target_ref: Option<&str>,
+) -> ApiResult<String> {
+    if let Some(commit_sha) = resolve_git_ref(repo, Some(&format!("refs/tags/{tag_name}"))).await? {
+        return Ok(commit_sha);
+    }
+
+    let target_ref = validate_release_target_ref(target_ref)?;
+    let target_commit_sha = resolve_git_ref(repo, Some(target_ref))
+        .await?
+        .ok_or_else(|| ApiError::BadRequest("target branch or ref does not exist".to_string()))?;
+    run_git_command(
+        repo,
+        &[
+            "tag".to_string(),
+            tag_name.to_string(),
+            target_commit_sha.clone(),
+        ],
+    )
+    .await?;
+    Ok(target_commit_sha)
+}
+
+fn validate_release_target_ref(value: Option<&str>) -> ApiResult<&str> {
+    let target_ref = value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            ApiError::BadRequest("target branch is required when creating a new tag".to_string())
+        })?;
+    if target_ref.starts_with('-')
+        || target_ref.contains('\0')
+        || target_ref.contains("..")
+        || target_ref.contains("@{")
+        || target_ref.chars().any(char::is_control)
+    {
+        return Err(ApiError::BadRequest("invalid target branch".to_string()));
+    }
+    Ok(target_ref)
+}
+
+fn parse_compare_range(range: &str) -> ApiResult<(String, String)> {
+    let Some((base, head)) = range.split_once("...") else {
+        return Err(ApiError::BadRequest(
+            "compare range must use base...head".to_string(),
+        ));
+    };
+    Ok((
+        validate_release_tag_name(base)?,
+        validate_release_tag_name(head)?,
+    ))
+}
+
+async fn release_body_from_input(
+    state: &AppState,
+    repo: &Repository,
+    tag_name: &str,
+    body: Option<String>,
+    generate_notes: Option<bool>,
+) -> ApiResult<String> {
+    if let Some(body) = body {
+        return Ok(body);
+    }
+    if generate_notes == Some(true) {
+        return generate_release_notes(state, repo, tag_name).await;
+    }
+    Ok(String::new())
+}
+
+async fn generate_release_notes(
+    state: &AppState,
+    repo: &Repository,
+    tag_name: &str,
+) -> ApiResult<String> {
+    let previous_tag: Option<String> = sqlx::query_scalar(
+        r#"
+        SELECT tag_name
+        FROM releases
+        WHERE repository_id = $1 AND status = 'published' AND tag_name != $2
+        ORDER BY COALESCE(published_at, created_at) DESC
+        LIMIT 1
+        "#,
+    )
+    .bind(repo.id)
+    .bind(tag_name)
+    .fetch_optional(&state.pool)
+    .await?;
+    let target = if let Some(previous_tag) = previous_tag {
+        format!("refs/tags/{previous_tag}..refs/tags/{tag_name}")
+    } else {
+        format!("refs/tags/{tag_name}")
+    };
+    let output = run_git_command(
+        repo,
+        &[
+            "log".to_string(),
+            "--max-count=50".to_string(),
+            "--pretty=format:%s".to_string(),
+            target,
+        ],
+    )
+    .await?;
+    let lines = output
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(|line| format!("- {line}"))
+        .collect::<Vec<_>>();
+    if lines.is_empty() {
+        Ok("## Changes\n\nNo commits found for this release.".to_string())
+    } else {
+        Ok(format!("## Changes\n\n{}", lines.join("\n")))
+    }
+}
+
+fn new_activity_id(state: &AppState) -> String {
+    format!(
+        "{}/activities/{}",
+        state.config.app_base_url.trim_end_matches('/'),
+        Uuid::now_v7()
+    )
 }
 
 fn comment_attachment_response(
@@ -2993,7 +4391,7 @@ async fn ensure_issue_updatable(
 async fn find_pull_request(
     state: &AppState,
     target_repository_id: Uuid,
-    id: Uuid,
+    id: i64,
 ) -> ApiResult<PullRequest> {
     Ok(sqlx::query_as::<_, PullRequest>(
         "SELECT * FROM pull_requests WHERE target_repository_id = $1 AND id = $2",
@@ -3285,6 +4683,49 @@ async fn deliver_issue_comment_activity(
     Ok(())
 }
 
+async fn deliver_release_activity(
+    state: &AppState,
+    repo: &Repository,
+    release: &Release,
+    activity_type: &str,
+) -> ApiResult<()> {
+    let activity_id = release
+        .activity_id
+        .as_deref()
+        .map(str::to_string)
+        .unwrap_or_else(|| new_activity_id(state));
+    let activity = json!({
+        "@context": "https://www.w3.org/ns/activitystreams",
+        "id": activity_id,
+        "type": activity_type,
+        "actor": release.author_actor_url,
+        "object": {
+            "type": "Release",
+            "id": release_activity_url(&state.config, repo, &release.tag_name),
+            "target": repo_activity_url(&state.config, repo),
+            "tagName": release.tag_name,
+            "name": release.title,
+            "content": release.body,
+            "status": release.status,
+            "prerelease": release.is_prerelease,
+            "attributedTo": release.author_actor_url
+        }
+    });
+    record_activity(
+        &state.pool,
+        "outbound",
+        repo.remote_server.as_deref(),
+        &activity,
+        "queued",
+    )
+    .await?;
+    dispatch_release_webhooks(state, repo, release, activity_type).await?;
+    if let Some(remote_url) = repo.remote_url.as_deref() {
+        deliver_activity(state, remote_url, &activity).await;
+    }
+    Ok(())
+}
+
 pub(crate) fn issue_activity_url(
     config: &crate::config::Config,
     repo: &Repository,
@@ -3297,4 +4738,90 @@ pub(crate) fn issue_activity_url(
         repo.name,
         number
     )
+}
+
+pub(crate) fn release_activity_url(
+    config: &crate::config::Config,
+    repo: &Repository,
+    tag_name: &str,
+) -> String {
+    format!(
+        "{}/{}/{}/releases/{}",
+        config.app_base_url.trim_end_matches('/'),
+        repo.owner_handle,
+        repo.name,
+        url_path_segment(tag_name)
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn release_tag_validation_accepts_common_version_tags() {
+        assert_eq!(validate_release_tag_name("v1.2.3").unwrap(), "v1.2.3");
+        assert_eq!(
+            validate_release_tag_name("release/2026.06").unwrap(),
+            "release/2026.06"
+        );
+    }
+
+    #[test]
+    fn release_tag_validation_rejects_unsafe_refs() {
+        for value in [
+            "",
+            "-v1",
+            "/v1",
+            "v1/",
+            "release//v1",
+            "v 1",
+            "v1..v2",
+            "v1@{2}",
+        ] {
+            assert!(validate_release_tag_name(value).is_err());
+        }
+    }
+
+    #[test]
+    fn release_status_validation_matches_supported_states() {
+        assert_eq!(
+            normalize_release_status(Some("draft")).unwrap(),
+            Some("draft")
+        );
+        assert_eq!(
+            normalize_release_status(Some("published")).unwrap(),
+            Some("published")
+        );
+        assert!(normalize_release_status(Some("archived")).is_err());
+        assert_eq!(normalize_release_status_filter(Some("all")).unwrap(), None);
+    }
+
+    #[test]
+    fn release_target_ref_validation_requires_a_safe_ref() {
+        assert_eq!(validate_release_target_ref(Some("main")).unwrap(), "main");
+        assert_eq!(
+            validate_release_target_ref(Some("refs/heads/release")).unwrap(),
+            "refs/heads/release"
+        );
+        for value in [
+            None,
+            Some(""),
+            Some("-main"),
+            Some("main..next"),
+            Some("main@{1}"),
+        ] {
+            assert!(validate_release_target_ref(value).is_err());
+        }
+    }
+
+    #[test]
+    fn compare_range_validation_requires_two_safe_tags() {
+        assert_eq!(
+            parse_compare_range("v1.0.0...v1.1.0").unwrap(),
+            ("v1.0.0".to_string(), "v1.1.0".to_string())
+        );
+        assert!(parse_compare_range("v1.0.0").is_err());
+        assert!(parse_compare_range("v1..0...v1.1").is_err());
+    }
 }

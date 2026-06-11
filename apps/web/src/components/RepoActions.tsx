@@ -247,7 +247,7 @@ export function PullRequestForm({ owner, name, options, redirectTo, repo }: Pull
       const pullRequest = (await response.json()) as PullRequest;
       setMessage("Pull request opened and activity queued.");
       if (redirectTo) {
-        router.push(`${redirectTo}/${encodeURIComponent(pullRequest.id)}`);
+        router.push(`${redirectTo}/${encodeURIComponent(String(pullRequest.id))}`);
       }
       return;
     }

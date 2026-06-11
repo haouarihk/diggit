@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { NavBar } from "@/components/NavBar";
+import { PageShell } from "@/components/PageShell";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { ThemeScript } from "@/components/ThemeScript";
 import { runtimeConfigScript } from "@/lib/runtime-config";
@@ -25,9 +26,9 @@ export default function RootLayout({
       </head>
       <body className="h-full bg-[#f6f8fa] text-sm leading-6 text-[#1f2328]">
         <ThemeProvider>
-          <main className="min-h-screen mx-auto max-w-7xl px-6 pb-12">
+          <main className="min-h-screen px-6 pb-12">
             <NavBar />
-            {children}
+            <PageShell>{children}</PageShell>
           </main>
         </ThemeProvider>
       </body>

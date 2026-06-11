@@ -448,10 +448,17 @@ pub(crate) async fn repository_stats(
         .await?
         .as_deref(),
     );
+    let releases_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*)::BIGINT FROM releases WHERE repository_id = $1 AND status = 'published'",
+    )
+    .bind(repo.id)
+    .fetch_one(&state.pool)
+    .await
+    .unwrap_or(0);
     let response = RepositoryStatsResponse {
         branches_count,
         commits_count,
-        releases_count: 0,
+        releases_count,
         tags_count,
     };
     state.cache.set_json(&cache_key, &response).await;
@@ -928,7 +935,7 @@ pub(crate) async fn fetch_pull_request_ref(
     target: &Repository,
     source_url: &str,
     source_branch: &str,
-    pull_request_id: Uuid,
+    pull_request_id: impl std::fmt::Display,
 ) -> ApiResult<String> {
     validate_git_source(source_url)?;
     let source_ref = format!(

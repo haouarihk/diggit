@@ -205,6 +205,37 @@ pub(crate) fn router(state: AppState) -> Router {
             get(repositories::list_repo_tags),
         )
         .route(
+            "/repos/{owner}/{name}/releases",
+            get(repositories::list_releases).post(repositories::create_release),
+        )
+        .route(
+            "/repos/{owner}/{name}/releases/{tag}",
+            get(repositories::get_release)
+                .patch(repositories::update_release)
+                .delete(repositories::delete_release),
+        )
+        .route(
+            "/repos/{owner}/{name}/releases/{tag}/assets",
+            post(repositories::upload_release_asset),
+        )
+        .route(
+            "/repos/{owner}/{name}/releases/{tag}/assets/{asset_id}/{filename}",
+            get(repositories::get_release_asset),
+        )
+        .route(
+            "/repos/{owner}/{name}/releases/{tag}/assets/{asset_id}",
+            delete(repositories::delete_release_asset),
+        )
+        .route(
+            "/repos/{owner}/{name}/releases/{tag}/reactions",
+            post(repositories::create_release_reaction)
+                .delete(repositories::delete_release_reaction),
+        )
+        .route(
+            "/repos/{owner}/{name}/compare/{range}",
+            get(repositories::compare_repo_refs),
+        )
+        .route(
             "/repos/{owner}/{name}/stats",
             get(repositories::get_repo_stats),
         )
@@ -285,13 +316,25 @@ pub(crate) fn router(state: AppState) -> Router {
             get(repositories::get_pull_request).patch(repositories::update_pull_request),
         )
         .route(
+            "/repos/{owner}/{name}/pull/{id}",
+            get(repositories::get_pull_request).patch(repositories::update_pull_request),
+        )
+        .route(
             "/repos/{owner}/{name}/pull-requests/{id}/merge",
+            post(repositories::merge_pull_request),
+        )
+        .route(
+            "/repos/{owner}/{name}/pull/{id}/merge",
             post(repositories::merge_pull_request),
         )
         .route(
             "/repos/{owner}/{name}/pull-requests/{id}/comments",
             get(repositories::list_pull_request_comments)
                 .post(repositories::create_pull_request_comment),
+        )
+        .route(
+            "/repos/{owner}/{name}/pull/{id}/activity",
+            get(repositories::list_pull_request_activity),
         )
         .route(
             "/repos/{owner}/{name}/pull-requests/{id}/comments/{comment_id}",
@@ -330,6 +373,10 @@ pub(crate) fn router(state: AppState) -> Router {
         .route(
             "/repos/{owner}/{name}/issues/{number}/comments",
             get(repositories::list_issue_comments).post(repositories::create_issue_comment),
+        )
+        .route(
+            "/repos/{owner}/{name}/issues/{number}/activity",
+            get(repositories::list_issue_activity),
         )
         .route(
             "/repos/{owner}/{name}/issues/{number}/comments/{comment_id}",
@@ -380,13 +427,25 @@ pub(crate) fn router(state: AppState) -> Router {
             get(repositories::get_pull_request).patch(repositories::update_pull_request),
         )
         .route(
+            "/{owner}/{name}/pull/{id}",
+            get(repositories::get_pull_request).patch(repositories::update_pull_request),
+        )
+        .route(
             "/{owner}/{name}/pull-requests/{id}/merge",
+            post(repositories::merge_pull_request),
+        )
+        .route(
+            "/{owner}/{name}/pull/{id}/merge",
             post(repositories::merge_pull_request),
         )
         .route(
             "/{owner}/{name}/pull-requests/{id}/comments",
             get(repositories::list_pull_request_comments)
                 .post(repositories::create_pull_request_comment),
+        )
+        .route(
+            "/{owner}/{name}/pull/{id}/activity",
+            get(repositories::list_pull_request_activity),
         )
         .route(
             "/{owner}/{name}/pull-requests/{id}/comments/{comment_id}",
@@ -417,6 +476,10 @@ pub(crate) fn router(state: AppState) -> Router {
         .route(
             "/{owner}/{name}/issues/{number}/comments",
             get(repositories::list_issue_comments).post(repositories::create_issue_comment),
+        )
+        .route(
+            "/{owner}/{name}/issues/{number}/activity",
+            get(repositories::list_issue_activity),
         )
         .route(
             "/{owner}/{name}/issues/{number}/comments/{comment_id}",
