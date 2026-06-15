@@ -1500,7 +1500,6 @@ async fn gitlab_push_commits(
         &[
             "log".to_string(),
             "--max-count=20".to_string(),
-            "--reverse".to_string(),
             "--format=%H%x1f%s%x1f%cI%x1f%an%x1f%ae".to_string(),
             range,
         ],
