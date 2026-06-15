@@ -1715,12 +1715,13 @@ pub(crate) async fn create_pull_request(
     let pr = sqlx::query_as::<_, PullRequest>(
         r#"
         INSERT INTO pull_requests
-          (target_repository_id, source_repository_id, title, body, author_handle,
+          (legacy_uuid, target_repository_id, source_repository_id, title, body, author_handle,
            source_repo_url, source_branch, target_branch, status, activity_id)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'open', $9)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'open', $10)
         RETURNING *
         "#,
     )
+    .bind(Uuid::now_v7())
     .bind(target.id)
     .bind(input.source_repository_id)
     .bind(input.title)
