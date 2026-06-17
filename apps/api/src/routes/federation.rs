@@ -207,7 +207,7 @@ pub(crate) async fn accept_pull_request(state: &AppState, activity: &Activity) -
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'open', $9)
         ON CONFLICT (activity_id) DO NOTHING
         "#,
-    )
+    )0
     .bind(Uuid::now_v7())
     .bind(target.id)
     .bind(title)

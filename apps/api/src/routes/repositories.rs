@@ -1979,6 +1979,7 @@ pub(crate) async fn merge_pull_request(
     let source_url = pull_request_git_source(&state, &current, Some(&auth)).await?;
     let source_ref =
         fetch_pull_request_ref(&target, &source_url, &current.source_branch, current.id).await?;
+    let before_tips = git_webhook_ref_tips(&target).await?;
     merge_ref_into_branch(&target, &current.target_branch, &source_ref, &auth).await?;
 
     let pr = sqlx::query_as::<_, PullRequest>(
@@ -2011,6 +2012,27 @@ pub(crate) async fn merge_pull_request(
     .await?;
 
     invalidate_repo_cache(&state, &target.owner_handle, &target.name).await;
+    let webhook_state = state.clone();
+    let webhook_auth = auth.clone();
+    let webhook_repo_id = target.id;
+    tokio::spawn(async move {
+        let repo = match sqlx::query_as::<_, Repository>("SELECT * FROM repositories WHERE id = $1")
+            .bind(webhook_repo_id)
+            .fetch_one(&webhook_state.pool)
+            .await
+        {
+            Ok(repo) => repo,
+            Err(error) => {
+                tracing::warn!(%error, "failed to load repository for pull request merge webhooks");
+                return;
+            }
+        };
+        if let Err(error) =
+            dispatch_repository_webhooks(&webhook_state, &repo, &webhook_auth, &before_tips).await
+        {
+            tracing::warn!(%error, "failed to dispatch repository webhooks after pull request merge");
+        }
+    });
     Ok(Json(
         pull_request_response(&state, &target, pr, Some(&auth)).await?,
     ))
