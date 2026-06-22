@@ -355,6 +355,7 @@ mod tests {
             database_url: String::new(),
             redis_url: None,
             cache_ttl_seconds: 60,
+            social_preview_cache_ttl_seconds: 14_400,
             app_base_url: "https://visited.example.com".to_string(),
             public_web_url: "https://visited.example.com".to_string(),
             git_storage_path: PathBuf::new(),

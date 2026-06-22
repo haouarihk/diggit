@@ -1,1 +1,1 @@
-export { default } from "../../pull-requests/[id]/page";
+export { default, generateMetadata } from "../../pull-requests/[id]/page";

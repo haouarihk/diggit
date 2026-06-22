@@ -62,6 +62,26 @@ impl Cache {
         }
     }
 
+    pub(crate) async fn get_bytes(&self, key: &str) -> Option<Vec<u8>> {
+        let client = self.client.as_ref()?;
+        let mut connection = client.get_multiplexed_async_connection().await.ok()?;
+        let value: Option<Vec<u8>> = connection.get(key).await.ok()?;
+        value
+    }
+
+    pub(crate) async fn set_bytes_with_ttl(&self, key: &str, value: &[u8], ttl_seconds: u64) {
+        let Some(client) = self.client.as_ref() else {
+            return;
+        };
+        let Ok(mut connection) = client.get_multiplexed_async_connection().await else {
+            return;
+        };
+        let result: redis::RedisResult<()> = connection.set_ex(key, value, ttl_seconds).await;
+        if let Err(error) = result {
+            warn!(%error, "failed to write redis byte cache");
+        }
+    }
+
     pub(crate) async fn delete_pattern(&self, pattern: &str) {
         let Some(client) = self.client.as_ref() else {
             return;

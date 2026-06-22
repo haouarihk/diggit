@@ -5,6 +5,7 @@ pub(crate) struct Config {
     pub(crate) database_url: String,
     pub(crate) redis_url: Option<String>,
     pub(crate) cache_ttl_seconds: u64,
+    pub(crate) social_preview_cache_ttl_seconds: u64,
     pub(crate) app_base_url: String,
     pub(crate) public_web_url: String,
     pub(crate) git_storage_path: PathBuf,
@@ -40,6 +41,10 @@ impl Config {
                 .ok()
                 .and_then(|seconds| seconds.parse().ok())
                 .unwrap_or(60),
+            social_preview_cache_ttl_seconds: env::var("SOCIAL_PREVIEW_CACHE_TTL_SECONDS")
+                .ok()
+                .and_then(|seconds| seconds.parse().ok())
+                .unwrap_or(14_400),
             app_base_url: env::var("APP_BASE_URL")
                 .unwrap_or_else(|_| "http://localhost:3001".to_string()),
             public_web_url: env::var("PUBLIC_WEB_URL")

@@ -9,10 +9,40 @@ import {
   type ActivityItem,
   type Issue,
 } from "@/lib/api";
+import { publicApiBaseUrl } from "@/lib/runtime-config";
+import type { Metadata } from "next";
 
 type Props = {
   params: Promise<{ owner: string; name: string; number: string }>;
 };
+
+export async function generateMetadata({ params }: Props): Promise<Metadata> {
+  const { owner, name, number } = await params;
+  const decodedOwner = decodeURIComponent(owner);
+  const decodedName = decodeURIComponent(name);
+  const issueNumber = Number.parseInt(number, 10);
+  const issue = await getRepositoryIssue(decodedOwner, decodedName, issueNumber);
+  const title = `${issue.title} · ${decodedOwner}/${decodedName}#${issue.number}`;
+  const description = issue.body || `${issue.status} issue opened by ${issue.author_handle}.`;
+  const image = `${publicApiBaseUrl()}/social/repos/${encodeURIComponent(decodedOwner)}/${encodeURIComponent(decodedName)}/issues/${issue.number}/preview.png`;
+
+  return {
+    title,
+    description,
+    openGraph: {
+      title,
+      description,
+      type: "website",
+      images: [{ url: image, width: 1200, height: 630, alt: `${title} social preview` }],
+    },
+    twitter: {
+      card: "summary_large_image",
+      title,
+      description,
+      images: [image],
+    },
+  };
+}
 
 export default async function RepositoryIssuePage({ params }: Props) {
   const { owner, name, number } = await params;

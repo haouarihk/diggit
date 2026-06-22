@@ -1,6 +1,8 @@
 import { NewRepositoryButton } from "@/components/NewRepositoryButton";
 import { RepositoryList } from "@/components/RepositoryList";
 import { getUser, listUserRepositories } from "@/lib/api";
+import { publicApiBaseUrl } from "@/lib/runtime-config";
+import type { Metadata } from "next";
 
 type UserProfilePageProps = {
   params: Promise<{
@@ -12,6 +14,31 @@ type UserProfilePageProps = {
     direction?: string;
   }>;
 };
+
+export async function generateMetadata({ params }: UserProfilePageProps): Promise<Metadata> {
+  const { username } = await params;
+  const user = await getUser(username);
+  const title = `${user.display_name} (@${user.username})`;
+  const description = `${user.display_name}'s public repositories on Diggit.`;
+  const image = `${publicApiBaseUrl()}/social/users/${encodeURIComponent(user.username)}/preview.png`;
+
+  return {
+    title,
+    description,
+    openGraph: {
+      title,
+      description,
+      type: "website",
+      images: [{ url: image, width: 1200, height: 630, alt: `${user.display_name} social preview` }],
+    },
+    twitter: {
+      card: "summary_large_image",
+      title,
+      description,
+      images: [image],
+    },
+  };
+}
 
 export default async function UserProfilePage({ params, searchParams }: UserProfilePageProps) {
   const { username } = await params;

@@ -16,6 +16,7 @@ pub(crate) mod organizations;
 pub(crate) mod repositories;
 pub(crate) mod runners;
 pub(crate) mod search;
+pub(crate) mod social_preview;
 pub(crate) mod users;
 
 pub(crate) fn router(state: AppState) -> Router {
@@ -81,6 +82,34 @@ pub(crate) fn router(state: AppState) -> Router {
             post(gitlab_compat::test_gitlab_project_hook_route),
         )
         .route("/search", get(search::search))
+        .route(
+            "/social/repos/{owner}/{name}/preview.png",
+            get(social_preview::repo_preview_image),
+        )
+        .route(
+            "/social/repos/{owner}/{name}/issues/{number}/preview.png",
+            get(social_preview::issue_preview_image),
+        )
+        .route(
+            "/social/repos/{owner}/{name}/pull/{id}/preview.png",
+            get(social_preview::pull_request_preview_image),
+        )
+        .route(
+            "/social/repos/{owner}/{name}/pull-requests/{id}/preview.png",
+            get(social_preview::pull_request_preview_image),
+        )
+        .route(
+            "/social/users/{username}/preview.png",
+            get(social_preview::user_preview_image),
+        )
+        .route(
+            "/social/organizations/{name}/preview.png",
+            get(social_preview::organization_preview_image),
+        )
+        .route(
+            "/dev/social-preview.png",
+            get(social_preview::dev_preview_image),
+        )
         .route(
             "/internal/repos/{owner}/{name}/git-updated",
             post(repositories::record_direct_repo_update),
