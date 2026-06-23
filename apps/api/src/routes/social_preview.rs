@@ -14,6 +14,7 @@ use crate::{
 };
 
 const MAX_AVATAR_BYTES: usize = 2 * 1024 * 1024;
+const SOCIAL_PREVIEW_CACHE_VERSION: &str = "v2";
 
 pub(crate) async fn repo_preview_image(
     State(state): State<AppState>,
@@ -23,7 +24,14 @@ pub(crate) async fn repo_preview_image(
     let repo = find_repo(&state.pool, &owner, &name).await?;
     ensure_repo_visible(&state.pool, None, &repo).await?;
 
-    let cache_key = cache_key(&["social", "repo", &owner, &name, "preview_png"]);
+    let cache_key = cache_key(&[
+        "social",
+        SOCIAL_PREVIEW_CACHE_VERSION,
+        "repo",
+        &owner,
+        &name,
+        "preview_png",
+    ]);
     if let Some(cached) = state.cache.get_bytes(&cache_key).await {
         return Ok(png_response(cached));
     }
@@ -51,6 +59,7 @@ pub(crate) async fn issue_preview_image(
 
     let cache_key = cache_key(&[
         "social",
+        SOCIAL_PREVIEW_CACHE_VERSION,
         "repo",
         &owner,
         &name,
@@ -102,6 +111,7 @@ pub(crate) async fn pull_request_preview_image(
 
     let cache_key = cache_key(&[
         "social",
+        SOCIAL_PREVIEW_CACHE_VERSION,
         "repo",
         &owner,
         &name,
@@ -138,7 +148,13 @@ pub(crate) async fn user_preview_image(
     Path(username): Path<String>,
 ) -> ApiResult<Response> {
     let username = normalize_name(&username)?;
-    let cache_key = cache_key(&["social", "user", &username, "preview_png"]);
+    let cache_key = cache_key(&[
+        "social",
+        SOCIAL_PREVIEW_CACHE_VERSION,
+        "user",
+        &username,
+        "preview_png",
+    ]);
     if let Some(cached) = state.cache.get_bytes(&cache_key).await {
         return Ok(png_response(cached));
     }
@@ -162,7 +178,13 @@ pub(crate) async fn organization_preview_image(
     Path(name): Path<String>,
 ) -> ApiResult<Response> {
     let name = normalize_name(&name)?;
-    let cache_key = cache_key(&["social", "organization", &name, "preview_png"]);
+    let cache_key = cache_key(&[
+        "social",
+        SOCIAL_PREVIEW_CACHE_VERSION,
+        "organization",
+        &name,
+        "preview_png",
+    ]);
     if let Some(cached) = state.cache.get_bytes(&cache_key).await {
         return Ok(png_response(cached));
     }
@@ -388,7 +410,7 @@ async fn issue_preview_data(
 ) -> ApiResult<SocialPreviewData> {
     let comments_count = issue_comment_count(state, issue.id).await?;
     let activity_count = issue_activity_count(state, issue.id).await?;
-    let owner = format!("{}/ {}", repo.owner_handle, repo.name);
+    let owner = format!("{}/{}", repo.owner_handle, repo.name);
     let description = if issue.body.trim().is_empty() {
         format!(
             "{} issue opened by {}.",
@@ -438,7 +460,7 @@ async fn pull_request_preview_data(
     let comments_count = pull_request_comment_count(state, pull_request.id).await?;
     let activity_count = pull_request_activity_count(state, pull_request.id).await?;
     let author = author_identity(state, &pull_request.author_handle).await?;
-    let owner = format!("{}/ {}", repo.owner_handle, repo.name);
+    let owner = format!("{}/{}", repo.owner_handle, repo.name);
     let description = if pull_request.body.trim().is_empty() {
         format!(
             "{} pull request from {} into {}.",

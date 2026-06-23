@@ -1,6 +1,6 @@
 import { OrganizationFollowButton } from "@/components/OrganizationFollowButton";
 import { getOrganization } from "@/lib/api";
-import { publicApiBaseUrl } from "@/lib/runtime-config";
+import { socialPreviewImageUrl } from "@/lib/runtime-config";
 import type { Metadata } from "next";
 
 type OrganizationProfilePageProps = {
@@ -14,7 +14,7 @@ export async function generateMetadata({ params }: OrganizationProfilePageProps)
   const organization = await getOrganization(org);
   const title = organization.display_name;
   const description = organization.description || `${organization.display_name}'s public repositories on Diggit.`;
-  const image = `${publicApiBaseUrl()}/social/organizations/${encodeURIComponent(organization.name)}/preview.png`;
+  const image = socialPreviewImageUrl(`/social/organizations/${encodeURIComponent(organization.name)}/preview.png`);
 
   return {
     title,

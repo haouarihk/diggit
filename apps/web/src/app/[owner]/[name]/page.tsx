@@ -12,7 +12,7 @@ import {
   type RepositoryTree,
 } from "@/lib/api";
 import { getRepositoryReadme } from "@/lib/repository-readme";
-import { publicApiBaseUrl } from "@/lib/runtime-config";
+import { socialPreviewImageUrl } from "@/lib/runtime-config";
 import type { Metadata } from "next";
 
 type Props = {
@@ -27,7 +27,9 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const repo = await getRepository(decodedOwner, decodedName);
   const title = `${repo.owner_handle}/${repo.name}`;
   const description = repo.description || "Public repository on Diggit.";
-  const image = `${publicApiBaseUrl()}/social/repos/${encodeURIComponent(decodedOwner)}/${encodeURIComponent(decodedName)}/preview.png`;
+  const image = socialPreviewImageUrl(
+    `/social/repos/${encodeURIComponent(decodedOwner)}/${encodeURIComponent(decodedName)}/preview.png`,
+  );
 
   return {
     title,

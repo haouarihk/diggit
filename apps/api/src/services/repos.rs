@@ -337,6 +337,10 @@ pub(crate) async fn invalidate_repo_cache(state: &AppState, owner: &str, name: &
         .cache
         .delete_pattern(&cache_key(&["social", "repo", owner, name, "*"]))
         .await;
+    state
+        .cache
+        .delete_pattern(&cache_key(&["social", "*", "repo", owner, name, "*"]))
+        .await;
 }
 
 pub(crate) async fn repository_owner_response(

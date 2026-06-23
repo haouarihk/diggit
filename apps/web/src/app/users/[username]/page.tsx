@@ -1,7 +1,7 @@
 import { NewRepositoryButton } from "@/components/NewRepositoryButton";
 import { RepositoryList } from "@/components/RepositoryList";
 import { getUser, listUserRepositories } from "@/lib/api";
-import { publicApiBaseUrl } from "@/lib/runtime-config";
+import { socialPreviewImageUrl } from "@/lib/runtime-config";
 import type { Metadata } from "next";
 
 type UserProfilePageProps = {
@@ -20,7 +20,7 @@ export async function generateMetadata({ params }: UserProfilePageProps): Promis
   const user = await getUser(username);
   const title = `${user.display_name} (@${user.username})`;
   const description = `${user.display_name}'s public repositories on Diggit.`;
-  const image = `${publicApiBaseUrl()}/social/users/${encodeURIComponent(user.username)}/preview.png`;
+  const image = socialPreviewImageUrl(`/social/users/${encodeURIComponent(user.username)}/preview.png`);
 
   return {
     title,

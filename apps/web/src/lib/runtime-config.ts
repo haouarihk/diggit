@@ -1,4 +1,5 @@
 const DEFAULT_API_URL = "http://localhost:3001";
+const SOCIAL_PREVIEW_VERSION = "2";
 
 declare const process: {
   env: Record<string, string | undefined>;
@@ -39,6 +40,10 @@ export function publicApiBaseUrl() {
 
 export function apiUrl(path: string) {
   return `${apiBaseUrl()}${path}`;
+}
+
+export function socialPreviewImageUrl(path: string) {
+  return `${publicApiBaseUrl()}${path}?v=${SOCIAL_PREVIEW_VERSION}`;
 }
 
 export function runtimeConfigScript() {

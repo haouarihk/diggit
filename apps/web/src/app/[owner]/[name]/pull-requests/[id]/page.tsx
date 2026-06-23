@@ -1,7 +1,7 @@
 import { PullRequestDetailPanel } from "@/components/PullRequestDetailPanel";
 import { RepoHeader, RepoPageContent, repoHref } from "@/components/RepoHeader";
 import { getPullRequest, getRepository, listPullRequestActivity, listPullRequests, type ActivityItem } from "@/lib/api";
-import { publicApiBaseUrl } from "@/lib/runtime-config";
+import { socialPreviewImageUrl } from "@/lib/runtime-config";
 import type { Metadata } from "next";
 
 type Props = {
@@ -22,7 +22,9 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const description =
     pullRequest.body ||
     `${pullRequest.status} pull request from ${pullRequest.source_branch} into ${pullRequest.target_branch}.`;
-  const image = `${publicApiBaseUrl()}/social/repos/${encodeURIComponent(decodedOwner)}/${encodeURIComponent(decodedName)}/pull/${encodeURIComponent(String(pullRequest.id))}/preview.png`;
+  const image = socialPreviewImageUrl(
+    `/social/repos/${encodeURIComponent(decodedOwner)}/${encodeURIComponent(decodedName)}/pull/${encodeURIComponent(String(pullRequest.id))}/preview.png`,
+  );
 
   return {
     title,

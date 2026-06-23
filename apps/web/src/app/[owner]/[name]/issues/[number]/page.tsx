@@ -9,7 +9,7 @@ import {
   type ActivityItem,
   type Issue,
 } from "@/lib/api";
-import { publicApiBaseUrl } from "@/lib/runtime-config";
+import { socialPreviewImageUrl } from "@/lib/runtime-config";
 import type { Metadata } from "next";
 
 type Props = {
@@ -24,7 +24,9 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const issue = await getRepositoryIssue(decodedOwner, decodedName, issueNumber);
   const title = `${issue.title} · ${decodedOwner}/${decodedName}#${issue.number}`;
   const description = issue.body || `${issue.status} issue opened by ${issue.author_handle}.`;
-  const image = `${publicApiBaseUrl()}/social/repos/${encodeURIComponent(decodedOwner)}/${encodeURIComponent(decodedName)}/issues/${issue.number}/preview.png`;
+  const image = socialPreviewImageUrl(
+    `/social/repos/${encodeURIComponent(decodedOwner)}/${encodeURIComponent(decodedName)}/issues/${issue.number}/preview.png`,
+  );
 
   return {
     title,
