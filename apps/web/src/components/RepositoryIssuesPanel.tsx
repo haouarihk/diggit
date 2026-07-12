@@ -1,7 +1,10 @@
 "use client";
 
 import { Drawer } from "@/components/Drawer";
+import { RepoQueryToolbar } from "@/components/RepoQueryToolbar";
+import { RepositoryLabelBadges } from "@/components/RepositoryLabelBadges";
 import { authHeaders } from "@/lib/auth-session";
+import { buildListHref, parseIssueSearchQuery, setIssueSearchStatusQuery, toggleIssueSearchLabelQuery } from "@/lib/repo-list-query";
 import { apiBaseUrl } from "@/lib/runtime-config";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -18,14 +21,13 @@ type RepositoryIssuesPanelProps = {
   owner: string;
   pagination: PaginatedCollection<Issue>["pagination"];
   query: string;
-  selectedLabels: string;
-  status: "open" | "closed" | "all";
 };
 
-export function RepositoryIssuesPanel({ baseHref, issues, labels, name, owner, pagination, query, selectedLabels, status }: RepositoryIssuesPanelProps) {
+export function RepositoryIssuesPanel({ baseHref, issues, labels, name, owner, pagination, query }: RepositoryIssuesPanelProps) {
   const router = useRouter();
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [message, setMessage] = useState("");
+  const searchState = parseIssueSearchQuery(query);
 
   async function createIssue(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -54,39 +56,57 @@ export function RepositoryIssuesPanel({ baseHref, issues, labels, name, owner, p
 
   return (
     <section>
-      <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
-        <div>
-          <h2 className="text-base font-semibold">Issues</h2>
-          <p className="text-sm text-[#59636e]">Track bugs, ideas, and federated discussion for this repository.</p>
-        </div>
-        <div className="flex flex-wrap items-center gap-6">
-          <div className="flex flex-wrap gap-2">
-            <IssueFilter active={status === "open"} href={issueListHref(baseHref, { labels: selectedLabels, q: query, status: "open" })} label="Open" />
-            <IssueFilter active={status === "closed"} href={issueListHref(baseHref, { labels: selectedLabels, q: query, status: "closed" })} label="Closed" />
-            <IssueFilter active={status === "all"} href={issueListHref(baseHref, { labels: selectedLabels, q: query, status: "all" })} label="All" />
-          </div>
-          <span className="text-[#59636e]">{pagination.total} total</span>
+      <RepoQueryToolbar
+        action={
           <button className="rounded-md border border-black/15 bg-[#1a7f37] px-3 py-1.5 font-bold text-white" type="button" onClick={() => setIsCreateOpen(true)}>
             New issue
           </button>
-        </div>
-      </div>
-
-      <form className="grid gap-3 px-4 py-3 sm:grid-cols-[minmax(0,1fr)_220px_auto]" action={`${baseHref}/issues`}>
-        <input name="status" type="hidden" value={status} />
-        <input className="rounded-md border border-[#d0d7de] bg-white px-3 py-2" defaultValue={query} name="q" placeholder="Search issues by name..." />
-        <select className="rounded-md border border-[#d0d7de] bg-white px-3 py-2" defaultValue={selectedLabels} name="labels">
-          <option value="">All tags</option>
-          {labels.map((label) => (
-            <option key={label.id} value={label.name}>
-              {label.name}
-            </option>
-          ))}
-        </select>
-        <button className="rounded-md border border-[#d0d7de] bg-white px-3 py-2 font-semibold" type="submit">
-          Search
-        </button>
-      </form>
+        }
+        description="Track bugs, ideas, and federated discussion for this repository."
+        filterMenu={{
+          icon: "filter",
+          items: [
+            {
+              active: searchState.status === "open",
+              description: "Show only open issues",
+              href: issueListHref(baseHref, { q: setIssueSearchStatusQuery(query, "open") }),
+              label: "Open",
+            },
+            {
+              active: searchState.status === "closed",
+              description: "Show only closed issues",
+              href: issueListHref(baseHref, { q: setIssueSearchStatusQuery(query, "closed") }),
+              label: "Closed",
+            },
+            {
+              active: searchState.status === null,
+              description: "Show issues across every status",
+              href: issueListHref(baseHref, { q: setIssueSearchStatusQuery(query, null) }),
+              label: "All",
+            },
+          ],
+          label: "Filters",
+        }}
+        formAction={`${baseHref}/issues`}
+        menus={[
+          {
+            count: labels.length,
+            emptyLabel: "No labels created yet.",
+            icon: "tag",
+            items: labels.map((label) => ({
+              active: searchState.labels.some((selectedLabel) => selectedLabel.toLowerCase() === label.name.toLowerCase()),
+              color: label.color,
+              href: issueListHref(baseHref, { q: toggleIssueSearchLabelQuery(query, label.name) }),
+              label: label.name,
+            })),
+            label: "Labels",
+          },
+        ]}
+        placeholder='Search issues with is:open label:"bug"'
+        query={query}
+        title="Issues"
+        total={pagination.total}
+      />
 
       {message ? <div className="px-4 py-2 text-sm text-[#59636e]">{message}</div> : null}
 
@@ -108,7 +128,7 @@ export function RepositoryIssuesPanel({ baseHref, issues, labels, name, owner, p
               <p className="text-sm text-[#59636e]">
                 #{issue.number} opened by {issue.author_display_name || issue.author_handle} {formatDate(issue.created_at)}
               </p>
-              <IssueLabels labels={issue.labels} />
+              <RepositoryLabelBadges labels={issue.labels} />
               {issue.body ? <p className="line-clamp-2 text-[#59636e]">{issue.body}</p> : null}
             </article>
           ))}
@@ -121,8 +141,8 @@ export function RepositoryIssuesPanel({ baseHref, issues, labels, name, owner, p
             Page {pagination.page} of {pagination.totalPages}
           </span>
           <div className="flex gap-2">
-            {pagination.page > 1 ? <PageLink href={issueListHref(baseHref, { labels: selectedLabels, page: pagination.page - 1, q: query, status })} label="Previous" /> : null}
-            {pagination.page < pagination.totalPages ? <PageLink href={issueListHref(baseHref, { labels: selectedLabels, page: pagination.page + 1, q: query, status })} label="Next" /> : null}
+            {pagination.page > 1 ? <PageLink href={issueListHref(baseHref, { page: pagination.page - 1, q: query })} label="Previous" /> : null}
+            {pagination.page < pagination.totalPages ? <PageLink href={issueListHref(baseHref, { page: pagination.page + 1, q: query })} label="Next" /> : null}
           </div>
         </div>
       ) : null}
@@ -156,14 +176,6 @@ export function RepositoryIssuesPanel({ baseHref, issues, labels, name, owner, p
   );
 }
 
-function IssueFilter({ active, href, label }: { active: boolean; href: string; label: string }) {
-  return (
-    <Link className={`rounded-md px-3 py-1.5 font-semibold ${active ? "bg-[#0969da] text-white" : "border border-[#d0d7de] bg-white text-[#59636e]"}`} href={href}>
-      {label}
-    </Link>
-  );
-}
-
 function PageLink({ href, label }: { href: string; label: string }) {
   return (
     <Link className="rounded-md border border-[#d0d7de] bg-white px-3 py-1.5 font-semibold text-[#1f2328]" href={href}>
@@ -176,27 +188,8 @@ function IssueStatus({ status }: { status: Issue["status"] }) {
   return <span className="rounded-full border border-[#d0d7de] bg-[#f6f8fa] px-2 py-0.5 text-xs font-semibold text-[#59636e]">{status}</span>;
 }
 
-export function IssueLabels({ labels }: { labels: IssueLabel[] }) {
-  if (labels.length === 0) {
-    return null;
-  }
-  return (
-    <div className="flex flex-wrap gap-1.5">
-      {labels.map((label) => (
-        <span className="rounded-full border border-[#d0d7de] px-2 py-0.5 text-xs font-semibold text-[#59636e]" key={label.id}>
-          {label.name}
-        </span>
-      ))}
-    </div>
-  );
-}
-
-function issueListHref(baseHref: string, params: { labels?: string; page?: number; q?: string; status: string }) {
-  const searchParams = new URLSearchParams({ status: params.status });
-  if (params.page) searchParams.set("page", String(params.page));
-  if (params.q) searchParams.set("q", params.q);
-  if (params.labels) searchParams.set("labels", params.labels);
-  return `${baseHref}/issues?${searchParams.toString()}`;
+function issueListHref(baseHref: string, params: { page?: number; q?: string }) {
+  return buildListHref(`${baseHref}/issues`, { page: params.page, q: params.q });
 }
 
 function labelList(value: string) {

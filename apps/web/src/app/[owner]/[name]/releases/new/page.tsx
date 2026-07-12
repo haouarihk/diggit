@@ -16,7 +16,7 @@ export default async function NewRepositoryReleasePage({ params }: Props) {
   const baseHref = repoHref(decodedOwner, decodedName);
   const [repo, pullRequests, releaseCount, tags, branches] = await Promise.all([
     getRepository(decodedOwner, decodedName),
-    listPullRequests(decodedOwner, decodedName).catch(() => ({ data: [] })),
+    listPullRequests(decodedOwner, decodedName).catch(() => ({ data: [], pagination: { page: 1, limit: 1, total: 0, totalPages: 0 } })),
     listReleases(decodedOwner, decodedName, { page: 1, limit: 1, status: "published" }).catch(() => ({
       data: [],
       pagination: { page: 1, limit: 1, total: 0, totalPages: 0 },
@@ -27,7 +27,7 @@ export default async function NewRepositoryReleasePage({ params }: Props) {
 
   return (
     <div className="grid gap-6">
-      <RepoHeader activeTab="releases" pullRequestsCount={pullRequests.data.length} releasesCount={releaseCount.pagination.total} repo={repo} />
+      <RepoHeader activeTab="releases" pullRequestsCount={pullRequests.pagination?.total ?? pullRequests.data.length} releasesCount={releaseCount.pagination.total} repo={repo} />
 
       <RepoPageContent>
         <ReleaseCreatePanel baseHref={baseHref} branches={branches.data} name={decodedName} owner={decodedOwner} tags={tags.data} />

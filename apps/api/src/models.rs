@@ -361,6 +361,7 @@ pub(crate) struct PullRequest {
     pub(crate) source_branch: String,
     pub(crate) target_branch: String,
     pub(crate) status: String,
+    pub(crate) labels: Value,
     pub(crate) activity_id: Option<String>,
     pub(crate) created_at: DateTime<Utc>,
     pub(crate) updated_at: DateTime<Utc>,
@@ -378,6 +379,7 @@ pub(crate) struct PullRequestResponse {
     pub(crate) source_branch: String,
     pub(crate) target_branch: String,
     pub(crate) status: String,
+    pub(crate) labels: Value,
     pub(crate) activity_id: Option<String>,
     pub(crate) created_at: DateTime<Utc>,
     pub(crate) updated_at: DateTime<Utc>,
@@ -1067,6 +1069,7 @@ pub(crate) struct ForkRepoRequest {
 pub(crate) struct CreatePullRequestRequest {
     pub(crate) title: String,
     pub(crate) body: Option<String>,
+    pub(crate) labels: Option<Vec<String>>,
     pub(crate) source_repo_url: String,
     pub(crate) source_branch: String,
     pub(crate) target_branch: Option<String>,
@@ -1084,6 +1087,7 @@ pub(crate) struct ComparePullRequestRequest {
 #[derive(Debug, Deserialize)]
 pub(crate) struct UpdatePullRequestRequest {
     pub(crate) status: Option<String>,
+    pub(crate) labels: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1180,6 +1184,18 @@ pub(crate) struct ReleaseListQuery {
     pub(crate) page: Option<i64>,
     pub(crate) limit: Option<i64>,
     pub(crate) status: Option<String>,
+    pub(crate) q: Option<String>,
+    pub(crate) tag: Option<String>,
+    pub(crate) prerelease: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct PullRequestListQuery {
+    pub(crate) page: Option<i64>,
+    pub(crate) limit: Option<i64>,
+    pub(crate) status: Option<String>,
+    pub(crate) q: Option<String>,
+    pub(crate) labels: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

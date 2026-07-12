@@ -21,7 +21,7 @@ export default async function EditRepositoryFilePage({ params, searchParams }: P
   const baseHref = repoHref(decodedOwner, decodedName);
   const [repo, pullRequests] = await Promise.all([
     getRepository(decodedOwner, decodedName),
-    listPullRequests(decodedOwner, decodedName).catch(() => ({ data: [] })),
+    listPullRequests(decodedOwner, decodedName).catch(() => ({ data: [], pagination: { page: 1, limit: 1, total: 0, totalPages: 0 } })),
   ]);
   const selectedFile = file
     ? await getRepositoryFile(decodedOwner, decodedName, file).catch(() => null)
@@ -29,7 +29,7 @@ export default async function EditRepositoryFilePage({ params, searchParams }: P
 
   return (
     <div className="grid gap-6">
-      <RepoHeader activeTab="code" pullRequestsCount={pullRequests.data.length} repo={repo} />
+      <RepoHeader activeTab="code" pullRequestsCount={pullRequests.pagination?.total ?? pullRequests.data.length} repo={repo} />
 
       <RepoPageContent>
         {!selectedFile ? (

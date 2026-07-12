@@ -18,13 +18,13 @@ export default async function CompareTagsPage({ params }: Props) {
   const [base = "", head = ""] = decodedRange.split("...");
   const [repo, pullRequests, compare] = await Promise.all([
     getRepository(decodedOwner, decodedName),
-    listPullRequests(decodedOwner, decodedName).catch(() => ({ data: [] })),
+    listPullRequests(decodedOwner, decodedName).catch(() => ({ data: [], pagination: { page: 1, limit: 1, total: 0, totalPages: 0 } })),
     compareRefs(decodedOwner, decodedName, decodedRange),
   ]);
 
   return (
     <div className="grid gap-6">
-      <RepoHeader activeTab="code" pullRequestsCount={pullRequests.data.length} repo={repo} />
+      <RepoHeader activeTab="code" pullRequestsCount={pullRequests.pagination?.total ?? pullRequests.data.length} repo={repo} />
       <RepoPageContent>
         <section className="grid gap-3 rounded-md border border-[#d0d7de] bg-white p-4">
           <div>

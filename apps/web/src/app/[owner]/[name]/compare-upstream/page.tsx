@@ -18,13 +18,13 @@ export default async function CompareUpstreamPage({ params }: Props) {
   const baseHref = repoHref(decodedOwner, decodedName);
   const [repo, pullRequests, compare] = await Promise.all([
     getRepository(decodedOwner, decodedName),
-    listPullRequests(decodedOwner, decodedName).catch(() => ({ data: [] })),
+    listPullRequests(decodedOwner, decodedName).catch(() => ({ data: [], pagination: { page: 1, limit: 1, total: 0, totalPages: 0 } })),
     compareUpstream(decodedOwner, decodedName),
   ]);
 
   return (
     <div className="grid gap-6">
-      <RepoHeader activeTab="code" pullRequestsCount={pullRequests.data.length} repo={repo} />
+      <RepoHeader activeTab="code" pullRequestsCount={pullRequests.pagination?.total ?? pullRequests.data.length} repo={repo} />
       <RepoPageContent>
         <section className="grid gap-3 border-b dark:border-gray-700/50 border-gray-200 p-4">
           <div className="flex flex-wrap items-start justify-between gap-3">

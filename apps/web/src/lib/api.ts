@@ -128,6 +128,7 @@ export type PullRequest = {
   source_branch: string;
   target_branch: string;
   status: "open" | "closed" | "merged" | string;
+  labels: IssueLabel[];
   activity_id: string | null;
   created_at: string;
   updated_at: string;
@@ -538,7 +539,7 @@ export function listRepositoryTags(owner: string, name: string) {
 export function listReleases(
   owner: string,
   name: string,
-  params?: { limit?: number; page?: number; status?: "draft" | "published" | "all" },
+  params?: { limit?: number; page?: number; prerelease?: boolean; q?: string; status?: "draft" | "published" | "all"; tag?: string },
 ) {
   const searchParams = new URLSearchParams();
   if (params?.page) {
@@ -549,6 +550,15 @@ export function listReleases(
   }
   if (params?.status) {
     searchParams.set("status", params.status);
+  }
+  if (params?.q) {
+    searchParams.set("q", params.q);
+  }
+  if (params?.tag) {
+    searchParams.set("tag", params.tag);
+  }
+  if (params?.prerelease) {
+    searchParams.set("prerelease", "true");
   }
   const query = searchParams.toString();
   return apiFetch<PaginatedCollection<Release>>(
@@ -712,9 +722,26 @@ export function listIssueLabels(owner: string, name: string) {
   return apiFetch<Collection<IssueLabel>>(`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/issue-labels`);
 }
 
-export function listPullRequests(owner: string, name: string) {
-  return apiFetch<Collection<PullRequest>>(
-    `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pull-requests`,
+export function listPullRequests(
+  owner: string,
+  name: string,
+  params?: { labels?: string; limit?: number; page?: number; q?: string; status?: "all" | "closed" | "merged" | "open" },
+) {
+  const searchParams = new URLSearchParams();
+  searchParams.set("page", String(params?.page ?? 1));
+  searchParams.set("limit", String(params?.limit ?? 1));
+  if (params?.status) {
+    searchParams.set("status", params.status);
+  }
+  if (params?.q) {
+    searchParams.set("q", params.q);
+  }
+  if (params?.labels) {
+    searchParams.set("labels", params.labels);
+  }
+  const query = searchParams.toString();
+  return apiFetch<PaginatedCollection<PullRequest>>(
+    `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pull-requests${query ? `?${query}` : ""}`,
   );
 }
 

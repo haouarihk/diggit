@@ -307,6 +307,7 @@ export function PullRequestCreateForm({ baseHref, defaultTitle, name, owner, sel
       body: JSON.stringify({
         title: form.get("title"),
         body: form.get("body"),
+        labels: labelList(String(form.get("labels") ?? "")),
         source_repo_url: selection.url,
         source_branch: selection.branch,
         source_repository_id: selection.repositoryId,
@@ -341,6 +342,14 @@ export function PullRequestCreateForm({ baseHref, defaultTitle, name, owner, sel
       <label className="grid gap-1.5">
         Body
         <textarea className="min-h-40 w-full rounded-lg border border-[#d0d7de] bg-white px-3 py-2 text-[#1f2328]" name="body" />
+      </label>
+      <label className="grid gap-1.5">
+        Labels
+        <input
+          className="w-full rounded-lg border border-[#d0d7de] bg-white px-3 py-2 text-[#1f2328]"
+          name="labels"
+          placeholder="bug, enhancement"
+        />
       </label>
       <div className="flex flex-wrap items-center justify-between gap-3">
         {message ? <p className="text-sm text-[#59636e]">{message}</p> : <span />}
@@ -387,4 +396,11 @@ function SourceCard({
       <span className="text-sm text-[#59636e]">{description}</span>
     </label>
   );
+}
+
+function labelList(value: string) {
+  return value
+    .split(",")
+    .map((label) => label.trim())
+    .filter(Boolean);
 }

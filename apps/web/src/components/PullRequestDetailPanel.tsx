@@ -2,6 +2,7 @@
 
 import { ConversationPanel } from "@/components/ConversationPanel";
 import { MarkdownViewer } from "@/components/MarkdownViewer";
+import { RepositoryLabelBadges } from "@/components/RepositoryLabelBadges";
 import { authHeaders } from "@/lib/auth-session";
 import type { ActivityItem, PullRequest } from "@/lib/api";
 import { apiBaseUrl } from "@/lib/runtime-config";
@@ -27,6 +28,7 @@ export function PullRequestDetailPanel({
 }: PullRequestDetailPanelProps) {
   const router = useRouter();
   const [pullRequest, setPullRequest] = useState(initialPullRequest);
+  const [labelInput, setLabelInput] = useState(joinLabels(initialPullRequest.labels));
   const [message, setMessage] = useState("");
   const [isBusy, setIsBusy] = useState(false);
 
@@ -52,7 +54,9 @@ export function PullRequestDetailPanel({
       return;
     }
 
-    setPullRequest((await response.json()) as PullRequest);
+    const nextPullRequest = (await response.json()) as PullRequest;
+    setPullRequest(nextPullRequest);
+    setLabelInput(joinLabels(nextPullRequest.labels));
     setMessage(status === "closed" ? "Pull request closed." : "Pull request reopened.");
     router.refresh();
   }
@@ -74,8 +78,35 @@ export function PullRequestDetailPanel({
       return;
     }
 
-    setPullRequest((await response.json()) as PullRequest);
+    const nextPullRequest = (await response.json()) as PullRequest;
+    setPullRequest(nextPullRequest);
+    setLabelInput(joinLabels(nextPullRequest.labels));
     setMessage("Pull request merged.");
+    router.refresh();
+  }
+
+  async function saveLabels() {
+    setIsBusy(true);
+    setMessage("");
+    const response = await fetch(
+      `${API_URL}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pull-requests/${encodeURIComponent(String(pullRequest.id))}`,
+      {
+        method: "PATCH",
+        headers: { "content-type": "application/json", ...authHeaders() },
+        body: JSON.stringify({ labels: labelList(labelInput) }),
+      },
+    );
+    setIsBusy(false);
+
+    if (!response.ok) {
+      setMessage(`Failed to update labels: ${response.status}`);
+      return;
+    }
+
+    const nextPullRequest = (await response.json()) as PullRequest;
+    setPullRequest(nextPullRequest);
+    setLabelInput(joinLabels(nextPullRequest.labels));
+    setMessage("Pull request labels updated.");
     router.refresh();
   }
 
@@ -98,6 +129,7 @@ export function PullRequestDetailPanel({
               <BranchBadge>{pullRequest.source_branch}</BranchBadge> into{" "}
               <BranchBadge>{pullRequest.target_branch}</BranchBadge>
             </p>
+            <RepositoryLabelBadges labels={pullRequest.labels} />
           </div>
 
           {pullRequest.viewer_can_update ? (
@@ -139,6 +171,31 @@ export function PullRequestDetailPanel({
         <div className="rounded-xl border border-[#d8dee4] bg-[#f6f8fa] p-4">
           {pullRequest.body ? <MarkdownViewer content={pullRequest.body} variant="comment" /> : <p className="text-[#59636e]">No description provided.</p>}
         </div>
+
+        {pullRequest.viewer_can_update ? (
+          <div className="grid gap-2 rounded-xl border border-[#d8dee4] bg-[#f6f8fa] p-4">
+            <div>
+              <h2 className="font-semibold">Labels</h2>
+              <p className="text-sm text-[#59636e]">Use commas to assign or clear pull request labels.</p>
+            </div>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <input
+                className="min-w-0 flex-1 rounded-md border border-[#d0d7de] bg-white px-3 py-2"
+                placeholder="bug, enhancement"
+                value={labelInput}
+                onChange={(event) => setLabelInput(event.target.value)}
+              />
+              <button
+                className="rounded-md border border-[#d0d7de] bg-white px-3 py-2 font-semibold disabled:opacity-60"
+                disabled={isBusy}
+                type="button"
+                onClick={() => void saveLabels()}
+              >
+                Save labels
+              </button>
+            </div>
+          </div>
+        ) : null}
       </section>
 
       {message ? <p className="text-sm text-[#59636e]">{message}</p> : null}
@@ -162,4 +219,15 @@ function formatDate(value: string) {
   return Number.isNaN(date.getTime())
     ? value
     : new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short" }).format(date);
+}
+
+function joinLabels(labels: PullRequest["labels"]) {
+  return labels.map((label) => label.name).join(", ");
+}
+
+function labelList(value: string) {
+  return value
+    .split(",")
+    .map((label) => label.trim())
+    .filter(Boolean);
 }

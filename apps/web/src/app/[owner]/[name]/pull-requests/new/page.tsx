@@ -16,13 +16,13 @@ export default async function NewPullRequestPage({ params }: Props) {
   const baseHref = repoHref(decodedOwner, decodedName);
   const [repo, pullRequests, options] = await Promise.all([
     getRepository(decodedOwner, decodedName),
-    listPullRequests(decodedOwner, decodedName).catch(() => ({ data: [] })),
+    listPullRequests(decodedOwner, decodedName).catch(() => ({ data: [], pagination: { page: 1, limit: 1, total: 0, totalPages: 0 } })),
     getPullRequestOptions(decodedOwner, decodedName),
   ]);
 
   return (
     <div className="grid gap-6">
-      <RepoHeader activeTab="pull-requests" pullRequestsCount={pullRequests.data.length} repo={repo} />
+      <RepoHeader activeTab="pull-requests" pullRequestsCount={pullRequests.pagination?.total ?? pullRequests.data.length} repo={repo} />
 
       <RepoPageContent>
         <section className="grid gap-4">

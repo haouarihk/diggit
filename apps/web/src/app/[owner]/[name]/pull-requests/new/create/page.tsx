@@ -20,7 +20,7 @@ export default async function CreatePullRequestPage({ params, searchParams }: Pr
   const baseHref = repoHref(decodedOwner, decodedName);
   const [repo, pullRequests] = await Promise.all([
     getRepository(decodedOwner, decodedName),
-    listPullRequests(decodedOwner, decodedName).catch(() => ({ data: [] })),
+    listPullRequests(decodedOwner, decodedName).catch(() => ({ data: [], pagination: { page: 1, limit: 1, total: 0, totalPages: 0 } })),
   ]);
   const selection = decodePullRequestSource(from);
   const compare =
@@ -36,7 +36,7 @@ export default async function CreatePullRequestPage({ params, searchParams }: Pr
 
   return (
     <div className="grid gap-6">
-      <RepoHeader activeTab="pull-requests" pullRequestsCount={pullRequests.data.length} repo={repo} />
+      <RepoHeader activeTab="pull-requests" pullRequestsCount={pullRequests.pagination?.total ?? pullRequests.data.length} repo={repo} />
 
       <RepoPageContent>
         <section className="grid gap-4">

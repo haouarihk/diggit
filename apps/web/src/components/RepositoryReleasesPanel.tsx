@@ -3,9 +3,11 @@
 import { Drawer } from "@/components/Drawer";
 import { MarkdownEditor } from "@/components/MarkdownEditor";
 import { MarkdownViewer } from "@/components/MarkdownViewer";
+import { RepoQueryToolbar } from "@/components/RepoQueryToolbar";
 import { ReactionControls } from "@/components/ReactionControls";
 import { OwnerBadge } from "@/components/RepositoryList";
 import { authHeaders } from "@/lib/auth-session";
+import { buildListHref, parseReleaseSearchQuery, toggleReleasePrereleaseQuery, toggleReleaseTagQuery } from "@/lib/repo-list-query";
 import { apiBaseUrl } from "@/lib/runtime-config";
 import { DotIcon } from "lucide-react";
 import Link from "next/link";
@@ -21,6 +23,7 @@ type RepositoryReleasesPanelProps = {
   name: string;
   owner: string;
   pagination: PaginatedCollection<Release>["pagination"];
+  query: string;
   releases: Release[];
   status: "published" | "draft" | "all";
   tags: RepositoryTag[];
@@ -28,31 +31,68 @@ type RepositoryReleasesPanelProps = {
 
 const CREATE_NEW_TAG = "__create_new_tag__";
 
-export function RepositoryReleasesPanel({ baseHref, name, owner, pagination, releases, status, tags }: RepositoryReleasesPanelProps) {
+export function RepositoryReleasesPanel({ baseHref, name, owner, pagination, query, releases, status, tags }: RepositoryReleasesPanelProps) {
+  const searchState = parseReleaseSearchQuery(query);
+
   return (
     <section>
-      <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
-        <div>
-          <h2 className="text-base font-semibold">Releases</h2>
-          <p className="text-sm text-[#59636e]">Publish version notes and downloadable assets from Git tags.</p>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-6">
-          <div className="flex flex-wrap gap-2">
-            <ReleaseFilter active={status === "published"} href={`${baseHref}/releases?status=published`} label="Published" />
-            <ReleaseFilter active={status === "draft"} href={`${baseHref}/releases?status=draft`} label="Drafts" />
-            <ReleaseFilter active={status === "all"} href={`${baseHref}/releases?status=all`} label="All" />
-          </div>
-
-          <span className="text-[#59636e]">{pagination.total} total</span>
+      <RepoQueryToolbar
+        action={
           <Link className="rounded-md border border-black/15 bg-[#1a7f37] px-3 py-1.5 font-bold text-white hover:bg-[#116329]" href={`${baseHref}/releases/new`}>
             New release
           </Link>
-        </div>
-
-      </div>
-
-
+        }
+        description="Publish version notes and downloadable assets from Git tags."
+        filterMenu={{
+          icon: "filter",
+          items: [
+            {
+              active: status === "published",
+              description: "Show published releases",
+              href: releaseListHref(baseHref, { q: query, status: "published" }),
+              label: "Published",
+            },
+            {
+              active: status === "draft",
+              description: "Show draft releases",
+              href: releaseListHref(baseHref, { q: query, status: "draft" }),
+              label: "Drafts",
+            },
+            {
+              active: status === "all",
+              description: "Show all releases",
+              href: releaseListHref(baseHref, { q: query, status: "all" }),
+              label: "All",
+            },
+            {
+              active: searchState.isPrerelease,
+              description: "Toggle pre-release items",
+              href: releaseListHref(baseHref, { q: toggleReleasePrereleaseQuery(query), status }),
+              label: "Pre-releases",
+            },
+          ],
+          label: "Filters",
+        }}
+        formAction={`${baseHref}/releases`}
+        hiddenFields={[{ name: "status", value: status }]}
+        menus={[
+          {
+            count: tags.length,
+            emptyLabel: "No tags available yet.",
+            icon: "tag",
+            items: tags.map((tag) => ({
+              active: searchState.tag?.toLowerCase() === tag.name.toLowerCase(),
+              href: releaseListHref(baseHref, { q: toggleReleaseTagQuery(query, tag.name), status }),
+              label: tag.name,
+            })),
+            label: "Tags",
+          },
+        ]}
+        placeholder="Search releases with is:pre-release tag:v1.0.0"
+        query={query}
+        title="Releases"
+        total={pagination.total}
+      />
 
       {releases.length === 0 ? (
         <div className="grid gap-2 p-6 text-center">
@@ -62,7 +102,7 @@ export function RepositoryReleasesPanel({ baseHref, name, owner, pagination, rel
       ) : (
         <ReleaseList
           baseHref={baseHref}
-          key={`${status}:${pagination.page}:${pagination.total}:${releases.map((release) => release.id).join(",")}`}
+          key={`${status}:${query}:${pagination.page}:${pagination.total}:${releases.map((release) => release.id).join(",")}`}
           name={name}
           owner={owner}
           releases={releases}
@@ -76,8 +116,8 @@ export function RepositoryReleasesPanel({ baseHref, name, owner, pagination, rel
             Page {pagination.page} of {pagination.totalPages}
           </span>
           <div className="flex gap-2">
-            {pagination.page > 1 ? <PageLink href={releaseListHref(baseHref, status, pagination.page - 1)} label="Previous" /> : null}
-            {pagination.page < pagination.totalPages ? <PageLink href={releaseListHref(baseHref, status, pagination.page + 1)} label="Next" /> : null}
+            {pagination.page > 1 ? <PageLink href={releaseListHref(baseHref, { page: pagination.page - 1, q: query, status })} label="Previous" /> : null}
+            {pagination.page < pagination.totalPages ? <PageLink href={releaseListHref(baseHref, { page: pagination.page + 1, q: query, status })} label="Next" /> : null}
           </div>
         </div>
       ) : null}
@@ -609,14 +649,6 @@ export function ReleaseEditPanel({ baseHref, name, owner, release }: ReleaseEdit
   );
 }
 
-function ReleaseFilter({ active, href, label }: { active: boolean; href: string; label: string }) {
-  return (
-    <Link className={`rounded-md px-3 py-1.5 font-semibold ${active ? "bg-[#0969da] text-white" : "border border-[#d0d7de] bg-white text-[#59636e]"}`} href={href}>
-      {label}
-    </Link>
-  );
-}
-
 function PageLink({ href, label }: { href: string; label: string }) {
   return (
     <Link className="rounded-md border border-[#d0d7de] bg-white px-3 py-1.5 font-semibold text-[#1f2328]" href={href}>
@@ -638,9 +670,8 @@ function ReleaseBadges({ release }: { release: Release }) {
   );
 }
 
-function releaseListHref(baseHref: string, status: string, page: number) {
-  const searchParams = new URLSearchParams({ page: String(page), status });
-  return `${baseHref}/releases?${searchParams.toString()}`;
+function releaseListHref(baseHref: string, params: { page?: number; q?: string; status: string }) {
+  return buildListHref(`${baseHref}/releases`, { page: params.page, q: params.q, status: params.status });
 }
 
 function defaultBranch(branches: RepositoryBranch[]) {

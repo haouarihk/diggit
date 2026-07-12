@@ -23,14 +23,14 @@ export default async function CommitsPage({ params, searchParams }: Props) {
   const repo = await getRepository(decodedOwner, decodedName);
   const selectedBranch = branch || repo.default_branch;
   const [pullRequests, commits] = await Promise.all([
-    listPullRequests(decodedOwner, decodedName).catch(() => ({ data: [] })),
+    listPullRequests(decodedOwner, decodedName).catch(() => ({ data: [], pagination: { page: 1, limit: 1, total: 0, totalPages: 0 } })),
     listCommits(decodedOwner, decodedName, selectedBranch, 0).catch(() => ({ data: [] })),
   ]);
   const commitGroups = groupCommitsByDay(commits.data);
 
   return (
     <div className="grid gap-6">
-      <RepoHeader activeTab="code" pullRequestsCount={pullRequests.data.length} repo={repo} />
+      <RepoHeader activeTab="code" pullRequestsCount={pullRequests.pagination?.total ?? pullRequests.data.length} repo={repo} />
       <RepoPageContent>
         <section className="overflow-hidden rounded-md border border-[#d0d7de] bg-white">
           <header className="flex flex-wrap items-center justify-between gap-3 border-b border-[#d8dee4] bg-[#f6f8fa] px-4 py-3">

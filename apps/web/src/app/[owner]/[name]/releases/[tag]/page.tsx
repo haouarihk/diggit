@@ -19,7 +19,7 @@ export default async function RepositoryReleaseDetailPage({ params }: Props) {
   if (decodedTag === "new") {
     const [repo, pullRequests, releaseCount, tags, branches] = await Promise.all([
       getRepository(decodedOwner, decodedName),
-      listPullRequests(decodedOwner, decodedName).catch(() => ({ data: [] })),
+      listPullRequests(decodedOwner, decodedName).catch(() => ({ data: [], pagination: { page: 1, limit: 1, total: 0, totalPages: 0 } })),
       listReleases(decodedOwner, decodedName, { page: 1, limit: 1, status: "published" }).catch(() => ({
         data: [],
         pagination: { page: 1, limit: 1, total: 0, totalPages: 0 },
@@ -30,7 +30,7 @@ export default async function RepositoryReleaseDetailPage({ params }: Props) {
 
     return (
       <div className="grid gap-6">
-        <RepoHeader activeTab="releases" pullRequestsCount={pullRequests.data.length} releasesCount={releaseCount.pagination.total} repo={repo} />
+        <RepoHeader activeTab="releases" pullRequestsCount={pullRequests.pagination?.total ?? pullRequests.data.length} releasesCount={releaseCount.pagination.total} repo={repo} />
 
         <RepoPageContent>
           <ReleaseCreatePanel baseHref={baseHref} branches={branches.data} name={decodedName} owner={decodedOwner} tags={tags.data} />
@@ -41,7 +41,7 @@ export default async function RepositoryReleaseDetailPage({ params }: Props) {
 
   const [repo, pullRequests, release, releaseCount, tags] = await Promise.all([
     getRepository(decodedOwner, decodedName),
-    listPullRequests(decodedOwner, decodedName).catch(() => ({ data: [] })),
+    listPullRequests(decodedOwner, decodedName).catch(() => ({ data: [], pagination: { page: 1, limit: 1, total: 0, totalPages: 0 } })),
     getRelease(decodedOwner, decodedName, decodedTag),
     listReleases(decodedOwner, decodedName, { page: 1, limit: 1, status: "published" }).catch(() => ({
       data: [],
@@ -52,7 +52,7 @@ export default async function RepositoryReleaseDetailPage({ params }: Props) {
 
   return (
     <div className="grid gap-6">
-      <RepoHeader activeTab="releases" pullRequestsCount={pullRequests.data.length} releasesCount={releaseCount.pagination.total} repo={repo} />
+      <RepoHeader activeTab="releases" pullRequestsCount={pullRequests.pagination?.total ?? pullRequests.data.length} releasesCount={releaseCount.pagination.total} repo={repo} />
 
       <RepoPageContent>
         <ReleaseDetailPanel baseHref={baseHref} name={decodedName} owner={decodedOwner} release={release} tags={tags.data} />

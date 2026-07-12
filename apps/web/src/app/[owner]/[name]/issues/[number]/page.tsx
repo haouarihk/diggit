@@ -54,7 +54,7 @@ export default async function RepositoryIssuePage({ params }: Props) {
   const baseHref = repoHref(decodedOwner, decodedName);
   const [repo, pullRequests, issueCount, issue, activity] = await Promise.all([
     getRepository(decodedOwner, decodedName),
-    listPullRequests(decodedOwner, decodedName).catch(() => ({ data: [] })),
+    listPullRequests(decodedOwner, decodedName).catch(() => ({ data: [], pagination: { page: 1, limit: 1, total: 0, totalPages: 0 } })),
     listRepositoryIssues(decodedOwner, decodedName, { page: 1, limit: 1, status: "open" }).catch(() => emptyIssues()),
     getRepositoryIssue(decodedOwner, decodedName, issueNumber),
     listRepositoryIssueActivity(decodedOwner, decodedName, issueNumber, 1, 100).catch(() => emptyActivity()),
@@ -65,7 +65,7 @@ export default async function RepositoryIssuePage({ params }: Props) {
       <RepoHeader
         activeTab="issues"
         issuesCount={issueCount.pagination.total}
-        pullRequestsCount={pullRequests.data.length}
+        pullRequestsCount={pullRequests.pagination?.total ?? pullRequests.data.length}
         repo={repo}
       />
       <RepoPageContent>

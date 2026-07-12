@@ -22,13 +22,13 @@ export default async function CommitDetailPage({ params, searchParams }: Props) 
   const baseHref = repoHref(decodedOwner, decodedName);
   const [repo, pullRequests, detail] = await Promise.all([
     getRepository(decodedOwner, decodedName),
-    listPullRequests(decodedOwner, decodedName).catch(() => ({ data: [] })),
+    listPullRequests(decodedOwner, decodedName).catch(() => ({ data: [], pagination: { page: 1, limit: 1, total: 0, totalPages: 0 } })),
     getCommit(decodedOwner, decodedName, decodedSha),
   ]);
 
   return (
     <div className="grid gap-6">
-      <RepoHeader activeTab="code" pullRequestsCount={pullRequests.data.length} repo={repo} />
+      <RepoHeader activeTab="code" pullRequestsCount={pullRequests.pagination?.total ?? pullRequests.data.length} repo={repo} />
       <RepoPageContent>
         <section className="grid gap-3 rounded-md border border-[#d0d7de] bg-white p-4">
           <Link className="text-sm font-semibold text-[#0969da] hover:underline" href={`${baseHref}/commits`}>

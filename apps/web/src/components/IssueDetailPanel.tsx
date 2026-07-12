@@ -2,7 +2,7 @@
 
 import { ConversationPanel } from "@/components/ConversationPanel";
 import { MarkdownViewer } from "@/components/MarkdownViewer";
-import { IssueLabels } from "@/components/RepositoryIssuesPanel";
+import { RepositoryLabelBadges } from "@/components/RepositoryLabelBadges";
 import { authHeaders } from "@/lib/auth-session";
 import type { ActivityItem, Issue } from "@/lib/api";
 import { apiBaseUrl } from "@/lib/runtime-config";
@@ -65,7 +65,7 @@ export function IssueDetailPanel({ activity: initialActivity, baseHref, issue: i
             {issue.status === "open" ? "Close issue" : "Reopen issue"}
           </button>
         </div>
-        <IssueLabels labels={issue.labels} />
+        <RepositoryLabelBadges labels={issue.labels} />
         {issue.body ? <MarkdownViewer content={issue.body} variant="comment" /> : <p className="text-[#59636e]">No description provided.</p>}
       </section>
 

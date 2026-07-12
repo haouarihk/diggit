@@ -18,7 +18,7 @@ export default async function EditRepositoryReleasePage({ params }: Props) {
   const baseHref = repoHref(decodedOwner, decodedName);
   const [repo, pullRequests, release, releaseCount] = await Promise.all([
     getRepository(decodedOwner, decodedName),
-    listPullRequests(decodedOwner, decodedName).catch(() => ({ data: [] })),
+    listPullRequests(decodedOwner, decodedName).catch(() => ({ data: [], pagination: { page: 1, limit: 1, total: 0, totalPages: 0 } })),
     getRelease(decodedOwner, decodedName, decodedTag),
     listReleases(decodedOwner, decodedName, { page: 1, limit: 1, status: "published" }).catch(() => ({
       data: [],
@@ -28,7 +28,7 @@ export default async function EditRepositoryReleasePage({ params }: Props) {
 
   return (
     <div className="grid gap-6">
-      <RepoHeader activeTab="releases" pullRequestsCount={pullRequests.data.length} releasesCount={releaseCount.pagination.total} repo={repo} />
+      <RepoHeader activeTab="releases" pullRequestsCount={pullRequests.pagination?.total ?? pullRequests.data.length} releasesCount={releaseCount.pagination.total} repo={repo} />
 
       <RepoPageContent>
         <ReleaseEditPanel baseHref={baseHref} name={decodedName} owner={decodedOwner} release={release} />

@@ -648,6 +648,20 @@ pub(crate) async fn list_releases(
     ensure_repo_visible(&state.pool, auth.as_ref(), &repo).await?;
     let can_manage = release_viewer_can_manage(&state, auth.as_ref(), &repo).await?;
     let status = normalize_release_status_filter(query.status.as_deref())?;
+    let search = query
+        .q
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| format!("%{}%", value));
+    let tag = query
+        .tag
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(validate_release_tag_name)
+        .transpose()?;
+    let prerelease = query.prerelease.unwrap_or(false);
     let (page, limit, offset) = pagination_input(query.page, query.limit);
     let total: (i64,) = sqlx::query_as(
         r#"
@@ -656,11 +670,17 @@ pub(crate) async fn list_releases(
         WHERE repository_id = $1
           AND ($2::TEXT IS NULL OR status = $2)
           AND ($3 OR status = 'published')
+          AND ($4::TEXT IS NULL OR tag_name = $4)
+          AND (NOT $5 OR is_prerelease = TRUE)
+          AND ($6::TEXT IS NULL OR title ILIKE $6 OR body ILIKE $6)
         "#,
     )
     .bind(repo.id)
     .bind(&status)
     .bind(can_manage)
+    .bind(&tag)
+    .bind(prerelease)
+    .bind(&search)
     .fetch_one(&state.pool)
     .await?;
     let releases = sqlx::query_as::<_, Release>(
@@ -670,13 +690,19 @@ pub(crate) async fn list_releases(
         WHERE repository_id = $1
           AND ($2::TEXT IS NULL OR status = $2)
           AND ($3 OR status = 'published')
+          AND ($4::TEXT IS NULL OR tag_name = $4)
+          AND (NOT $5 OR is_prerelease = TRUE)
+          AND ($6::TEXT IS NULL OR title ILIKE $6 OR body ILIKE $6)
         ORDER BY COALESCE(published_at, created_at) DESC, created_at DESC
-        LIMIT $4 OFFSET $5
+        LIMIT $7 OFFSET $8
         "#,
     )
     .bind(repo.id)
     .bind(&status)
     .bind(can_manage)
+    .bind(&tag)
+    .bind(prerelease)
+    .bind(&search)
     .bind(limit)
     .bind(offset)
     .fetch_all(&state.pool)
@@ -1718,7 +1744,7 @@ pub(crate) async fn create_pull_request(
           (legacy_uuid, target_repository_id, source_repository_id, title, body, author_handle,
            source_repo_url, source_branch, target_branch, status, activity_id)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'open', $10)
-        RETURNING *
+        RETURNING *, '[]'::jsonb AS labels
         "#,
     )
     .bind(Uuid::now_v7())
@@ -1788,9 +1814,14 @@ pub(crate) async fn create_pull_request(
         deliver_activity(&state, remote_url, &activity).await;
     }
 
+    if let Some(labels) = input.labels.as_ref() {
+        replace_pull_request_labels(&state, target.id, pr.id, labels).await?;
+    }
+
     invalidate_repo_cache(&state, &target.owner_handle, &target.name).await;
+    let response_pr = find_pull_request(&state, target.id, pr.id).await?;
     Ok(Json(
-        pull_request_response(&state, &target, pr, Some(&auth)).await?,
+        pull_request_response(&state, &target, response_pr, Some(&auth)).await?,
     ))
 }
 
@@ -1798,21 +1829,72 @@ pub(crate) async fn list_pull_requests(
     State(state): State<AppState>,
     headers: HeaderMap,
     Path((owner, name)): Path<(String, String)>,
-) -> ApiResult<Json<Value>> {
+    Query(query): Query<PullRequestListQuery>,
+) -> ApiResult<Json<PaginatedResponse<PullRequestResponse>>> {
     let auth = optional_auth(&state, &headers)?;
     let target = find_repo(&state.pool, &owner, &name).await?;
     ensure_repo_visible(&state.pool, auth.as_ref(), &target).await?;
+    let (page, limit, offset) = pagination_input(query.page, query.limit);
+    let status = normalize_pull_request_list_status_filter(query.status.as_deref())?;
+    let labels = issue_label_filter(query.labels.as_deref())?;
+    let search = query
+        .q
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| format!("%{}%", value));
+    let total = pull_request_count(
+        &state,
+        target.id,
+        status.as_deref(),
+        search.as_deref(),
+        &labels,
+    )
+    .await?;
     let prs = sqlx::query_as::<_, PullRequest>(
-        "SELECT * FROM pull_requests WHERE target_repository_id = $1 ORDER BY created_at DESC",
+        r#"
+        SELECT pull_requests.*,
+          COALESCE((
+            SELECT jsonb_agg(jsonb_build_object('id', issue_labels.id, 'name', issue_labels.name, 'color', issue_labels.color) ORDER BY issue_labels.name)
+            FROM pull_request_label_assignments
+            JOIN issue_labels ON issue_labels.id = pull_request_label_assignments.label_id
+            WHERE pull_request_label_assignments.pull_request_id = pull_requests.id
+          ), '[]'::jsonb) AS labels
+        FROM pull_requests
+        WHERE target_repository_id = $1
+          AND ($2::TEXT IS NULL OR status = $2)
+          AND ($3::TEXT IS NULL OR title ILIKE $3 OR body ILIKE $3)
+          AND NOT EXISTS (
+            SELECT 1
+            FROM unnest($4::TEXT[]) AS requested_label(name)
+            WHERE NOT EXISTS (
+              SELECT 1
+              FROM pull_request_label_assignments
+              JOIN issue_labels ON issue_labels.id = pull_request_label_assignments.label_id
+              WHERE pull_request_label_assignments.pull_request_id = pull_requests.id
+                AND lower(issue_labels.name) = lower(requested_label.name)
+            )
+          )
+        ORDER BY created_at DESC
+        LIMIT $5 OFFSET $6
+        "#,
     )
     .bind(target.id)
+    .bind(&status)
+    .bind(&search)
+    .bind(labels)
+    .bind(limit)
+    .bind(offset)
     .fetch_all(&state.pool)
     .await?;
     let mut data = Vec::with_capacity(prs.len());
     for pr in prs {
         data.push(pull_request_response(&state, &target, pr, auth.as_ref()).await?);
     }
-    Ok(Json(json!({ "data": data })))
+    Ok(Json(PaginatedResponse {
+        data,
+        pagination: pagination(page, limit, total),
+    }))
 }
 
 pub(crate) async fn pull_request_options(
@@ -1912,26 +1994,35 @@ pub(crate) async fn update_pull_request(
     ensure_repo_visible(&state.pool, Some(&auth), &target).await?;
     ensure_repo_writer(&state, &auth, &target).await?;
     let current = find_pull_request(&state, target.id, id).await?;
-    if current.status == "merged" {
+    let current_status = current.status.clone();
+    if current.status == "merged" && input.status.is_some() {
         return Err(ApiError::BadRequest(
             "merged pull requests cannot be reopened or closed".to_string(),
         ));
     }
-    let status = normalize_pull_request_status(input.status.as_deref())?;
-    let pr = sqlx::query_as::<_, PullRequest>(
-        r#"
-        UPDATE pull_requests
-        SET status = $3, updated_at = now()
-        WHERE id = $1 AND target_repository_id = $2
-        RETURNING *
-        "#,
-    )
-    .bind(id)
-    .bind(target.id)
-    .bind(status.clone())
-    .fetch_one(&state.pool)
-    .await?;
-    if current.status != pr.status {
+    let requested_status = input
+        .status
+        .as_deref()
+        .map(|_| normalize_pull_request_status(input.status.as_deref()))
+        .transpose()?;
+    let pr = if let Some(status) = requested_status.as_ref() {
+        sqlx::query_as::<_, PullRequest>(
+            r#"
+            UPDATE pull_requests
+            SET status = $3, updated_at = now()
+            WHERE id = $1 AND target_repository_id = $2
+            RETURNING *, '[]'::jsonb AS labels
+            "#,
+        )
+        .bind(id)
+        .bind(target.id)
+        .bind(status.clone())
+        .fetch_one(&state.pool)
+        .await?
+    } else {
+        find_pull_request(&state, target.id, id).await?
+    };
+    if current_status != pr.status {
         let timeline_author = issue_author(&state, &RepoActionAuth::Local(auth.clone())).await?;
         record_timeline_event(
             &state,
@@ -1949,14 +2040,19 @@ pub(crate) async fn update_pull_request(
             } else {
                 "reopened this pull request"
             },
-            json!({ "from": current.status.clone(), "to": pr.status.clone() }),
+            json!({ "from": current_status, "to": pr.status.clone() }),
         )
         .await?;
     }
 
+    if let Some(labels) = input.labels.as_ref() {
+        replace_pull_request_labels(&state, target.id, pr.id, labels).await?;
+    }
+
     invalidate_repo_cache(&state, &target.owner_handle, &target.name).await;
+    let response_pr = find_pull_request(&state, target.id, id).await?;
     Ok(Json(
-        pull_request_response(&state, &target, pr, Some(&auth)).await?,
+        pull_request_response(&state, &target, response_pr, Some(&auth)).await?,
     ))
 }
 
@@ -1987,7 +2083,7 @@ pub(crate) async fn merge_pull_request(
         UPDATE pull_requests
         SET status = 'merged', updated_at = now()
         WHERE id = $1 AND target_repository_id = $2
-        RETURNING *
+        RETURNING *, '[]'::jsonb AS labels
         "#,
     )
     .bind(id)
@@ -2012,6 +2108,7 @@ pub(crate) async fn merge_pull_request(
     .await?;
 
     invalidate_repo_cache(&state, &target.owner_handle, &target.name).await;
+    let response_pr = find_pull_request(&state, target.id, pr.id).await?;
     let webhook_state = state.clone();
     let webhook_auth = auth.clone();
     let webhook_repo_id = target.id;
@@ -2034,7 +2131,7 @@ pub(crate) async fn merge_pull_request(
         }
     });
     Ok(Json(
-        pull_request_response(&state, &target, pr, Some(&auth)).await?,
+        pull_request_response(&state, &target, response_pr, Some(&auth)).await?,
     ))
 }
 
@@ -4268,6 +4365,42 @@ async fn issue_count(
     Ok(total.0)
 }
 
+async fn pull_request_count(
+    state: &AppState,
+    repository_id: Uuid,
+    status: Option<&str>,
+    search: Option<&str>,
+    labels: &[String],
+) -> ApiResult<i64> {
+    let total: (i64,) = sqlx::query_as(
+        r#"
+        SELECT COUNT(*)
+        FROM pull_requests
+        WHERE target_repository_id = $1
+          AND ($2::TEXT IS NULL OR status = $2)
+          AND ($3::TEXT IS NULL OR title ILIKE $3 OR body ILIKE $3)
+          AND NOT EXISTS (
+            SELECT 1
+            FROM unnest($4::TEXT[]) AS requested_label(name)
+            WHERE NOT EXISTS (
+              SELECT 1
+              FROM pull_request_label_assignments
+              JOIN issue_labels ON issue_labels.id = pull_request_label_assignments.label_id
+              WHERE pull_request_label_assignments.pull_request_id = pull_requests.id
+                AND lower(issue_labels.name) = lower(requested_label.name)
+            )
+          )
+        "#,
+    )
+    .bind(repository_id)
+    .bind(status)
+    .bind(search)
+    .bind(labels)
+    .fetch_one(&state.pool)
+    .await?;
+    Ok(total.0)
+}
+
 fn normalize_issue_status_filter(status: Option<String>) -> ApiResult<Option<String>> {
     match status
         .as_deref()
@@ -4435,6 +4568,43 @@ async fn replace_issue_labels(
     Ok(())
 }
 
+async fn replace_pull_request_labels(
+    state: &AppState,
+    repository_id: Uuid,
+    pull_request_id: i64,
+    labels: &[String],
+) -> ApiResult<()> {
+    sqlx::query("DELETE FROM pull_request_label_assignments WHERE pull_request_id = $1")
+        .bind(pull_request_id)
+        .execute(&state.pool)
+        .await?;
+    for label in labels {
+        let name = normalize_issue_label_name(label)?;
+        let row = sqlx::query(
+            r#"
+            INSERT INTO issue_labels (id, repository_id, name)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (repository_id, lower(name)) DO UPDATE
+            SET name = EXCLUDED.name
+            RETURNING id
+            "#,
+        )
+        .bind(Uuid::now_v7())
+        .bind(repository_id)
+        .bind(name)
+        .fetch_one(&state.pool)
+        .await?;
+        sqlx::query(
+            "INSERT INTO pull_request_label_assignments (pull_request_id, label_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+        )
+        .bind(pull_request_id)
+        .bind(row.get::<Uuid, _>("id"))
+        .execute(&state.pool)
+        .await?;
+    }
+    Ok(())
+}
+
 fn issue_label_filter(value: Option<&str>) -> ApiResult<Vec<String>> {
     value
         .unwrap_or_default()
@@ -4506,7 +4676,17 @@ async fn find_pull_request(
     id: i64,
 ) -> ApiResult<PullRequest> {
     Ok(sqlx::query_as::<_, PullRequest>(
-        "SELECT * FROM pull_requests WHERE target_repository_id = $1 AND id = $2",
+        r#"
+        SELECT pull_requests.*,
+          COALESCE((
+            SELECT jsonb_agg(jsonb_build_object('id', issue_labels.id, 'name', issue_labels.name, 'color', issue_labels.color) ORDER BY issue_labels.name)
+            FROM pull_request_label_assignments
+            JOIN issue_labels ON issue_labels.id = pull_request_label_assignments.label_id
+            WHERE pull_request_label_assignments.pull_request_id = pull_requests.id
+          ), '[]'::jsonb) AS labels
+        FROM pull_requests
+        WHERE target_repository_id = $1 AND id = $2
+        "#,
     )
     .bind(target_repository_id)
     .bind(id)
@@ -4536,6 +4716,7 @@ async fn pull_request_response(
         source_branch: pr.source_branch,
         target_branch: pr.target_branch,
         status: pr.status,
+        labels: pr.labels,
         activity_id: pr.activity_id,
         created_at: pr.created_at,
         updated_at: pr.updated_at,
@@ -4635,6 +4816,21 @@ async fn ensure_pull_request_source_visible(
         ensure_repo_visible(&state.pool, auth, &source).await?;
     }
     Ok(())
+}
+
+fn normalize_pull_request_list_status_filter(status: Option<&str>) -> ApiResult<Option<String>> {
+    match status
+        .map(str::trim)
+        .filter(|status| !status.is_empty())
+    {
+        None | Some("all") => Ok(None),
+        Some("open") => Ok(Some("open".to_string())),
+        Some("close") | Some("closed") => Ok(Some("closed".to_string())),
+        Some("merged") => Ok(Some("merged".to_string())),
+        Some(_) => Err(ApiError::BadRequest(
+            "invalid pull request status".to_string(),
+        )),
+    }
 }
 
 fn normalize_pull_request_status(status: Option<&str>) -> ApiResult<String> {

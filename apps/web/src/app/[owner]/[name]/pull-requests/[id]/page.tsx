@@ -52,14 +52,14 @@ export default async function PullRequestPage({ params }: Props) {
   const baseHref = repoHref(decodedOwner, decodedName);
   const [repo, pullRequests, pullRequest, activity] = await Promise.all([
     getRepository(decodedOwner, decodedName),
-    listPullRequests(decodedOwner, decodedName).catch(() => ({ data: [] })),
+    listPullRequests(decodedOwner, decodedName).catch(() => ({ data: [], pagination: { page: 1, limit: 1, total: 0, totalPages: 0 } })),
     getPullRequest(decodedOwner, decodedName, decodedId),
     listPullRequestActivity(decodedOwner, decodedName, decodedId, 1, 100).catch(() => emptyActivity()),
   ]);
 
   return (
     <div className="grid gap-6">
-      <RepoHeader activeTab="pull-requests" pullRequestsCount={pullRequests.data.length} repo={repo} />
+      <RepoHeader activeTab="pull-requests" pullRequestsCount={pullRequests.pagination?.total ?? pullRequests.data.length} repo={repo} />
       <RepoPageContent>
         <PullRequestDetailPanel
           baseHref={baseHref}

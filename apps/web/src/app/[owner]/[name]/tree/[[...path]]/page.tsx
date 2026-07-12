@@ -25,7 +25,7 @@ export default async function RepositoryTreePage({ params, searchParams }: Props
   const selectedRef = ref || repo.default_branch;
   const baseHref = repoHref(decodedOwner, decodedName);
   const [pullRequests, branches, tags, tree, fullTree] = await Promise.all([
-    listPullRequests(decodedOwner, decodedName).catch(() => ({ data: [] })),
+    listPullRequests(decodedOwner, decodedName).catch(() => ({ data: [], pagination: { page: 1, limit: 1, total: 0, totalPages: 0 } })),
     listRepositoryBranches(decodedOwner, decodedName).catch(() => ({
       data: [{ name: repo.default_branch, is_default: true, commit_sha: null }],
     })),
@@ -41,7 +41,7 @@ export default async function RepositoryTreePage({ params, searchParams }: Props
 
   return (
     <div className="grid gap-6">
-      <RepoHeader activeTab="code" pullRequestsCount={pullRequests.data.length} repo={repo} />
+      <RepoHeader activeTab="code" pullRequestsCount={pullRequests.pagination?.total ?? pullRequests.data.length} repo={repo} />
       <RepoPageContent>
         <RepositoryCodeBrowser
           baseHref={baseHref}
