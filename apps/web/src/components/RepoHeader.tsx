@@ -4,6 +4,7 @@ import { CurrentUserNavActions } from "@/components/NavActions";
 import { RepoTabs, type RepoActiveTab } from "@/components/RepoTabs";
 import { StarButton } from "@/components/StarButton";
 import type { Repository } from "@/lib/api";
+import { getRepoTabCounts } from "@/lib/repo-tab-counts";
 import type { ReactNode } from "react";
 
 type RepoHeaderProps = {
@@ -14,9 +15,10 @@ type RepoHeaderProps = {
   repo: Repository;
 };
 
-export function RepoHeader({ activeTab, issuesCount = 0, pullRequestsCount = 0, releasesCount = 0, repo }: RepoHeaderProps) {
+export async function RepoHeader({ activeTab, repo }: RepoHeaderProps) {
   const ownerProfile = repoOwnerProfile(repo);
   const baseHref = repoHref(repo.owner_handle, repo.name);
+  const { issuesCount, pullRequestsCount, releasesCount } = await getRepoTabCounts(repo);
 
   return (
     <section className="-mx-6 border-b border-[#d0d7de] bg-white px-6 pt-3">
