@@ -1,12 +1,7 @@
 "use client";
 
-import { apiBaseUrl } from "@/lib/runtime-config";
+import { useCurrentUser } from "@/components/useCurrentUser";
 import Link from "next/link";
-import { useEffect, useState } from "react";
-import type { CurrentUser } from "@/lib/api";
-import { getAuthToken } from "@/lib/auth-session";
-
-const API_URL = apiBaseUrl();
 
 type NewRepositoryButtonProps = {
   owner: string;
@@ -15,30 +10,13 @@ type NewRepositoryButtonProps = {
 };
 
 export function NewRepositoryButton({ owner, ownerUserId, organizationCreatorId }: NewRepositoryButtonProps) {
-  const [user, setUser] = useState<CurrentUser | null>(null);
-
-  useEffect(() => {
-    const timeout = window.setTimeout(async () => {
-      const token = getAuthToken();
-      if (!token) {
-        return;
-      }
-      const response = await fetch(`${API_URL}/auth/me`, {
-        headers: { authorization: `Bearer ${token}` },
-      });
-      if (response.ok) {
-        setUser((await response.json()) as CurrentUser);
-      }
-    }, 0);
-
-    return () => window.clearTimeout(timeout);
-  }, []);
+  const { status, user } = useCurrentUser();
 
   const canCreate =
     Boolean(user?.id && ownerUserId && user.id === ownerUserId) ||
     Boolean(user?.id && organizationCreatorId && user.id === organizationCreatorId);
 
-  if (!canCreate) {
+  if (status === "loading" || !canCreate) {
     return null;
   }
 

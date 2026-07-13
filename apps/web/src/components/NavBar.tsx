@@ -12,7 +12,7 @@ export function NavBar() {
   const pathname = usePathname();
   const searchInputRef = useRef<HTMLInputElement>(null);
   const isRepositoryPage = isRepositoryPath(pathname);
-  const { signOut, user } = useCurrentUser(!isRepositoryPage);
+  const { signOut, status, user } = useCurrentUser();
 
   useEffect(() => {
     if (isRepositoryPage) {
@@ -110,7 +110,7 @@ export function NavBar() {
           ) : null}
         </nav>
 
-        <NavActions onSignOut={signOut} user={user} />
+        <NavActions onSignOut={signOut} status={status} user={user} />
       </div>
 
       <div className="flex gap-2 overflow-x-auto border-t border-[#d8dee4] px-6 py-2 md:hidden">

@@ -2,7 +2,7 @@
 
 import { apiBaseUrl } from "@/lib/runtime-config";
 import { FormEvent, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   getAuthToken,
   normalizeServerUrl,
@@ -24,6 +24,7 @@ type FederatedExchangeResponse = {
 };
 
 export function AuthPanel() {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const [mode, setMode] = useState<Mode>("login");
   const [token, setToken] = useState<string | null>(() => (typeof window === "undefined" ? null : getAuthToken()));
@@ -144,6 +145,7 @@ export function AuthPanel() {
     window.sessionStorage.removeItem(`diggit_federated_${state}`);
     setToken(body.token);
     setMessage(`Signed in as ${body.user.display_name} from ${body.user.home_server ?? pending.homeServer}`);
+    router.refresh();
   }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -171,12 +173,14 @@ export function AuthPanel() {
     setAuthSession({ kind: "local", token: body.token });
     setToken(body.token);
     setMessage(`Signed in as ${body.user.username}`);
+    router.refresh();
   }
 
   function signOut() {
     clearAuthSession();
     setToken(null);
     setMessage("Signed out");
+    router.refresh();
   }
 
   return (

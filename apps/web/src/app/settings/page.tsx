@@ -1,8 +1,8 @@
 import Link from "next/link";
-import { apiFetch, type CurrentUser } from "@/lib/api";
+import { getCurrentUser } from "@/lib/current-user";
 
 export default async function UserSettingsPage() {
-  const user = await apiFetch<CurrentUser>("/auth/me").catch(() => null);
+  const user = await getCurrentUser();
 
   return (
     <div className="grid gap-3.5">

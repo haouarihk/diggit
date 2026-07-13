@@ -10,16 +10,17 @@ import { useEffect } from "react";
 type NavActionsProps = {
   className?: string;
   onSignOut: () => void;
+  status: "anonymous" | "authenticated" | "loading";
   user: CurrentUser | null;
 };
 
 export function CurrentUserNavActions({ className }: { className?: string }) {
-  const { signOut, user } = useCurrentUser();
+  const { signOut, status, user } = useCurrentUser();
 
-  return <NavActions className={className} onSignOut={signOut} user={user} />;
+  return <NavActions className={className} onSignOut={signOut} status={status} user={user} />;
 }
 
-export function NavActions({ className = "", onSignOut, user }: NavActionsProps) {
+export function NavActions({ className = "", onSignOut, status, user }: NavActionsProps) {
   const pathname = usePathname();
   useDismissOpenDetails();
 
@@ -104,6 +105,11 @@ export function NavActions({ className = "", onSignOut, user }: NavActionsProps)
             </button>
           </div>
         </details>
+      ) : status === "loading" ? (
+        <div className="flex items-center gap-2">
+          <div className="hidden h-9 w-16 rounded-md bg-[#f6f8fa] sm:block" />
+          <div className="h-9 w-20 rounded-md border border-[#d0d7de] bg-[#f6f8fa]" />
+        </div>
       ) : (
         <>
           <Link className="hidden rounded-md px-3 py-1.5 font-semibold text-[#1f2328] hover:bg-[#f6f8fa] sm:inline-flex" href="/auth">
