@@ -1,6 +1,8 @@
 import { component$, isDev } from "@builder.io/qwik";
 import { QwikCityProvider, RouterOutlet } from "@builder.io/qwik-city";
+import { DropdownDismissController } from "./components/ui/DropdownDismissController";
 import { RouterHead } from "./components/router-head/router-head";
+import { themeInitScript } from "./lib/theme";
 
 import "./global.css";
 
@@ -16,6 +18,7 @@ export default component$(() => {
     <QwikCityProvider>
       <head>
         <meta charset="utf-8" />
+        <script dangerouslySetInnerHTML={themeInitScript()} />
         {!isDev && (
           <link
             rel="manifest"
@@ -25,6 +28,7 @@ export default component$(() => {
         <RouterHead />
       </head>
       <body lang="en">
+        <DropdownDismissController />
         <RouterOutlet />
       </body>
     </QwikCityProvider>

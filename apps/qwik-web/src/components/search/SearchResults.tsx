@@ -2,6 +2,7 @@ import { component$ } from "@builder.io/qwik";
 import { Link } from "@builder.io/qwik-city";
 import { RepositoryList } from "~/components/repositories/RepositoryList";
 import { type SearchResponse } from "~/lib/api";
+import { userProfileHref } from "~/lib/user-profile";
 
 type SearchResultsProps = {
   activeType: string;
@@ -95,7 +96,7 @@ const UserResults = component$(
               <div>
                 <Link
                   class="user-results__link"
-                  href={`/users/${encodeURIComponent(user.username)}`}
+                  href={userProfileHref(user.username)}
                 >
                   {user.username}
                 </Link>

@@ -2,6 +2,7 @@ import { component$ } from "@builder.io/qwik";
 import { Link } from "@builder.io/qwik-city";
 import { StarButton } from "~/components/repositories/StarButton";
 import { repoHref, type Repository } from "~/lib/api";
+import { userProfileHref } from "~/lib/user-profile";
 
 type RepositoryListProps = {
   repositories: Repository[];
@@ -119,7 +120,7 @@ function ownerHref(owner: Repository["owner"]) {
     return `/organizations/${encodeURIComponent(owner.handle)}`;
   }
   if (owner.kind === "user") {
-    return `/users/${encodeURIComponent(owner.handle)}`;
+    return userProfileHref(owner.handle);
   }
 
   return null;

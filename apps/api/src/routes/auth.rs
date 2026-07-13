@@ -23,7 +23,7 @@ pub(crate) async fn register(
         return Err(ApiError::Forbidden("new sign ups are disabled".to_string()));
     }
 
-    let username = normalize_name(&input.username)?;
+    let username = normalize_username(&input.username)?;
     enforce_rate_limit(&state, "auth-register", &username, 5, 300).await?;
     ensure_claimable_owner_name(&username)?;
     ensure_namespace_available(&state.pool, &username).await?;

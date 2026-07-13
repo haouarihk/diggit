@@ -1,14 +1,22 @@
 import { Slot, component$ } from "@builder.io/qwik";
-import { type DocumentHead } from "@builder.io/qwik-city";
+import { type DocumentHead, useLocation } from "@builder.io/qwik-city";
 import { NavBar } from "~/components/navigation/NavBar";
+import { isRepositoryPath } from "~/lib/routes";
 
 export default component$(() => {
+  const location = useLocation();
+  const repositoryPage = isRepositoryPath(location.url.pathname);
+
   return (
     <main class="app-shell">
       <NavBar />
-      <div class="page-shell">
+      {repositoryPage ? (
         <Slot />
-      </div>
+      ) : (
+        <div class="page-shell">
+          <Slot />
+        </div>
+      )}
     </main>
   );
 });

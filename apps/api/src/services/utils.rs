@@ -15,6 +15,19 @@ pub(crate) fn normalize_name(value: &str) -> ApiResult<String> {
     }
 }
 
+pub(crate) fn normalize_username(value: &str) -> ApiResult<String> {
+    let trimmed = value.trim();
+    if trimmed.starts_with('.') || trimmed.starts_with('_') {
+        return Err(ApiError::BadRequest(
+            "username must not start with a dot or underscore".to_string(),
+        ));
+    }
+
+    let normalized = normalize_name(trimmed)?;
+    ensure_claimable_username(&normalized)?;
+    Ok(normalized)
+}
+
 pub(crate) fn ensure_claimable_owner_name(name: &str) -> ApiResult<()> {
     const RESERVED_OWNER_NAMES: &[&str] = &[
         "auth",
@@ -28,6 +41,30 @@ pub(crate) fn ensure_claimable_owner_name(name: &str) -> ApiResult<()> {
     if RESERVED_OWNER_NAMES.contains(&name) {
         return Err(ApiError::BadRequest(format!(
             "{name} is reserved and cannot be used as an owner name"
+        )));
+    }
+
+    Ok(())
+}
+
+pub(crate) fn ensure_claimable_username(name: &str) -> ApiResult<()> {
+    const RESERVED_USERNAMES: &[&str] = &[
+        "activity",
+        "admin",
+        "auth",
+        "dev",
+        "new",
+        "organizations",
+        "repos",
+        "search",
+        "servers",
+        "settings",
+        "users",
+    ];
+
+    if RESERVED_USERNAMES.contains(&name) {
+        return Err(ApiError::BadRequest(format!(
+            "{name} is reserved and cannot be used as a username"
         )));
     }
 
@@ -50,5 +87,18 @@ pub(crate) async fn enforce_rate_limit(
         Err(ApiError::RateLimited)
     } else {
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_username_rejects_reserved_or_prefixed_usernames() {
+        assert!(normalize_username("search").is_err());
+        assert!(normalize_username(".alice").is_err());
+        assert!(normalize_username("_alice").is_err());
+        assert_eq!(normalize_username("Alice_1").unwrap(), "alice_1");
     }
 }

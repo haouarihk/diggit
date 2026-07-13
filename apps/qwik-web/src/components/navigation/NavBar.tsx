@@ -1,5 +1,7 @@
 import { $, component$ } from "@builder.io/qwik";
 import { Link, useLocation, useNavigate } from "@builder.io/qwik-city";
+import { CurrentUserNavActions } from "~/components/navigation/NavActions";
+import { isRepositoryPath } from "~/lib/routes";
 
 export const NavBar = component$(() => {
   const location = useLocation();
@@ -7,12 +9,7 @@ export const NavBar = component$(() => {
   const pathname = location.url.pathname;
   const repositoryPage = isRepositoryPath(pathname);
 
-  const submitSearch = $(async (event: SubmitEvent) => {
-    const form = event.currentTarget as HTMLFormElement | null;
-    if (!form) {
-      return;
-    }
-
+  const submitSearch = $(async (_event: SubmitEvent, form: HTMLFormElement) => {
     const data = new FormData(form);
     const query = String(data.get("q") ?? "").trim();
     if (!query) {
@@ -72,14 +69,7 @@ export const NavBar = component$(() => {
           </Link>
         </nav>
 
-        <div class="topbar__actions">
-          <Link class="topbar__signin" href="/auth">
-            Sign in
-          </Link>
-          <Link class="topbar__signup" href="/auth">
-            Sign up
-          </Link>
-        </div>
+        <CurrentUserNavActions />
       </div>
 
       <div class="topbar__mobile-nav">
@@ -99,11 +89,6 @@ export const NavBar = component$(() => {
     </header>
   );
 });
-
-function isRepositoryPath(pathname: string) {
-  const segments = pathname.split("/").filter(Boolean);
-  return segments.length === 2;
-}
 
 function navLinkClass(active: boolean) {
   return ["topbar__nav-link", active ? "topbar__nav-link--active" : ""];

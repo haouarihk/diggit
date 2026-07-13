@@ -1,10 +1,9 @@
 import {
   $,
   component$,
-  isBrowser,
   useOnWindow,
   useSignal,
-  useTask$,
+  useVisibleTask$,
 } from "@builder.io/qwik";
 import { useLocation } from "@builder.io/qwik-city";
 import { publicApiBaseUrl } from "~/lib/api";
@@ -16,6 +15,7 @@ import {
   randomToken,
   setAuthSession,
 } from "~/lib/auth-session";
+import { validateNewLocalUsername } from "~/lib/username";
 
 type Mode = "login" | "register";
 
@@ -47,11 +47,8 @@ export const AuthPanel = component$(() => {
   const code = searchParams.get("code");
   const state = searchParams.get("state");
 
-  useTask$(() => {
-    if (!isBrowser) {
-      return;
-    }
-
+  // eslint-disable-next-line qwik/no-use-visible-task
+  useVisibleTask$(() => {
     token.value = getAuthToken();
   });
 
@@ -107,12 +104,7 @@ export const AuthPanel = component$(() => {
     window.location.href = body.redirect_uri;
   });
 
-  const beginFederatedLogin = $(async (event: SubmitEvent) => {
-    const form = event.currentTarget as HTMLFormElement | null;
-    if (!form) {
-      return;
-    }
-
+  const beginFederatedLogin = $(async (_event: SubmitEvent, form: HTMLFormElement) => {
     const data = new FormData(form);
     const homeServer = normalizeServerUrl(String(data.get("homeServer") ?? ""));
     if (!homeServer) {
@@ -124,7 +116,7 @@ export const AuthPanel = component$(() => {
     const challenge = await pkceChallenge(verifier);
     const nextState = randomToken();
     const nonce = randomToken();
-    const redirectUri = `${window.location.origin}/auth/`;
+    const redirectUri = `${window.location.origin}/auth`;
     const pending = {
       homeServer,
       verifier,
@@ -196,18 +188,22 @@ export const AuthPanel = component$(() => {
     message.value = `Signed in as ${body.user.display_name} from ${body.user.home_server ?? pending.homeServer}`;
   });
 
-  const submit = $(async (event: SubmitEvent) => {
-    const form = event.currentTarget as HTMLFormElement | null;
-    if (!form) {
-      return;
-    }
-
+  const submit = $(async (_event: SubmitEvent, form: HTMLFormElement) => {
     const data = new FormData(form);
+    const username = String(data.get("username") ?? "").trim();
     const payload = {
-      username: String(data.get("username") ?? ""),
-      display_name: String(data.get("displayName") ?? ""),
+      username,
+      display_name: String(data.get("displayName") ?? "").trim(),
       password: String(data.get("password") ?? ""),
     };
+
+    if (mode.value === "register") {
+      const usernameError = validateNewLocalUsername(username);
+      if (usernameError) {
+        message.value = usernameError;
+        return;
+      }
+    }
 
     isSubmitting.value = true;
 
@@ -307,6 +303,12 @@ export const AuthPanel = component$(() => {
           Username
           <input class="auth-form__input" name="username" required />
         </label>
+        {mode.value === "register" ? (
+          <p class="auth-panel__help">
+            Usernames cannot start with "." or "_" and cannot use reserved
+            route names like admin, auth, or search.
+          </p>
+        ) : null}
         {mode.value === "register" ? (
           <label class="auth-form__label">
             Display name

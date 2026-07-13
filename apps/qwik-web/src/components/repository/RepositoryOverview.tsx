@@ -10,6 +10,7 @@ import {
   type RepositoryTag,
   type RepositoryTree,
 } from "~/lib/api";
+import { userProfileHref } from "~/lib/user-profile";
 
 type RepositoryOverviewProps = {
   baseHref: string;
@@ -64,7 +65,11 @@ export const RepositoryOverview = component$((props: RepositoryOverviewProps) =>
             ) : null}
           </div>
 
-          <RepositoryFileTable entries={filteredEntries} />
+          <RepositoryFileTable
+            baseHref={props.baseHref}
+            entries={filteredEntries}
+            selectedRef={props.selectedRef}
+          />
           <RepositoryReadme readme={props.readme} />
         </section>
       </div>
@@ -101,7 +106,7 @@ const RepositoryCodeToolbar = component$(
     return (
       <div class="repository-toolbar">
         <div class="repository-toolbar__left">
-          <details class="repository-ref-switcher">
+          <details class="repository-ref-switcher" data-ui-dropdown="true">
             <summary class="repository-ref-switcher__summary">
               <span class="repository-ref-switcher__icon">⎇</span>
               <span class="repository-ref-switcher__label">{selectedRef}</span>
@@ -167,7 +172,13 @@ const RepositoryCodeToolbar = component$(
               type="search"
             />
           </form>
-          <details class="repository-clone">
+          <Link
+            class="repository-focused-header__button"
+            href={codeHref(baseHref, undefined, selectedRef, "tree")}
+          >
+            Browse files
+          </Link>
+          <details class="repository-clone" data-ui-dropdown="true">
             <summary class="repository-clone__summary">Code</summary>
             <div class="repository-clone__panel">
               <CloneUrl
@@ -186,34 +197,54 @@ const RepositoryCodeToolbar = component$(
   },
 );
 
-const RepositoryFileTable = component$(({ entries }: { entries: RepositoryTree["entries"] }) => {
-  if (entries.length === 0) {
-    return <div class="repository-file-table__empty">No files found.</div>;
-  }
+const RepositoryFileTable = component$(
+  ({
+    baseHref,
+    entries,
+    selectedRef,
+  }: {
+    baseHref: string;
+    entries: RepositoryTree["entries"];
+    selectedRef: string;
+  }) => {
+    if (entries.length === 0) {
+      return <div class="repository-file-table__empty">No files found.</div>;
+    }
 
-  return (
-    <div class="repository-file-table">
-      {entries.map((entry) => (
-        <div class="repository-file-row" key={entry.path}>
-          <div class="repository-file-row__name">
-            <span class="repository-file-row__icon">
-              {entry.kind === "directory" ? "📁" : "📄"}
-            </span>
-            <span class="repository-file-row__label">{entry.name}</span>
+    return (
+      <div class="repository-file-table">
+        {entries.map((entry) => (
+          <div class="repository-file-row" key={entry.path}>
+            <div class="repository-file-row__name">
+              <span class="repository-file-row__icon">
+                {entry.kind === "directory" ? "📁" : "📄"}
+              </span>
+              <Link
+                class="repository-file-row__label"
+                href={codeHref(
+                  baseHref,
+                  entry.path,
+                  selectedRef,
+                  entry.kind === "directory" ? "tree" : "blob",
+                )}
+              >
+                {entry.name}
+              </Link>
+            </div>
+            <div class="repository-file-row__message">
+              {entry.last_commit ? entry.last_commit.message : "No commit message"}
+            </div>
+            <div class="repository-file-row__time">
+              {entry.last_commit?.created_at
+                ? relativeTime(entry.last_commit.created_at)
+                : "Never"}
+            </div>
           </div>
-          <div class="repository-file-row__message">
-            {entry.last_commit ? entry.last_commit.message : "No commit message"}
-          </div>
-          <div class="repository-file-row__time">
-            {entry.last_commit?.created_at
-              ? relativeTime(entry.last_commit.created_at)
-              : "Never"}
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-});
+        ))}
+      </div>
+    );
+  },
+);
 
 const RepositoryReadme = component$(({ readme }: { readme: RepositoryFile | null }) => {
   if (!readme) {
@@ -281,31 +312,53 @@ const RepositoryContributorsCard = component$(
         {contributors.length > 0 ? (
           <div class="repository-contributors">
             {contributors.slice(0, 5).map((contributor) => (
-              <div class="repository-contributor" key={contributor.username ?? contributor.name}>
-                {contributor.avatar_url ? (
-                  <img
-                    alt=""
-                    class="repository-contributor__avatar"
-                    height={32}
-                    src={contributor.avatar_url}
-                    width={32}
-                  />
-                ) : (
-                  <span class="repository-contributor__avatar repository-contributor__avatar--fallback">
-                    {contributor.avatar_fallback}
-                  </span>
-                )}
-                <span class="repository-contributor__name">{contributor.name}</span>
-                <span class="repository-contributor__commits">
-                  {contributor.commits}
-                </span>
-              </div>
+              <ContributorListItem
+                contributor={contributor}
+                key={contributor.username ?? contributor.name}
+              />
             ))}
           </div>
         ) : (
           <p class="repository-sidebar-card__text">No contributors yet.</p>
         )}
       </section>
+    );
+  },
+);
+
+const ContributorListItem = component$(
+  ({ contributor }: { contributor: RepositoryContributor }) => {
+    const content = (
+      <>
+        {contributor.avatar_url ? (
+          <img
+            alt=""
+            class="repository-contributor__avatar"
+            height={32}
+            src={contributor.avatar_url}
+            width={32}
+          />
+        ) : (
+          <span class="repository-contributor__avatar repository-contributor__avatar--fallback">
+            {contributor.avatar_fallback}
+          </span>
+        )}
+        <span class="repository-contributor__name">{contributor.name}</span>
+        <span class="repository-contributor__commits">{contributor.commits}</span>
+      </>
+    );
+
+    if (!contributor.username) {
+      return <div class="repository-contributor">{content}</div>;
+    }
+
+    return (
+      <Link
+        class="repository-contributor repository-contributor--link"
+        href={userProfileHref(contributor.username)}
+      >
+        {content}
+      </Link>
     );
   },
 );
@@ -358,6 +411,18 @@ const CloneUrl = component$(({ label, value }: { label: string; value: string })
 function refHref(baseHref: string, ref: string) {
   const query = new URLSearchParams({ ref });
   return `${baseHref}?${query.toString()}`;
+}
+
+function codeHref(
+  baseHref: string,
+  path: string | undefined,
+  ref: string,
+  mode: "blob" | "tree",
+) {
+  const query = new URLSearchParams({ ref });
+  return path
+    ? `${baseHref}/${mode}/${path.split("/").map(encodeURIComponent).join("/")}?${query}`
+    : `${baseHref}/tree?${query}`;
 }
 
 function cloneCommand(url: string, ref: string, defaultBranch: string) {
