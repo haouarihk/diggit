@@ -1,4 +1,11 @@
-import { $, component$, useOnWindow, useSignal, useVisibleTask$ } from "@builder.io/qwik";
+import {
+  $,
+  type PropFunction,
+  component$,
+  useOnWindow,
+  useSignal,
+  useVisibleTask$,
+} from "@builder.io/qwik";
 import { Link, useLocation } from "@builder.io/qwik-city";
 import { ThemeToggle } from "~/components/navigation/ThemeToggle";
 import { clearAuthSession, getAuthToken } from "~/lib/auth-session";
@@ -9,7 +16,7 @@ type CurrentUserStatus = "anonymous" | "authenticated" | "loading";
 
 type NavActionsProps = {
   class?: string;
-  onSignOut$: () => void;
+  onSignOut$: PropFunction<() => void>;
   status: CurrentUserStatus;
   user: CurrentUser | null;
 };

@@ -27,7 +27,7 @@ jobs:
           - name: diggit-api
             dockerfile: Dockerfile.api
           - name: diggit-web
-            dockerfile: Dockerfile.web
+            dockerfile: Dockerfile.qwik-web
 
     steps:
       - name: Checkout
