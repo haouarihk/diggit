@@ -409,7 +409,7 @@ pub(crate) async fn repository_response(
     };
     let http_url = format!(
         "{}/{}/{}.git",
-        config.public_web_url.trim_end_matches('/'),
+        config.app_base_url.trim_end_matches('/'),
         repo.owner_handle,
         repo.name
     );

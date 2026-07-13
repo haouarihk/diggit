@@ -1,9 +1,9 @@
 "use client";
 
 import { Drawer } from "@/components/Drawer";
-import { authHeaders } from "@/lib/auth-session";
+import { authHeaders, getAuthToken } from "@/lib/auth-session";
 import { apiBaseUrl } from "@/lib/runtime-config";
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 
 const API_URL = apiBaseUrl();
 
@@ -38,6 +38,13 @@ export function OAuthApplicationsPanel({ initialApplications = [] }: { initialAp
     const body = (await response.json()) as { data: OAuthApplication[] };
     setApplications(body.data);
   }
+
+  useEffect(() => {
+    if (initialApplications.length > 0 || !getAuthToken()) {
+      return;
+    }
+    void loadApplications();
+  }, [initialApplications.length]);
 
   async function createApplication(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();

@@ -6,7 +6,7 @@ import { getAuthToken } from "@/lib/auth-session";
 
 const API_URL = apiBaseUrl();
 
-export function ServerPolicyForm() {
+export function ServerPolicyForm({ onSaved }: { onSaved?: () => void }) {
   const [message, setMessage] = useState("");
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -25,7 +25,13 @@ export function ServerPolicyForm() {
         reason: form.get("reason"),
       }),
     });
-    setMessage(response.ok ? "Server policy saved. Refresh to view it." : `Failed: ${response.status}`);
+    if (!response.ok) {
+      setMessage(`Failed: ${response.status}`);
+      return;
+    }
+    setMessage("Server policy saved.");
+    event.currentTarget.reset();
+    onSaved?.();
   }
 
   return (

@@ -1,8 +1,30 @@
-import { ServerPolicyForm } from "@/components/ServerPolicyForm";
-import { listServers } from "@/lib/api";
+"use client";
 
-export default async function AdminServersPage() {
-  const servers = await listServers().catch(() => ({ data: [] }));
+import { ServerPolicyForm } from "@/components/ServerPolicyForm";
+import { authHeaders } from "@/lib/auth-session";
+import type { ServerPolicy } from "@/lib/api";
+import { apiBaseUrl } from "@/lib/runtime-config";
+import { useEffect, useState } from "react";
+
+const API_URL = apiBaseUrl();
+
+export default function AdminServersPage() {
+  const [servers, setServers] = useState<ServerPolicy[]>([]);
+  const [message, setMessage] = useState("");
+
+  async function loadServers() {
+    const response = await fetch(`${API_URL}/servers`, { headers: authHeaders() });
+    if (!response.ok) {
+      setMessage(`Failed to load servers: ${response.status}`);
+      return;
+    }
+    const body = (await response.json()) as { data: ServerPolicy[] };
+    setServers(body.data);
+  }
+
+  useEffect(() => {
+    void loadServers();
+  }, []);
 
   return (
     <div className="grid gap-3.5">
@@ -23,17 +45,18 @@ export default async function AdminServersPage() {
               New policy
             </summary>
             <div className="absolute right-0 z-20 mt-2 w-[min(360px,calc(100vw-3rem))] shadow-lg">
-              <ServerPolicyForm />
+              <ServerPolicyForm onSaved={() => void loadServers()} />
             </div>
           </details>
         </div>
-        {servers.data.length === 0 ? (
+        {message ? <div className="border-b border-[#d8dee4] px-4 py-2 text-[#59636e]">{message}</div> : null}
+        {servers.length === 0 ? (
           <div className="p-4">
             <p className="text-[#59636e]">No federated servers recorded yet.</p>
           </div>
         ) : (
           <div className="grid">
-            {servers.data.map((server) => (
+            {servers.map((server) => (
               <article className="grid gap-2 border-b border-[#d8dee4] p-4 last:border-b-0" key={server.id}>
                 <div className="flex flex-wrap items-center gap-2.5">
                   <strong>{server.host}</strong>

@@ -16,7 +16,7 @@ Diggit is a federated Git hosting MVP. It uses a Next.js web app, a Rust API, lo
 3. Run the API with `cargo run --manifest-path apps/api/Cargo.toml`.
 4. Run the web app with `pnpm install` then `pnpm dev`.
 
-The API listens on `http://localhost:3001` by default. For Docker deployments, set `API_INTERNAL_URL` to the API service URL that the web container can reach and `PUBLIC_API_URL` to the browser-facing API URL.
+The API listens on `http://localhost:3001` by default. The Rust backend now owns the public API, OAuth, social preview, and Git smart-HTTP endpoints, while `apps/web` is only the UI layer. For Docker deployments, set `APP_BASE_URL` to the browser-facing backend URL, `API_INTERNAL_URL` to the API service URL that the web container can reach, and `PUBLIC_API_URL` to the browser-facing API URL used by the web app.
 
 ## Run From GHCR Images
 ```yaml
@@ -44,7 +44,9 @@ services:
     environment:
       DATABASE_URL: postgres://diggit:diggit@postgres:5432/diggit
       REDIS_URL: redis://redis:6379
+      # Public backend URL for API, OAuth, social previews, and Git smart-HTTP.
       APP_BASE_URL: http://localhost:3001
+      # Public web UI URL.
       PUBLIC_WEB_URL: http://localhost:3000
       GIT_STORAGE_PATH: /data/git
       JWT_SECRET: replace-with-at-least-32-random-characters
@@ -81,7 +83,7 @@ volumes:
 ```
 
 Save this as `compose.yml`, then run `docker compose up -d`.
-Clone over SSH with `git clone ssh://git@localhost:2222/OWNER/REPO.git` after adding your public key in Diggit. The displayed clone host comes from `APP_BASE_URL`; `SSH_HOST` only controls which address the SSH server binds to.
+Clone over SSH with `git clone ssh://git@localhost:2222/OWNER/REPO.git` after adding your public key in Diggit. HTTP clone URLs and Git smart-HTTP traffic now come from `APP_BASE_URL`, while repository pages still live under `PUBLIC_WEB_URL`. `SSH_HOST` only controls which address the SSH server binds to.
 
 ## License
 

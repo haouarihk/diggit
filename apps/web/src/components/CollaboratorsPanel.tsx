@@ -1,11 +1,10 @@
 "use client";
 
 import { Drawer } from "@/components/Drawer";
-import { authHeaders } from "@/lib/auth-session";
+import { authHeaders, getAuthToken } from "@/lib/auth-session";
 import type { Collaborator } from "@/lib/api";
 import { apiBaseUrl } from "@/lib/runtime-config";
-import { useRouter } from "next/navigation";
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 
 const API_URL = apiBaseUrl();
 
@@ -17,12 +16,36 @@ type CollaboratorsPanelProps = {
 };
 
 export function CollaboratorsPanel({ addPath, collaborators, permissionName, scopeLabel }: CollaboratorsPanelProps) {
-  const router = useRouter();
+  const [items, setItems] = useState(collaborators);
   const [isOpen, setIsOpen] = useState(false);
   const [username, setUsername] = useState("");
   const [access, setAccess] = useState(permissionName === "role" ? "member" : "write");
   const [message, setMessage] = useState("");
   const [isSaving, setIsSaving] = useState(false);
+
+  const listPath = addPath;
+
+  async function loadCollaborators() {
+    const response = await fetch(`${API_URL}${listPath}`, {
+      headers: authHeaders(),
+    });
+    if (!response.ok) {
+      setMessage(`Unable to load collaborators. (${response.status})`);
+      return;
+    }
+    const body = (await response.json()) as { data: Collaborator[] };
+    setItems(body.data);
+  }
+
+  useEffect(() => {
+    if (collaborators.length > 0) {
+      return;
+    }
+    if (scopeLabel === "repository" && !getAuthToken()) {
+      return;
+    }
+    void loadCollaborators();
+  }, [collaborators.length, scopeLabel]);
 
   async function addCollaborator(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -47,7 +70,7 @@ export function CollaboratorsPanel({ addPath, collaborators, permissionName, sco
     }
     setUsername("");
     setIsOpen(false);
-    router.refresh();
+    await loadCollaborators();
   }
 
   return (
@@ -63,11 +86,11 @@ export function CollaboratorsPanel({ addPath, collaborators, permissionName, sco
       </section>
 
       <section className="rounded-md border border-[#d0d7de] bg-white">
-        {collaborators.length === 0 ? (
+        {items.length === 0 ? (
           <p className="p-5 text-[#59636e]">No collaborators have been added yet.</p>
         ) : (
           <div className="grid">
-            {collaborators.map((collaborator) => (
+            {items.map((collaborator) => (
               <article className="flex flex-wrap items-center justify-between gap-3 border-b border-[#d8dee4] p-5 last:border-b-0" key={collaborator.id}>
                 <div>
                   <h3 className="font-semibold">{collaborator.display_name}</h3>

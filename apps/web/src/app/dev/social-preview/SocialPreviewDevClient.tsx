@@ -1,5 +1,6 @@
 "use client";
 
+import { publicApiBaseUrl } from "@/lib/runtime-config";
 import { ChangeEvent, useState } from "react";
 
 type PreviewFields = {
@@ -205,5 +206,5 @@ function previewImageSrc(fields: PreviewFields) {
   });
   params.set("preview_cache_bust", "2");
 
-  return `/dev/social-preview.png?${params.toString()}`;
+  return `${publicApiBaseUrl()}/dev/social-preview.png?${params.toString()}`;
 }

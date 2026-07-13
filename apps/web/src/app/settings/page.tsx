@@ -1,8 +1,10 @@
-import Link from "next/link";
-import { getCurrentUser } from "@/lib/current-user";
+"use client";
 
-export default async function UserSettingsPage() {
-  const user = await getCurrentUser();
+import Link from "next/link";
+import { useCurrentUser } from "@/components/useCurrentUser";
+
+export default function UserSettingsPage() {
+  const { status, user } = useCurrentUser();
 
   return (
     <div className="grid gap-3.5">
@@ -39,6 +41,11 @@ export default async function UserSettingsPage() {
               View profile
             </Link>
           </div>
+        </section>
+      ) : status === "loading" ? (
+        <section className="rounded-md border border-[#d0d7de] bg-white p-4">
+          <div className="h-7 w-56 rounded bg-[#f6f8fa]" />
+          <div className="mt-3 h-4 w-40 rounded bg-[#f6f8fa]" />
         </section>
       ) : (
         <section className="rounded-md border border-[#d0d7de] bg-white p-4">

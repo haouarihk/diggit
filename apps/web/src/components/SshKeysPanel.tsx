@@ -2,7 +2,7 @@
 
 import { apiBaseUrl } from "@/lib/runtime-config";
 import { FormEvent, useEffect, useRef, useState } from "react";
-import { authHeaders } from "@/lib/auth-session";
+import { authHeaders, getAuthToken } from "@/lib/auth-session";
 
 const API_URL = apiBaseUrl();
 
@@ -40,6 +40,13 @@ export function SshKeysPanel() {
       window.removeEventListener("keydown", closeOnEscape);
     };
   }, [isAddKeyOpen]);
+
+  useEffect(() => {
+    if (!getAuthToken()) {
+      return;
+    }
+    void loadKeys();
+  }, []);
 
   async function loadKeys() {
     const response = await fetch(`${API_URL}/user/keys`, { headers: authHeaders() });

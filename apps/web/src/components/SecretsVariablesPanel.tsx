@@ -1,11 +1,10 @@
 "use client";
 
 import { Drawer } from "@/components/Drawer";
-import { authHeaders } from "@/lib/auth-session";
+import { authHeaders, getAuthToken } from "@/lib/auth-session";
 import type { RunnerSecret, RunnerVariable } from "@/lib/api";
 import { apiBaseUrl } from "@/lib/runtime-config";
-import { useRouter } from "next/navigation";
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 
 const API_URL = apiBaseUrl();
 
@@ -20,7 +19,8 @@ type SecretsVariablesPanelProps = {
 type DrawerMode = "secret" | "variable" | null;
 
 export function SecretsVariablesPanel({ scopeLabel, secrets, secretsPath, variables, variablesPath }: SecretsVariablesPanelProps) {
-  const router = useRouter();
+  const [secretsState, setSecretsState] = useState(secrets);
+  const [variablesState, setVariablesState] = useState(variables);
   const [mode, setMode] = useState<DrawerMode>(null);
   const [name, setName] = useState("");
   const [value, setValue] = useState("");
@@ -29,10 +29,38 @@ export function SecretsVariablesPanel({ scopeLabel, secrets, secretsPath, variab
   const [isSaving, setIsSaving] = useState(false);
 
   const scopeTitle = scopeLabel[0].toUpperCase() + scopeLabel.slice(1);
-  const environmentSecrets = secrets.filter((secret) => secret.environment);
-  const scopedSecrets = secrets.filter((secret) => !secret.environment);
-  const environmentVariables = variables.filter((variable) => variable.environment);
-  const scopedVariables = variables.filter((variable) => !variable.environment);
+  const environmentSecrets = secretsState.filter((secret) => secret.environment);
+  const scopedSecrets = secretsState.filter((secret) => !secret.environment);
+  const environmentVariables = variablesState.filter((variable) => variable.environment);
+  const scopedVariables = variablesState.filter((variable) => !variable.environment);
+
+  async function loadConfigs() {
+    const [secretsResponse, variablesResponse] = await Promise.all([
+      fetch(`${API_URL}${secretsPath}`, { headers: authHeaders() }),
+      fetch(`${API_URL}${variablesPath}`, { headers: authHeaders() }),
+    ]);
+
+    if (!secretsResponse.ok || !variablesResponse.ok) {
+      const status = !secretsResponse.ok ? secretsResponse.status : variablesResponse.status;
+      setMessage(`Failed to load ${scopeLabel} configuration. (${status})`);
+      return;
+    }
+
+    const [nextSecrets, nextVariables] = (await Promise.all([
+      secretsResponse.json(),
+      variablesResponse.json(),
+    ])) as [{ data: RunnerSecret[] }, { data: RunnerVariable[] }];
+
+    setSecretsState(nextSecrets.data);
+    setVariablesState(nextVariables.data);
+  }
+
+  useEffect(() => {
+    if ((secrets.length > 0 || variables.length > 0) || !getAuthToken()) {
+      return;
+    }
+    void loadConfigs();
+  }, [secrets.length, variables.length]);
 
   async function submitConfig(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -64,7 +92,7 @@ export function SecretsVariablesPanel({ scopeLabel, secrets, secretsPath, variab
     setValue("");
     setEnvironment("");
     setMode(null);
-    router.refresh();
+    await loadConfigs();
   }
 
   return (

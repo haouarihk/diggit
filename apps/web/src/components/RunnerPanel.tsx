@@ -1,8 +1,8 @@
 "use client";
 
 import { apiBaseUrl } from "@/lib/runtime-config";
-import { useState } from "react";
-import { authHeaders } from "@/lib/auth-session";
+import { useEffect, useState } from "react";
+import { authHeaders, getAuthToken } from "@/lib/auth-session";
 
 const API_URL = apiBaseUrl();
 
@@ -48,6 +48,13 @@ export function RunnerPanel({ scopeLabel, listPath, tokenPath }: RunnerPanelProp
     const body = (await response.json()) as { token: string };
     setRegistrationToken(body.token);
   }
+
+  useEffect(() => {
+    if (!getAuthToken()) {
+      return;
+    }
+    void loadRunners();
+  }, [listPath]);
 
   const command = `./act_runner register --no-interactive --instance ${API_URL} --token ${registrationToken || "<registration_token>"} --name ${scopeLabel.toLowerCase().replaceAll(" ", "-")}-runner --labels ubuntu-latest:docker://node:20-bookworm`;
   const dockerCommand = `docker run -e GITEA_INSTANCE_URL=${API_URL} -e GITEA_RUNNER_REGISTRATION_TOKEN=${registrationToken || "<registration_token>"} -e GITEA_RUNNER_LABELS=ubuntu-latest:docker://node:20-bookworm gitea/act_runner:latest`;

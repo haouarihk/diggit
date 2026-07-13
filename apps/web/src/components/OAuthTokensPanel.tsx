@@ -1,8 +1,8 @@
 "use client";
 
-import { authHeaders } from "@/lib/auth-session";
+import { authHeaders, getAuthToken } from "@/lib/auth-session";
 import { apiBaseUrl } from "@/lib/runtime-config";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 const API_URL = apiBaseUrl();
 
@@ -30,6 +30,13 @@ export function OAuthTokensPanel({ initialTokens = [] }: { initialTokens?: OAuth
     const body = (await response.json()) as { data: OAuthToken[] };
     setTokens(body.data);
   }
+
+  useEffect(() => {
+    if (initialTokens.length > 0 || !getAuthToken()) {
+      return;
+    }
+    void loadTokens();
+  }, [initialTokens.length]);
 
   async function revokeToken(token: OAuthToken) {
     const response = await fetch(`${API_URL}/oauth/tokens/${token.id}`, {
