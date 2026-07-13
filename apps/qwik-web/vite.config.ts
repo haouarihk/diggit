@@ -21,7 +21,10 @@ errorOnDuplicatesPkgDeps(devDependencies, dependencies);
  */
 export default defineConfig(({ command, mode }): UserConfig => {
   const env = loadEnv(mode, process.cwd(), "");
-  const allowedHosts = parseAllowedHosts(env.ALLOWED_HOSTS);
+  const allowedHosts = resolveAllowedHosts(
+    env.ALLOWED_HOSTS,
+    env.PUBLIC_WEB_URL,
+  );
 
   return {
     plugins: [qwikCity(), qwikVite(), tsconfigPaths({ root: "." })],
@@ -110,6 +113,24 @@ function errorOnDuplicatesPkgDeps(
   }
 }
 
+function resolveAllowedHosts(
+  allowedHostsValue: string | undefined,
+  publicWebUrl: string | undefined,
+) {
+  const explicitHosts = parseAllowedHosts(allowedHostsValue);
+  if (explicitHosts === true) {
+    return true;
+  }
+
+  const hosts = new Set(explicitHosts ?? []);
+  const publicWebHost = parseUrlHost(publicWebUrl);
+  if (publicWebHost) {
+    hosts.add(publicWebHost);
+  }
+
+  return hosts.size > 0 ? [...hosts] : undefined;
+}
+
 function parseAllowedHosts(value: string | undefined) {
   const normalized = value?.trim();
   if (!normalized) {
@@ -130,4 +151,17 @@ function parseAllowedHosts(value: string | undefined) {
     .filter(Boolean);
 
   return hosts.length > 0 ? hosts : undefined;
+}
+
+function parseUrlHost(value: string | undefined) {
+  const normalized = value?.trim();
+  if (!normalized) {
+    return undefined;
+  }
+
+  try {
+    return new URL(normalized).hostname;
+  } catch {
+    return undefined;
+  }
 }
