@@ -1,131 +1,80 @@
 import { component$ } from "@builder.io/qwik";
-import { Link, type DocumentHead, routeLoader$ } from "@builder.io/qwik-city";
+import { type DocumentHead, routeLoader$ } from "@builder.io/qwik-city";
+import { SEARCH_FILTERS, SearchFilters } from "~/components/search/SearchFilters";
+import {
+  CodeSearchSyntax,
+  SearchResults,
+} from "~/components/search/SearchResults";
 import { searchRepositories } from "~/lib/api";
 
 export const useSearchResults = routeLoader$(async ({ url }) => {
   const query = url.searchParams.get("q")?.trim() ?? "";
   const type = url.searchParams.get("type")?.trim() || "repositories";
+  const activeType = SEARCH_FILTERS.some((filter) => filter.id === type)
+    ? type
+    : "repositories";
+  const results = await searchRepositories(query, activeType).catch(() => null);
 
-  if (!query) {
-    return {
-      query,
-      type,
-      results: null,
-    };
-  }
-
-  const results = await searchRepositories(query, type).catch(() => null);
   return {
+    activeType,
     query,
-    type,
     results,
   };
 });
 
 export default component$(() => {
   const search = useSearchResults();
-  const repositories = search.value.results?.data.repositories ?? [];
-  const users = search.value.results?.data.users ?? [];
 
   return (
-    <div class="stack">
-      <section class="hero stack">
-        <span class="eyebrow">Representative route: Search</span>
-        <h1>Search</h1>
-        <p class="muted">
-          The Qwik loader calls the Rust `/search` endpoint directly and keeps
-          the current query in the URL.
+    <div class="search-page">
+      <section>
+        <p class="search-page__eyebrow">Federated search</p>
+        <h1 class="search-page__title">Search</h1>
+        <p class="search-page__description">
+          Search repositories and users across local records and known
+          federated repository records.
         </p>
       </section>
 
-      <form action="/search" class="panel grid">
-        <label class="label">
-          Query
-          <input
-            class="control"
-            defaultValue={search.value.query}
-            name="q"
-            placeholder="repo:owner/name user:alice"
-            type="search"
-          />
-        </label>
-        <label class="label">
-          Type
-          <select class="control" name="type">
-            <option
-              selected={search.value.type === "repositories"}
-              value="repositories"
-            >
-              Repositories
-            </option>
-            <option selected={search.value.type === "users"} value="users">
-              Users
-            </option>
-          </select>
-        </label>
-        <button class="button" type="submit">
+      <form action="/search" class="search-form">
+        <input
+          class="search-form__input"
+          defaultValue={search.value.query}
+          name="q"
+          placeholder={'repo:owner/name user:alice "exact phrase" NOT fork'}
+          type="search"
+        />
+        <input name="type" type="hidden" value={search.value.activeType} />
+        <button class="search-form__submit" type="submit">
           Search
         </button>
       </form>
 
-      {search.value.query ? (
-        <>
-          <section class="panel stack">
-            <strong>Backend response</strong>
-            <p class="muted">
-              {search.value.results?.federated.description ??
-                "Search is unavailable right now."}
-            </p>
-          </section>
+      <div class="search-layout">
+        <SearchFilters
+          activeType={search.value.activeType}
+          query={search.value.query}
+        />
 
-          {search.value.type === "users" ? (
-            <section class="list-panel">
-              <div class="list-panel__header">Users</div>
-              {users.length === 0 ? (
-                <div class="list-panel__item muted">No users matched.</div>
-              ) : (
-                users.map((user) => (
-                  <article class="list-panel__item stack" key={user.id}>
-                    <strong>{user.username}</strong>
-                    <span class="muted">{user.display_name}</span>
-                  </article>
-                ))
-              )}
-            </section>
-          ) : (
-            <section class="list-panel">
-              <div class="list-panel__header">Repositories</div>
-              {repositories.length === 0 ? (
-                <div class="list-panel__item muted">
-                  No repositories matched.
-                </div>
-              ) : (
-                repositories.map((repo) => (
-                  <article
-                    class="list-panel__item stack"
-                    key={`${repo.owner_handle}/${repo.name}`}
-                  >
-                    <Link
-                      href={`/${encodeURIComponent(repo.owner_handle)}/${encodeURIComponent(repo.name)}`}
-                    >
-                      <strong>
-                        {repo.owner_handle}/{repo.name}
-                      </strong>
-                    </Link>
-                    <span class="muted">
-                      {repo.description || "No description provided."}
-                    </span>
-                  </article>
-                ))
-              )}
-            </section>
-          )}
-        </>
-      ) : null}
+        <main class="search-results">
+          {search.value.activeType === "code" ? <CodeSearchSyntax /> : null}
+          <SearchResults
+            activeType={search.value.activeType}
+            results={search.value.results}
+          />
+        </main>
+      </div>
     </div>
   );
 });
 
 export const head: DocumentHead = {
-  title: "Search · Diggit Qwik Prototype",
+  title: "Search · Diggit",
+  meta: [
+    {
+      name: "description",
+      content:
+        "Search repositories and users across local and federated Diggit records.",
+    },
+  ],
 };

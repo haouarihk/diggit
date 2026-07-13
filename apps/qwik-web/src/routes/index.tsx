@@ -1,68 +1,91 @@
 import { component$ } from "@builder.io/qwik";
-import { Link, type DocumentHead, routeLoader$ } from "@builder.io/qwik-city";
-import { listRepositories } from "~/lib/api";
+import { type DocumentHead, routeLoader$ } from "@builder.io/qwik-city";
+import { RepositoryList } from "~/components/repositories/RepositoryList";
+import { listRepositories, type Repository } from "~/lib/api";
 
-export const useRepositories = routeLoader$(async () => {
-  return listRepositories().catch(() => ({ data: [] }));
+export const useRepositories = routeLoader$(async ({ url }) => {
+  const rawQuery = url.searchParams.get("q")?.trim() ?? "";
+  const query = rawQuery.toLowerCase();
+  const repos = await listRepositories().catch(() => ({ data: [] as Repository[] }));
+  const visibleRepos = query
+    ? repos.data.filter((repo) => {
+        const haystack = [
+          repo.owner_handle,
+          repo.owner?.display_name ?? repo.owner_handle,
+          repo.name,
+          repo.description,
+          repo.visibility,
+          repo.remote_server ?? "",
+        ]
+          .join(" ")
+          .toLowerCase();
+        return haystack.includes(query);
+      })
+    : repos.data;
+
+  return {
+    query,
+    rawQuery,
+    visibleRepos,
+  };
 });
 
 export default component$(() => {
   const repositories = useRepositories();
+  const query = repositories.value.query;
+  const rawQuery = repositories.value.rawQuery;
 
   return (
-    <div class="stack">
-      <section class="hero stack">
-        <span class="eyebrow">Representative route: Home</span>
-        <h1>Repositories</h1>
-        <p class="muted">
-          This Qwik page uses a server loader against the Rust backend&apos;s
-          `/repos` contract with no Next.js proxy layer in between.
+    <div class="home-page">
+      <section class="home-hero">
+        <p class="home-hero__eyebrow">Federated Git hosting</p>
+        <h1 class="home-hero__title">Repositories</h1>
+        <p class="home-hero__description">
+          Discover local and federated repositories, create projects, and fork
+          across servers.
         </p>
       </section>
 
-      <section class="list-panel">
-        <div class="list-panel__header">Repository discovery</div>
-        {repositories.value.data.length === 0 ? (
-          <div class="list-panel__item muted">
-            No repositories were returned by the backend.
+      <div class="home-layout">
+        <section>
+          <div class="home-section-header">
+            <span>Repository discovery</span>
+            {query ? (
+              <span class="home-section-header__filter">
+                Filtering by "{rawQuery}"
+              </span>
+            ) : null}
           </div>
-        ) : (
-          repositories.value.data.map((repo) => (
-            <article
-              class="list-panel__item stack"
-              key={`${repo.owner_handle}/${repo.name}`}
-            >
-              <div class="grid">
-                <Link
-                  href={`/${encodeURIComponent(repo.owner_handle)}/${encodeURIComponent(repo.name)}`}
-                >
-                  <strong>
-                    {repo.owner_handle}/{repo.name}
-                  </strong>
-                </Link>
-                <span class="muted">
-                  {repo.description || "No description provided."}
-                </span>
-              </div>
-              <div class="muted">
-                <span>{repo.visibility}</span> ·{" "}
-                <span>{repo.default_branch}</span> ·{" "}
-                <span>{repo.stars_count} stars</span>
-              </div>
-            </article>
-          ))
-        )}
-      </section>
+          <RepositoryList
+            emptyLabel={
+              query
+                ? "No repositories matched your search."
+                : "No repositories yet."
+            }
+            repositories={repositories.value.visibleRepos}
+          />
+        </section>
+
+        <aside class="home-sidebar">
+          <section class="home-sidebar-card">
+            <h2 class="home-sidebar-card__title">Federation</h2>
+            <p class="home-sidebar-card__text">
+              Forks and pull requests can move server-to-server while
+              repositories stay owned by their local namespace.
+            </p>
+          </section>
+        </aside>
+      </div>
     </div>
   );
 });
 
 export const head: DocumentHead = {
-  title: "Repositories · Diggit Qwik Prototype",
+  title: "Diggit",
   meta: [
     {
       name: "description",
-      content: "Repository listing rendered by the Diggit Qwik prototype.",
+      content: "Federated Git hosting for cross-server forks and pull requests.",
     },
   ],
 };

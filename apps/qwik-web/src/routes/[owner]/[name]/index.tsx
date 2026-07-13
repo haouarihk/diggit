@@ -1,39 +1,93 @@
 import { component$ } from "@builder.io/qwik";
+import { type DocumentHead, routeLoader$ } from "@builder.io/qwik-city";
 import {
-  type DocumentHead,
-  routeLoader$,
-  useLocation,
-} from "@builder.io/qwik-city";
+  RepoHeader,
+  RepoPageContent,
+} from "~/components/repository/RepoHeader";
+import { RepositoryOverview } from "~/components/repository/RepositoryOverview";
 import {
   getRepository,
+  getRepositoryStats,
+  getRepositoryTree,
+  listPullRequests,
+  listRepositoryContributors,
   listRepositoryBranches,
-  publicApiBaseUrl,
+  listRepositoryLanguages,
+  listRepositoryTags,
+  type RepositoryTree,
 } from "~/lib/api";
+import { getRepositoryReadme } from "~/lib/repository-readme";
 
-export const useRepositoryRoute = routeLoader$(async ({ params }) => {
+export const useRepositoryRoute = routeLoader$(async ({ params, url }) => {
   const repository = await getRepository(params.owner, params.name).catch(() => null);
-  const branches = repository
-    ? await listRepositoryBranches(params.owner, params.name).catch(() => ({
+  if (!repository) {
+    return {
+      repository: null,
+    };
+  }
+
+  const query = url.searchParams.get("q")?.trim() ?? "";
+  const selectedRef = url.searchParams.get("ref")?.trim() || repository.default_branch;
+  const [pullRequests, branches, tags, stats, languages, contributors, tree] =
+    await Promise.all([
+      listPullRequests(params.owner, params.name, { limit: 1 }).catch(() => ({
         data: [],
-      }))
-    : { data: [] };
+        pagination: { page: 1, limit: 1, total: 0, totalPages: 0 },
+      })),
+      listRepositoryBranches(params.owner, params.name).catch(() => ({
+        data: [{ name: repository.default_branch, is_default: true, commit_sha: null }],
+      })),
+      listRepositoryTags(params.owner, params.name).catch(() => ({ data: [] })),
+      getRepositoryStats(params.owner, params.name, selectedRef).catch(() => ({
+        branches_count: 0,
+        commits_count: 0,
+        releases_count: 0,
+        tags_count: 0,
+      })),
+      listRepositoryLanguages(params.owner, params.name, selectedRef).catch(() => ({
+        data: [],
+      })),
+      listRepositoryContributors(params.owner, params.name, selectedRef).catch(
+        () => ({ data: [] }),
+      ),
+      getRepositoryTree(params.owner, params.name, selectedRef).catch(
+        (): RepositoryTree => ({
+          ref_name: selectedRef,
+          last_commit: null,
+          entries: [],
+        }),
+      ),
+    ]);
+  const readme = await getRepositoryReadme(
+    params.owner,
+    params.name,
+    selectedRef,
+    tree.entries,
+  );
 
   return {
-    branches: branches.data,
     repository,
+    branches: branches.data,
+    contributors: contributors.data,
+    languages: languages.data,
+    pullRequestsCount: pullRequests.pagination?.total ?? pullRequests.data.length,
+    query,
+    readme,
+    selectedRef,
+    stats,
+    tags: tags.data,
+    tree,
   };
 });
 
 export default component$(() => {
   const route = useRepositoryRoute();
-  const location = useLocation();
 
   if (!route.value.repository) {
     return (
-      <section className="panel stack">
-        <span className="eyebrow">Representative route: Repository detail</span>
-        <h1>Repository not found</h1>
-        <p className="muted">
+      <section class="repository-not-found">
+        <h1 class="repository-not-found__title">Repository not found</h1>
+        <p class="repository-not-found__text">
           The backend did not return a repository for this route.
         </p>
       </section>
@@ -43,58 +97,32 @@ export default component$(() => {
   const repository = route.value.repository;
 
   return (
-    <div className="stack">
-      <section className="hero stack">
-        <span className="eyebrow">Representative route: Repository detail</span>
-        <h1>
-          {repository.owner_handle}/{repository.name}
-        </h1>
-        <p className="muted">
-          {repository.description || "No repository description provided."}
-        </p>
-        <div className="muted">
-          <span>{repository.visibility}</span> ·{" "}
-          <span>{repository.default_branch}</span> ·{" "}
-          <span>{repository.stars_count} stars</span>
-        </div>
-      </section>
-
-      <section className="panel stack">
-        <strong>Clone URLs</strong>
-        <span className="muted">{repository.http_url}</span>
-        <span className="muted">{repository.ssh_url}</span>
-      </section>
-
-      <section className="list-panel">
-        <div className="list-panel__header">Branches</div>
-        {route.value.branches.length === 0 ? (
-          <div className="list-panel__item muted">
-            No branches were returned by the backend.
-          </div>
-        ) : (
-          route.value.branches.map((branch) => (
-            <article className="list-panel__item stack" key={branch.name}>
-              <strong>{branch.name}</strong>
-              <span className="muted">
-                {branch.is_default ? "Default branch" : "Branch"} ·{" "}
-                {branch.commit_sha ?? "No commit yet"}
-              </span>
-            </article>
-          ))
-        )}
-      </section>
-
-      <section className="panel stack">
-        <strong>Route metadata</strong>
-        <span className="muted">Current path: {location.url.pathname}</span>
-        <span className="muted">
-          Public API base: {publicApiBaseUrl()}
-        </span>
-      </section>
+    <div class="repository-route">
+      <RepoHeader
+        activeTab="code"
+        pullRequestsCount={route.value.pullRequestsCount}
+        repo={repository}
+      />
+      <RepoPageContent>
+        <RepositoryOverview
+          baseHref={`/${encodeURIComponent(repository.owner_handle)}/${encodeURIComponent(repository.name)}`}
+          branches={route.value.branches}
+          contributors={route.value.contributors}
+          languages={route.value.languages}
+          pullRequestsCount={route.value.pullRequestsCount}
+          query={route.value.query}
+          readme={route.value.readme}
+          repo={repository}
+          selectedRef={route.value.selectedRef}
+          stats={route.value.stats}
+          tags={route.value.tags}
+          tree={route.value.tree}
+        />
+      </RepoPageContent>
     </div>
   );
 });
 
 export const head: DocumentHead = {
-  title: "Repository · Diggit Qwik Prototype",
+  title: "Repository · Diggit",
 };
