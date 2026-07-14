@@ -1,4 +1,10 @@
-import { $, component$, isBrowser, useSignal, useTask$ } from "@builder.io/qwik";
+import {
+  $,
+  component$,
+  useOnWindow,
+  useSignal,
+  useVisibleTask$,
+} from "@builder.io/qwik";
 import { Drawer } from "~/components/ui/Drawer";
 import { getAuthToken } from "~/lib/auth-session";
 import { publicApiBaseUrl } from "~/lib/api";
@@ -36,12 +42,15 @@ export const SshKeysPanel = component$(() => {
     message.value = "";
   });
 
-  useTask$(async () => {
-    if (!isBrowser || !getAuthToken()) {
+  // eslint-disable-next-line qwik/no-use-visible-task
+  useVisibleTask$(async () => {
+    if (!getAuthToken()) {
       return;
     }
     await loadKeys();
   });
+
+  useOnWindow("diggit-auth-changed", loadKeys);
 
   const submit = $(async (_event: SubmitEvent, formElement: HTMLFormElement) => {
     const token = getAuthToken();

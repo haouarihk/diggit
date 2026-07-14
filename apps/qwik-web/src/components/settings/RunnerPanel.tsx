@@ -1,4 +1,10 @@
-import { $, component$, isBrowser, useSignal, useTask$ } from "@builder.io/qwik";
+import {
+  $,
+  component$,
+  useOnWindow,
+  useSignal,
+  useVisibleTask$,
+} from "@builder.io/qwik";
 import { getAuthToken } from "~/lib/auth-session";
 import { publicApiBaseUrl } from "~/lib/api";
 
@@ -63,13 +69,16 @@ export const RunnerPanel = component$(
       message.value = "";
     });
 
-    useTask$(async ({ track }) => {
+    // eslint-disable-next-line qwik/no-use-visible-task
+    useVisibleTask$(async ({ track }) => {
       track(() => listPath);
-      if (!isBrowser || !getAuthToken()) {
+      if (!getAuthToken()) {
         return;
       }
       await loadRunners();
     });
+
+    useOnWindow("diggit-auth-changed", loadRunners);
 
     const command = `./act_runner register --no-interactive --instance ${publicApiBaseUrl()} --token ${registrationToken.value || "<registration_token>"} --name ${scopeLabel.toLowerCase().replaceAll(" ", "-")}-runner --labels ubuntu-latest:docker://node:20-bookworm`;
     const dockerCommand = `docker run -e GITEA_INSTANCE_URL=${publicApiBaseUrl()} -e GITEA_RUNNER_REGISTRATION_TOKEN=${registrationToken.value || "<registration_token>"} -e GITEA_RUNNER_LABELS=ubuntu-latest:docker://node:20-bookworm gitea/act_runner:latest`;

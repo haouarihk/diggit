@@ -1,4 +1,10 @@
-import { $, component$, isBrowser, useSignal, useTask$ } from "@builder.io/qwik";
+import {
+  $,
+  component$,
+  useOnWindow,
+  useSignal,
+  useVisibleTask$,
+} from "@builder.io/qwik";
 import { getAuthToken } from "~/lib/auth-session";
 import { publicApiBaseUrl } from "~/lib/api";
 
@@ -38,12 +44,15 @@ export const OAuthTokensPanel = component$(() => {
     message.value = "";
   });
 
-  useTask$(async () => {
-    if (!isBrowser || !getAuthToken()) {
+  // eslint-disable-next-line qwik/no-use-visible-task
+  useVisibleTask$(async () => {
+    if (!getAuthToken()) {
       return;
     }
     await loadTokens();
   });
+
+  useOnWindow("diggit-auth-changed", loadTokens);
 
   const revokeToken = $(async (tokenRecord: OAuthToken) => {
     const token = getAuthToken();

@@ -2,32 +2,78 @@ services:
   postgres:
     image: postgres:17-alpine
     environment:
-      POSTGRES_DB: diggit
-      POSTGRES_USER: diggit
-      POSTGRES_PASSWORD: diggit
-    ports:
-      - "5432:5432"
+      POSTGRES_DB: ${POSTGRES_DB:-diggit}
+      POSTGRES_USER: ${POSTGRES_USER:-diggit}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-diggit}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U diggit -d diggit"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
       retries: 10
+      start_period: 5s
+    restart: unless-stopped
 
   redis:
     image: redis:8-alpine
-    ports:
-      - "6379:6379"
+    command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - redis_data:/data
-    command: ["redis-server", "--appendonly", "yes"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 5s
       retries: 10
-
+      start_period: 5s
+    restart: unless-stopped
+  api:
+    build: 
+      context: .
+      dockerfile: Dockerfile.api
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-diggit}:${POSTGRES_PASSWORD:-diggit}@postgres:5432/${POSTGRES_DB:-diggit}
+      REDIS_URL: redis://redis:6379
+      CACHE_TTL_SECONDS: ${CACHE_TTL_SECONDS:-60}
+      SOCIAL_PREVIEW_CACHE_TTL_SECONDS: ${SOCIAL_PREVIEW_CACHE_TTL_SECONDS:-14400}
+      APP_BASE_URL: ${APP_BASE_URL:-http://localhost:3001}
+      PUBLIC_WEB_URL: ${PUBLIC_WEB_URL:-http://localhost:3000}
+      GIT_STORAGE_PATH: ${GIT_STORAGE_PATH:-/data/git}
+      JWT_SECRET: ${JWT_SECRET}
+      ADMIN_USERNAMES: ${ADMIN_USERNAMES:-}
+      SIGNUPS_ENABLED: ${SIGNUPS_ENABLED:-true}
+      SSH_HOST: ${SSH_HOST:-0.0.0.0}
+      SSH_HOST_KEY_PATH: ${SSH_HOST_KEY_PATH:-./storage/git/ssh_host_ed25519_key}
+      SSH_PORT: ${SSH_PORT:-2223}
+      PORT: 3001
+    ports:
+      - "3001:3001"
+      # ssh port (make sure to change it in all 3 places. so that the frontend knows what port to deliver to the client. copy link feature)
+      - "${SSH_HOST:-0.0.0.0}:${SSH_PORT:-2223}:${SSH_PORT:-2223}"
+    volumes:
+      - /data/git:/data/git
+    restart: unless-stopped
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.qwik-web
+    depends_on:
+      - api
+    environment:
+      API_INTERNAL_URL: ${API_INTERNAL_URL:-http://api:3001}
+      API_URL: ${API_URL:-http://localhost:3001}
+      PUBLIC_WEB_URL: ${PUBLIC_WEB_URL:-http://localhost:3000}
+      PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:3001}
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS:-localhost,127.0.0.1}
+      PORT: 3000
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
 volumes:
   postgres_data:
   redis_data:

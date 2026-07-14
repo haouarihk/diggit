@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "pnpm --filter @diggit/web dev",
     "dev:qwik": "pnpm --filter @diggit/qwik-web dev",
+    "dev:db": "docker compose -f docker-compose-dev.yml up -d",
     "backend": "cargo run --manifest-path apps/api/Cargo.toml",
     "build": "pnpm --filter @diggit/web build",
     "build:qwik": "pnpm --filter @diggit/qwik-web build",

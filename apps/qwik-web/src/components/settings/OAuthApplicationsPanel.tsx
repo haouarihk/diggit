@@ -2,9 +2,9 @@ import {
   $,
   type PropFunction,
   component$,
-  isBrowser,
+  useOnWindow,
   useSignal,
-  useTask$,
+  useVisibleTask$,
 } from "@builder.io/qwik";
 import { Drawer } from "~/components/ui/Drawer";
 import { getAuthToken } from "~/lib/auth-session";
@@ -53,12 +53,15 @@ export const OAuthApplicationsPanel = component$(() => {
     message.value = "";
   });
 
-  useTask$(async () => {
-    if (!isBrowser || !getAuthToken()) {
+  // eslint-disable-next-line qwik/no-use-visible-task
+  useVisibleTask$(async () => {
+    if (!getAuthToken()) {
       return;
     }
     await loadApplications();
   });
+
+  useOnWindow("diggit-auth-changed", loadApplications);
 
   const createApplication = $(async (
     _event: SubmitEvent,

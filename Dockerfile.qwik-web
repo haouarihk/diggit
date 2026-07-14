@@ -22,7 +22,7 @@ COPY . .
 RUN pnpm --filter @diggit/qwik-web build
 RUN pnpm --filter @diggit/qwik-web build.preview
 
-FROM node:24-bookworm-slim AS runtime
+FROM oven/bun:1 AS runtime
 
 WORKDIR /app/apps/qwik-web
 
@@ -43,4 +43,4 @@ COPY --from=builder /app/apps/qwik-web/server ./server
 
 EXPOSE 3000
 
-CMD ["node", "./node_modules/vite/bin/vite.js", "preview", "--host", "0.0.0.0", "--port", "3000", "--strictPort"]
+CMD ["bun", "./node_modules/vite/bin/vite.js", "preview", "--host", "0.0.0.0", "--port", "3000", "--strictPort"]
