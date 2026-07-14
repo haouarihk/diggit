@@ -4,6 +4,7 @@ use russh::{
     Channel, ChannelId,
     keys::{Algorithm, PrivateKey, PublicKey, ssh_key::LineEnding},
     server::{self, Auth, Handler, Server, Session},
+    MethodKind, MethodSet,
 };
 use std::{
     collections::HashMap,
@@ -27,6 +28,7 @@ pub(crate) async fn spawn_ssh_server(
         .with_context(|| format!("failed to bind SSH listener on {bind_addr}"))?;
     let host_key = load_or_create_host_key(&state.config.ssh_host_key_path)?;
     let config = Arc::new(server::Config {
+        methods: MethodSet::from(&[MethodKind::PublicKey][..]),
         inactivity_timeout: Some(Duration::from_secs(3600)),
         // Git clients often offer every key in the local SSH agent before the
         // matching key. A multi-second rejection delay makes pushes look hung.
