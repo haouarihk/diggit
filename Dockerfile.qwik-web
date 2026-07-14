@@ -1,19 +1,26 @@
-FROM node:24-bookworm-slim AS deps
+FROM node:24-bookworm-slim AS pnpm-base
 
 WORKDIR /app
 
-RUN corepack enable
+ENV PNPM_HOME="/pnpm"
+ENV PATH="$PNPM_HOME:$PATH"
+
+RUN npm_config_fetch_retries=5 \
+  npm_config_fetch_retry_mintimeout=20000 \
+  npm_config_fetch_retry_maxtimeout=120000 \
+  npm_config_fetch_timeout=120000 \
+  npm install -g pnpm@11.3.0
+
+FROM pnpm-base AS deps
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY apps/qwik-web/package.json ./apps/qwik-web/package.json
 
 RUN pnpm install --frozen-lockfile
 
-FROM node:24-bookworm-slim AS builder
+FROM pnpm-base AS builder
 
 WORKDIR /app
-
-RUN corepack enable
 
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/apps/qwik-web/node_modules ./apps/qwik-web/node_modules
