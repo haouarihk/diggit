@@ -441,8 +441,8 @@ const DEFAULT_API_URL = "http://localhost:3001";
 export function serverApiBaseUrl() {
   return normalizeApiUrl(
     runtimeEnv("API_INTERNAL_URL") ??
-      runtimeEnv("PUBLIC_API_URL") ??
-      runtimeEnv("APP_BASE_URL"),
+      runtimeEnv("APP_BASE_URL") ??
+      runtimeEnv("PUBLIC_API_URL"),
   );
 }
 

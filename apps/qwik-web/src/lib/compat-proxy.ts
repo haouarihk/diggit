@@ -13,13 +13,11 @@ const HOP_BY_HOP_HEADERS = [
   "upgrade",
 ] as const;
 
-export async function maybeProxyCompatRequest(url: URL, request: Request) {
-  const targetPath = compatProxyPath(url.pathname);
-  if (!targetPath) {
-    return null;
-  }
-
-  const targetUrl = new URL(`${targetPath}${url.search}`, `${serverApiBaseUrl()}/`);
+export async function proxyCompatRequest(url: URL, request: Request) {
+  const targetUrl = new URL(
+    `${url.pathname}${url.search}`,
+    `${serverApiBaseUrl()}/`,
+  );
   const headers = new Headers(request.headers);
   for (const header of HOP_BY_HOP_HEADERS) {
     headers.delete(header);
@@ -46,13 +44,13 @@ export async function maybeProxyCompatRequest(url: URL, request: Request) {
   }
 }
 
-function compatProxyPath(pathname: string) {
+export function isCompatProxyPath(pathname: string) {
   if (pathname === "/oauth" || pathname.startsWith("/oauth/")) {
-    return pathname;
+    return true;
   }
 
   if (pathname === "/api/v4" || pathname.startsWith("/api/v4/")) {
-    return pathname;
+    return true;
   }
 
   if (
@@ -60,10 +58,18 @@ function compatProxyPath(pathname: string) {
       pathname,
     )
   ) {
-    return pathname;
+    return true;
   }
 
-  return null;
+  return false;
+}
+
+export async function maybeProxyCompatRequest(url: URL, request: Request) {
+  if (!isCompatProxyPath(url.pathname)) {
+    return null;
+  }
+
+  return proxyCompatRequest(url, request);
 }
 
 function methodAllowsBody(method: string) {
