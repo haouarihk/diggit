@@ -1,3 +1,5 @@
+import { browserRuntimePublicApiUrl } from "./runtime-config";
+
 export type Repository = {
   id: string;
   owner_handle: string;
@@ -441,11 +443,22 @@ export function serverApiBaseUrl() {
 }
 
 export function publicApiBaseUrl() {
-  return normalizeApiUrl(
+  const configuredUrl =
+    browserRuntimePublicApiUrl() ??
     import.meta.env.PUBLIC_API_URL ??
-      runtimeEnv("PUBLIC_API_URL") ??
-      runtimeEnv("APP_BASE_URL"),
-  );
+    runtimeEnv("PUBLIC_API_URL") ??
+    runtimeEnv("PUBLIC_WEB_URL") ??
+    runtimeEnv("APP_BASE_URL");
+
+  if (configuredUrl) {
+    return normalizeApiUrl(configuredUrl);
+  }
+
+  if (typeof window !== "undefined") {
+    return window.location.origin.replace(/\/+$/, "");
+  }
+
+  return "";
 }
 
 export async function listRepositories() {
