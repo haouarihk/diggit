@@ -11,19 +11,25 @@ import {
   listPullRequests,
   type RepositoryCommit,
 } from "~/lib/api";
+import { authTokenFromCookie } from "~/lib/server-auth";
 import { userProfileHref } from "~/lib/user-profile";
 
-export const useRepositoryCommitsPage = routeLoader$(async ({ params, url }) => {
-  const repo = await getRepository(params.owner, params.name);
+export const useRepositoryCommitsPage = routeLoader$(async ({ cookie, params, url }) => {
+  const authToken = authTokenFromCookie(cookie);
+  const repo = await getRepository(params.owner, params.name, { authToken });
   const selectedBranch = url.searchParams.get("branch")?.trim() || repo.default_branch;
   const [pullRequests, commits] = await Promise.all([
-    listPullRequests(params.owner, params.name, { limit: 1 }).catch(() => ({
+    listPullRequests(params.owner, params.name, { limit: 1 }, { authToken }).catch(
+      () => ({
       data: [],
       pagination: { page: 1, limit: 1, total: 0, totalPages: 0 },
-    })),
-    listCommits(params.owner, params.name, selectedBranch, 0).catch(() => ({
+      }),
+    ),
+    listCommits(params.owner, params.name, selectedBranch, 0, { authToken }).catch(
+      () => ({
       data: [],
-    })),
+      }),
+    ),
   ]);
 
   return {

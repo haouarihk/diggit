@@ -419,6 +419,10 @@ type Collection<T> = {
   data: T[];
 };
 
+export type ApiAuthOptions = {
+  authToken?: string | null;
+};
+
 export type PaginatedCollection<T> = Collection<T> & {
   pagination: {
     page: number;
@@ -471,9 +475,15 @@ export async function searchRepositories(query: string, type: string) {
   );
 }
 
-export async function getRepository(owner: string, name: string) {
+export async function getRepository(
+  owner: string,
+  name: string,
+  options?: ApiAuthOptions,
+) {
   return fetchServerApi<Repository>(
     `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`,
+    undefined,
+    options,
   );
 }
 
@@ -494,22 +504,37 @@ export async function listOrganizationMembers(org: string) {
 export async function listOrganizationRepositories(
   org: string,
   params?: { q?: string; sort?: string; direction?: string },
+  options?: ApiAuthOptions,
 ) {
   const searchParams = collectionParams(params);
   return fetchServerApi<Collection<Repository>>(
     `/organizations/${encodeURIComponent(org)}/repos${searchParams}`,
+    undefined,
+    options,
   );
 }
 
-export async function listRepositoryBranches(owner: string, name: string) {
+export async function listRepositoryBranches(
+  owner: string,
+  name: string,
+  options?: ApiAuthOptions,
+) {
   return fetchServerApi<Collection<RepositoryBranch>>(
     `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/branches`,
+    undefined,
+    options,
   );
 }
 
-export async function listRepositoryTags(owner: string, name: string) {
+export async function listRepositoryTags(
+  owner: string,
+  name: string,
+  options?: ApiAuthOptions,
+) {
   return fetchServerApi<Collection<RepositoryTag>>(
     `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/tags`,
+    undefined,
+    options,
   );
 }
 
@@ -524,6 +549,7 @@ export async function listReleases(
     status?: "draft" | "published" | "all";
     tag?: string;
   },
+  options?: ApiAuthOptions,
 ) {
   const searchParams = new URLSearchParams();
   if (params?.page) {
@@ -547,12 +573,21 @@ export async function listReleases(
   const query = searchParams.toString();
   return fetchServerApi<PaginatedCollection<Release>>(
     `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/releases${query ? `?${query}` : ""}`,
+    undefined,
+    options,
   );
 }
 
-export async function getRelease(owner: string, name: string, tag: string) {
+export async function getRelease(
+  owner: string,
+  name: string,
+  tag: string,
+  options?: ApiAuthOptions,
+) {
   return fetchServerApi<Release>(
     `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/releases/${encodeURIComponent(tag)}`,
+    undefined,
+    options,
   );
 }
 
@@ -566,6 +601,7 @@ export async function getRepositoryStats(
   owner: string,
   name: string,
   refName?: string,
+  options?: ApiAuthOptions,
 ) {
     const searchParams = new URLSearchParams();
     if (refName) {
@@ -574,6 +610,8 @@ export async function getRepositoryStats(
     const query = searchParams.toString();
     return fetchServerApi<RepositoryStats>(
       `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/stats${query ? `?${query}` : ""}`,
+      undefined,
+      options,
     );
 }
 
@@ -581,6 +619,7 @@ export async function listRepositoryLanguages(
   owner: string,
   name: string,
   refName?: string,
+  options?: ApiAuthOptions,
 ) {
   const searchParams = new URLSearchParams();
   if (refName) {
@@ -589,6 +628,8 @@ export async function listRepositoryLanguages(
   const query = searchParams.toString();
   return fetchServerApi<Collection<RepositoryLanguage>>(
     `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/languages${query ? `?${query}` : ""}`,
+    undefined,
+    options,
   );
 }
 
@@ -596,6 +637,7 @@ export async function listRepositoryContributors(
   owner: string,
   name: string,
   refName?: string,
+  options?: ApiAuthOptions,
 ) {
   const searchParams = new URLSearchParams();
   if (refName) {
@@ -604,12 +646,20 @@ export async function listRepositoryContributors(
   const query = searchParams.toString();
   return fetchServerApi<Collection<RepositoryContributor>>(
     `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/contributors${query ? `?${query}` : ""}`,
+    undefined,
+    options,
   );
 }
 
-export async function listRepositoryCollaborators(owner: string, name: string) {
+export async function listRepositoryCollaborators(
+  owner: string,
+  name: string,
+  options?: ApiAuthOptions,
+) {
   return fetchServerApi<Collection<Collaborator>>(
     `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/collaborators`,
+    undefined,
+    options,
   );
 }
 
@@ -618,7 +668,11 @@ export async function getRepositoryTree(
   name: string,
   refName?: string,
   path?: string,
-  options: { includeLastCommit?: boolean; recursive?: boolean } = {},
+  options: {
+    authToken?: string | null;
+    includeLastCommit?: boolean;
+    recursive?: boolean;
+  } = {},
 ) {
   const searchParams = new URLSearchParams();
   if (refName) {
@@ -636,6 +690,8 @@ export async function getRepositoryTree(
   const query = searchParams.toString();
   return fetchServerApi<RepositoryTree>(
     `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/tree${query ? `?${query}` : ""}`,
+    undefined,
+    { authToken: options.authToken },
   );
 }
 
@@ -644,6 +700,7 @@ export async function getRepositoryFile(
   name: string,
   path: string,
   refName?: string,
+  options?: ApiAuthOptions,
 ) {
   const searchParams = new URLSearchParams({ path });
   if (refName) {
@@ -651,6 +708,8 @@ export async function getRepositoryFile(
   }
   return fetchServerApi<RepositoryFile>(
     `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/contents?${searchParams.toString()}`,
+    undefined,
+    options,
   );
 }
 
@@ -659,6 +718,7 @@ export async function listCommits(
   name: string,
   refName?: string,
   limit?: number,
+  options?: ApiAuthOptions,
 ) {
   const searchParams = new URLSearchParams();
   if (refName) {
@@ -670,6 +730,8 @@ export async function listCommits(
   const query = searchParams.toString();
   return fetchServerApi<Collection<RepositoryCommit>>(
     `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/commits${query ? `?${query}` : ""}`,
+    undefined,
+    options,
   );
 }
 
@@ -689,6 +751,7 @@ export async function listPullRequests(
     q?: string;
     status?: "all" | "closed" | "merged" | "open";
   },
+  options?: ApiAuthOptions,
 ) {
   const searchParams = new URLSearchParams();
   searchParams.set("page", String(params?.page ?? 1));
@@ -705,18 +768,33 @@ export async function listPullRequests(
   const query = searchParams.toString();
   return fetchServerApi<PaginatedCollection<PullRequest>>(
     `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pull-requests?${query}`,
+    undefined,
+    options,
   );
 }
 
-export async function getPullRequest(owner: string, name: string, id: number | string) {
+export async function getPullRequest(
+  owner: string,
+  name: string,
+  id: number | string,
+  options?: ApiAuthOptions,
+) {
   return fetchServerApi<PullRequest>(
     `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pull/${encodeURIComponent(String(id))}`,
+    undefined,
+    options,
   );
 }
 
-export async function getPullRequestOptions(owner: string, name: string) {
+export async function getPullRequestOptions(
+  owner: string,
+  name: string,
+  options?: ApiAuthOptions,
+) {
   return fetchServerApi<PullRequestOptions>(
     `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pull-requests/options`,
+    undefined,
+    options,
   );
 }
 
@@ -724,6 +802,7 @@ export async function comparePullRequestBranches(
   owner: string,
   name: string,
   input: PullRequestCompareInput,
+  options?: ApiAuthOptions,
 ) {
   return fetchServerApi<RepositoryCompare>(
     `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pull-requests/compare`,
@@ -731,6 +810,7 @@ export async function comparePullRequestBranches(
       method: "POST",
       body: JSON.stringify(input),
     },
+    options,
   );
 }
 
@@ -744,6 +824,7 @@ export async function listRepositoryIssues(
     q?: string;
     status?: "open" | "closed" | "all";
   },
+  options?: ApiAuthOptions,
 ) {
   const searchParams = new URLSearchParams();
   if (params?.page) {
@@ -764,18 +845,33 @@ export async function listRepositoryIssues(
   const query = searchParams.toString();
   return fetchServerApi<PaginatedCollection<Issue>>(
     `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/issues${query ? `?${query}` : ""}`,
+    undefined,
+    options,
   );
 }
 
-export async function getRepositoryIssue(owner: string, name: string, number: number) {
+export async function getRepositoryIssue(
+  owner: string,
+  name: string,
+  number: number,
+  options?: ApiAuthOptions,
+) {
   return fetchServerApi<Issue>(
     `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/issues/${number}`,
+    undefined,
+    options,
   );
 }
 
-export async function listIssueLabels(owner: string, name: string) {
+export async function listIssueLabels(
+  owner: string,
+  name: string,
+  options?: ApiAuthOptions,
+) {
   return fetchServerApi<Collection<IssueLabel>>(
     `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/issue-labels`,
+    undefined,
+    options,
   );
 }
 
@@ -801,6 +897,7 @@ export async function listRepositoryIssueActivity(
   number: number,
   page = 1,
   limit = 100,
+  options?: ApiAuthOptions,
 ) {
   const searchParams = new URLSearchParams({
     page: String(page),
@@ -808,6 +905,8 @@ export async function listRepositoryIssueActivity(
   });
   return fetchServerApi<PaginatedCollection<ActivityItem>>(
     `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/issues/${number}/activity?${searchParams.toString()}`,
+    undefined,
+    options,
   );
 }
 
@@ -833,6 +932,7 @@ export async function listPullRequestActivity(
   id: number | string,
   page = 1,
   limit = 100,
+  options?: ApiAuthOptions,
 ) {
   const searchParams = new URLSearchParams({
     page: String(page),
@@ -840,6 +940,8 @@ export async function listPullRequestActivity(
   });
   return fetchServerApi<PaginatedCollection<ActivityItem>>(
     `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pull/${encodeURIComponent(String(id))}/activity?${searchParams.toString()}`,
+    undefined,
+    options,
   );
 }
 
@@ -852,22 +954,37 @@ export async function compareUpstream(owner: string, name: string) {
 export async function listUserRepositories(
   username: string,
   params?: { q?: string; sort?: string; direction?: string },
+  options?: ApiAuthOptions,
 ) {
   const searchParams = collectionParams(params);
   return fetchServerApi<Collection<Repository>>(
     `/users/${encodeURIComponent(username)}/repos${searchParams}`,
+    undefined,
+    options,
   );
 }
 
-export async function listRepositoryRunnerSecrets(owner: string, name: string) {
+export async function listRepositoryRunnerSecrets(
+  owner: string,
+  name: string,
+  options?: ApiAuthOptions,
+) {
   return fetchServerApi<Collection<RunnerSecret>>(
     `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/actions/secrets`,
+    undefined,
+    options,
   );
 }
 
-export async function listRepositoryRunnerVariables(owner: string, name: string) {
+export async function listRepositoryRunnerVariables(
+  owner: string,
+  name: string,
+  options?: ApiAuthOptions,
+) {
   return fetchServerApi<Collection<RunnerVariable>>(
     `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/actions/variables`,
+    undefined,
+    options,
   );
 }
 
@@ -904,11 +1021,15 @@ export function repositoryRawFileUrl(
   return `${publicApiBaseUrl()}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/raw?${searchParams.toString()}`;
 }
 
-async function fetchServerApi<T>(path: string, init?: RequestInit): Promise<T> {
+async function fetchServerApi<T>(
+  path: string,
+  init?: RequestInit,
+  options?: ApiAuthOptions,
+): Promise<T> {
   const response = await fetch(`${serverApiBaseUrl()}${path}`, {
     ...init,
     cache: "no-store",
-    headers: requestHeaders(init?.headers),
+    headers: requestHeaders(init?.headers, options?.authToken),
   });
 
   if (!response.ok) {
@@ -918,8 +1039,11 @@ async function fetchServerApi<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-function requestHeaders(headers?: HeadersInit) {
+function requestHeaders(headers?: HeadersInit, authToken?: string | null) {
   const merged = new Headers({ "content-type": "application/json" });
+  if (authToken) {
+    merged.set("authorization", `Bearer ${authToken}`);
+  }
   if (!headers) {
     return merged;
   }

@@ -3,8 +3,10 @@ import { type DocumentHead, routeLoader$ } from "@builder.io/qwik-city";
 import { RepositoryList } from "~/components/repositories/RepositoryList";
 import { NewRepositoryButton } from "~/components/users/NewRepositoryButton";
 import { getUser, listUserRepositories } from "~/lib/api";
+import { authTokenFromCookie } from "~/lib/server-auth";
 
-export const useUserProfileRoute = routeLoader$(async ({ params, url }) => {
+export const useUserProfileRoute = routeLoader$(async ({ cookie, params, url }) => {
+  const authToken = authTokenFromCookie(cookie);
   const filters = {
     q: url.searchParams.get("q")?.trim() ?? "",
     sort: url.searchParams.get("sort")?.trim() ?? "updated",
@@ -12,7 +14,9 @@ export const useUserProfileRoute = routeLoader$(async ({ params, url }) => {
   };
   const [user, repos] = await Promise.all([
     getUser(params.owner),
-    listUserRepositories(params.owner, filters).catch(() => ({ data: [] })),
+    listUserRepositories(params.owner, filters, { authToken }).catch(() => ({
+      data: [],
+    })),
   ]);
 
   return {

@@ -7,25 +7,28 @@ import {
   RepoPageContent,
 } from "~/components/repository/RepoHeader";
 import {
+  type ApiAuthOptions,
   getRelease,
   getRepository,
   listPullRequests,
   listReleases,
 } from "~/lib/api";
+import { authTokenFromCookie } from "~/lib/server-auth";
 
-export const useEditRepositoryReleasePage = routeLoader$(async ({ params }) => {
+export const useEditRepositoryReleasePage = routeLoader$(async ({ cookie, params }) => {
+  const authOptions: ApiAuthOptions = { authToken: authTokenFromCookie(cookie) };
   const [repo, pullRequests, release, releaseCount] = await Promise.all([
-    getRepository(params.owner, params.name),
-    listPullRequests(params.owner, params.name, { limit: 1 }).catch(() => ({
+    getRepository(params.owner, params.name, authOptions),
+    listPullRequests(params.owner, params.name, { limit: 1 }, authOptions).catch(() => ({
       data: [],
       pagination: { page: 1, limit: 1, total: 0, totalPages: 0 },
     })),
-    getRelease(params.owner, params.name, params.tag),
+    getRelease(params.owner, params.name, params.tag, authOptions),
     listReleases(params.owner, params.name, {
       page: 1,
       limit: 1,
       status: "published",
-    }).catch(() => ({
+    }, authOptions).catch(() => ({
       data: [],
       pagination: { page: 1, limit: 1, total: 0, totalPages: 0 },
     })),

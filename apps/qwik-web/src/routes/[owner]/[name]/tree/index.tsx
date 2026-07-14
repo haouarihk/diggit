@@ -5,10 +5,12 @@ import {
   RepoPageContent,
 } from "~/components/repository/RepoHeader";
 import { RepositoryCodeBrowser } from "~/components/repository/code/RepositoryCodeBrowser";
+import { authTokenFromCookie } from "~/lib/server-auth";
 import { loadRepositoryCodeBrowser } from "../code-browser";
 
-export const useRepositoryTreeRoute = routeLoader$(async ({ params, url }) => {
+export const useRepositoryTreeRoute = routeLoader$(async ({ cookie, params, url }) => {
   return loadRepositoryCodeBrowser(params.owner, params.name, {
+    authToken: authTokenFromCookie(cookie),
     mode: "tree",
     query: url.searchParams.get("q")?.trim() ?? "",
     ref: url.searchParams.get("ref"),

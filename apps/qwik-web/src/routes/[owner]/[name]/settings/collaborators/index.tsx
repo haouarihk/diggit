@@ -2,11 +2,13 @@ import { component$ } from "@builder.io/qwik";
 import { routeLoader$ } from "@builder.io/qwik-city";
 import { CollaboratorsPanel } from "~/components/settings/CollaboratorsPanel";
 import { listRepositoryCollaborators } from "~/lib/api";
+import { authTokenFromCookie } from "~/lib/server-auth";
 
-export const useRepositoryCollaboratorsPage = routeLoader$(async ({ params }) => {
+export const useRepositoryCollaboratorsPage = routeLoader$(async ({ cookie, params }) => {
   const collaborators = await listRepositoryCollaborators(
     params.owner,
     params.name,
+    { authToken: authTokenFromCookie(cookie) },
   ).catch(() => ({ data: [] }));
 
   return {

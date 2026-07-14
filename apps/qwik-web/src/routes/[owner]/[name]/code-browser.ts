@@ -1,4 +1,5 @@
 import {
+  type ApiAuthOptions,
   getRepository,
   getRepositoryFile,
   getRepositoryTree,
@@ -13,6 +14,7 @@ import { getRepositoryReadme } from "~/lib/repository-readme";
 type CodeBrowserMode = "blob" | "tree";
 
 type LoadRepositoryCodeBrowserOptions = {
+  authToken?: string | null;
   currentPath?: string;
   mode: CodeBrowserMode;
   query?: string;
@@ -22,9 +24,10 @@ type LoadRepositoryCodeBrowserOptions = {
 export async function loadRepositoryCodeBrowser(
   owner: string,
   name: string,
-  { currentPath = "", mode, query = "", ref }: LoadRepositoryCodeBrowserOptions,
+  { authToken, currentPath = "", mode, query = "", ref }: LoadRepositoryCodeBrowserOptions,
 ) {
-  const repository = await getRepository(owner, name).catch(() => null);
+  const authOptions: ApiAuthOptions = { authToken };
+  const repository = await getRepository(owner, name, authOptions).catch(() => null);
   if (!repository) {
     return {
       repository: null,
@@ -36,15 +39,15 @@ export async function loadRepositoryCodeBrowser(
     mode === "blob" ? parentDirectoryPath(currentPath) : currentPath || undefined;
 
   const [pullRequests, branches, tags, tree, fullTree, file] = await Promise.all([
-    listPullRequests(owner, name, { limit: 1 }).catch(() => ({
+    listPullRequests(owner, name, { limit: 1 }, authOptions).catch(() => ({
       data: [],
       pagination: { page: 1, limit: 1, total: 0, totalPages: 0 },
     })),
-    listRepositoryBranches(owner, name).catch(() => ({
+    listRepositoryBranches(owner, name, authOptions).catch(() => ({
       data: [{ name: repository.default_branch, is_default: true, commit_sha: null }],
     })),
-    listRepositoryTags(owner, name).catch(() => ({ data: [] })),
-    getRepositoryTree(owner, name, selectedRef, treePath).catch(
+    listRepositoryTags(owner, name, authOptions).catch(() => ({ data: [] })),
+    getRepositoryTree(owner, name, selectedRef, treePath, { authToken }).catch(
       (): RepositoryTree => ({
         ref_name: selectedRef,
         last_commit: null,
@@ -52,6 +55,7 @@ export async function loadRepositoryCodeBrowser(
       }),
     ),
     getRepositoryTree(owner, name, selectedRef, undefined, {
+      authToken,
       includeLastCommit: false,
       recursive: true,
     }).catch(
@@ -62,13 +66,15 @@ export async function loadRepositoryCodeBrowser(
       }),
     ),
     mode === "blob" && currentPath
-      ? getRepositoryFile(owner, name, currentPath, selectedRef).catch(() => null)
+      ? getRepositoryFile(owner, name, currentPath, selectedRef, authOptions).catch(
+          () => null,
+        )
       : Promise.resolve(null),
   ]);
 
   const readme =
     mode === "tree"
-      ? await getRepositoryReadme(owner, name, selectedRef, tree.entries)
+      ? await getRepositoryReadme(owner, name, selectedRef, tree.entries, authOptions)
       : null;
 
   return {

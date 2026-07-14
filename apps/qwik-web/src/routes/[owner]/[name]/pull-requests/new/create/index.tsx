@@ -13,13 +13,15 @@ import {
   type RepositoryCompare,
 } from "~/lib/api";
 import { decodePullRequestSource } from "~/lib/pull-request-flow";
+import { authTokenFromCookie } from "~/lib/server-auth";
 
-export const useCreatePullRequestPage = routeLoader$(async ({ params, url }) => {
+export const useCreatePullRequestPage = routeLoader$(async ({ cookie, params, url }) => {
+  const authToken = authTokenFromCookie(cookie);
   const from = url.searchParams.get("from") ?? undefined;
   const targetBranch = url.searchParams.get("targetBranch") ?? undefined;
   const [repo, pullRequests] = await Promise.all([
-    getRepository(params.owner, params.name),
-    listPullRequests(params.owner, params.name, { limit: 1 }).catch(() => ({
+    getRepository(params.owner, params.name, { authToken }),
+    listPullRequests(params.owner, params.name, { limit: 1 }, { authToken }).catch(() => ({
       data: [],
       pagination: { page: 1, limit: 1, total: 0, totalPages: 0 },
     })),
@@ -32,7 +34,7 @@ export const useCreatePullRequestPage = routeLoader$(async ({ params, url }) => 
           source_repo_url: selection.url,
           source_repository_id: selection.repositoryId,
           target_branch: targetBranch,
-        }).catch(() => null)
+        }, { authToken }).catch(() => null)
       : null;
   const defaultTitle =
     selection && targetBranch

@@ -7,6 +7,7 @@ import {
   RepoPageContent,
 } from "~/components/repository/RepoHeader";
 import {
+  type ApiAuthOptions,
   getRepository,
   listPullRequests,
   listReleases,
@@ -17,8 +18,10 @@ import {
   getReleaseSearchInput,
   parseReleaseSearchQuery,
 } from "~/lib/repo-list-query";
+import { authTokenFromCookie } from "~/lib/server-auth";
 
-export const useRepositoryReleasesPage = routeLoader$(async ({ params, url }) => {
+export const useRepositoryReleasesPage = routeLoader$(async ({ cookie, params, url }) => {
+  const authOptions: ApiAuthOptions = { authToken: authTokenFromCookie(cookie) };
   const page = url.searchParams.get("page") ?? undefined;
   const q = url.searchParams.get("q") ?? undefined;
   const rawStatus = url.searchParams.get("status") ?? undefined;
@@ -28,11 +31,13 @@ export const useRepositoryReleasesPage = routeLoader$(async ({ params, url }) =>
   const selectedPage = Number.parseInt(page ?? "1", 10) || 1;
 
   const [repo, pullRequests, releases, releaseCount, tags] = await Promise.all([
-    getRepository(params.owner, params.name),
-    listPullRequests(params.owner, params.name, { limit: 1 }).catch(() => ({
+    getRepository(params.owner, params.name, authOptions),
+    listPullRequests(params.owner, params.name, { limit: 1 }, authOptions).catch(
+      () => ({
       data: [],
       pagination: { page: 1, limit: 1, total: 0, totalPages: 0 },
-    })),
+      }),
+    ),
     listReleases(params.owner, params.name, {
       page: selectedPage,
       limit: 25,
@@ -40,13 +45,15 @@ export const useRepositoryReleasesPage = routeLoader$(async ({ params, url }) =>
       q: parsedQuery.searchText || undefined,
       status,
       tag: parsedQuery.tag || undefined,
-    }).catch(() => emptyReleases(selectedPage)),
+    }, authOptions).catch(() => emptyReleases(selectedPage)),
     listReleases(params.owner, params.name, {
       page: 1,
       limit: 1,
       status: "published",
-    }).catch(() => emptyReleases(1)),
-    listRepositoryTags(params.owner, params.name).catch(() => ({ data: [] })),
+    }, authOptions).catch(() => emptyReleases(1)),
+    listRepositoryTags(params.owner, params.name, authOptions).catch(() => ({
+      data: [],
+    })),
   ]);
 
   return {

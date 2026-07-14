@@ -7,6 +7,7 @@ import {
   RepoPageContent,
 } from "~/components/repository/RepoHeader";
 import {
+  type ApiAuthOptions,
   getRepository,
   listIssueLabels,
   listPullRequests,
@@ -17,8 +18,10 @@ import {
   getIssueSearchInput,
   parseIssueSearchQuery,
 } from "~/lib/repo-list-query";
+import { authTokenFromCookie } from "~/lib/server-auth";
 
-export const useRepositoryIssuesPage = routeLoader$(async ({ params, url }) => {
+export const useRepositoryIssuesPage = routeLoader$(async ({ cookie, params, url }) => {
+  const authOptions: ApiAuthOptions = { authToken: authTokenFromCookie(cookie) };
   const labels = url.searchParams.get("labels") ?? undefined;
   const page = url.searchParams.get("page") ?? undefined;
   const q = url.searchParams.get("q") ?? undefined;
@@ -28,8 +31,8 @@ export const useRepositoryIssuesPage = routeLoader$(async ({ params, url }) => {
   const selectedPage = Number.parseInt(page ?? "1", 10) || 1;
 
   const [repo, pullRequests, issues, issueCount, issueLabels] = await Promise.all([
-    getRepository(params.owner, params.name),
-    listPullRequests(params.owner, params.name, { limit: 1 }).catch(() =>
+    getRepository(params.owner, params.name, authOptions),
+    listPullRequests(params.owner, params.name, { limit: 1 }, authOptions).catch(() =>
       emptyPullRequests(),
     ),
     listRepositoryIssues(params.owner, params.name, {
@@ -38,13 +41,15 @@ export const useRepositoryIssuesPage = routeLoader$(async ({ params, url }) => {
       page: selectedPage,
       q: parsedQuery.searchText || undefined,
       status: parsedQuery.status ?? "all",
-    }).catch(() => emptyIssues(selectedPage)),
+    }, authOptions).catch(() => emptyIssues(selectedPage)),
     listRepositoryIssues(params.owner, params.name, {
       limit: 1,
       page: 1,
       status: "open",
-    }).catch(() => emptyIssues(1)),
-    listIssueLabels(params.owner, params.name).catch(() => ({ data: [] })),
+    }, authOptions).catch(() => emptyIssues(1)),
+    listIssueLabels(params.owner, params.name, authOptions).catch(() => ({
+      data: [],
+    })),
   ]);
 
   return {

@@ -6,6 +6,7 @@ import {
 } from "~/components/repository/RepoHeader";
 import { RepositoryOverview } from "~/components/repository/RepositoryOverview";
 import {
+  type ApiAuthOptions,
   getRepository,
   getRepositoryStats,
   getRepositoryTree,
@@ -17,9 +18,13 @@ import {
   type RepositoryTree,
 } from "~/lib/api";
 import { getRepositoryReadme } from "~/lib/repository-readme";
+import { authTokenFromCookie } from "~/lib/server-auth";
 
-export const useRepositoryRoute = routeLoader$(async ({ params, url }) => {
-  const repository = await getRepository(params.owner, params.name).catch(() => null);
+export const useRepositoryRoute = routeLoader$(async ({ cookie, params, url }) => {
+  const authOptions: ApiAuthOptions = { authToken: authTokenFromCookie(cookie) };
+  const repository = await getRepository(params.owner, params.name, authOptions).catch(
+    () => null,
+  );
   if (!repository) {
     return {
       repository: null,
@@ -30,27 +35,40 @@ export const useRepositoryRoute = routeLoader$(async ({ params, url }) => {
   const selectedRef = url.searchParams.get("ref")?.trim() || repository.default_branch;
   const [pullRequests, branches, tags, stats, languages, contributors, tree] =
     await Promise.all([
-      listPullRequests(params.owner, params.name, { limit: 1 }).catch(() => ({
+      listPullRequests(params.owner, params.name, { limit: 1 }, authOptions).catch(() => ({
         data: [],
         pagination: { page: 1, limit: 1, total: 0, totalPages: 0 },
       })),
-      listRepositoryBranches(params.owner, params.name).catch(() => ({
+      listRepositoryBranches(params.owner, params.name, authOptions).catch(() => ({
         data: [{ name: repository.default_branch, is_default: true, commit_sha: null }],
       })),
-      listRepositoryTags(params.owner, params.name).catch(() => ({ data: [] })),
-      getRepositoryStats(params.owner, params.name, selectedRef).catch(() => ({
+      listRepositoryTags(params.owner, params.name, authOptions).catch(() => ({
+        data: [],
+      })),
+      getRepositoryStats(params.owner, params.name, selectedRef, authOptions).catch(
+        () => ({
         branches_count: 0,
         commits_count: 0,
         releases_count: 0,
         tags_count: 0,
-      })),
-      listRepositoryLanguages(params.owner, params.name, selectedRef).catch(() => ({
+      }),
+      ),
+      listRepositoryLanguages(params.owner, params.name, selectedRef, authOptions).catch(
+        () => ({
         data: [],
-      })),
-      listRepositoryContributors(params.owner, params.name, selectedRef).catch(
+      }),
+      ),
+      listRepositoryContributors(
+        params.owner,
+        params.name,
+        selectedRef,
+        authOptions,
+      ).catch(
         () => ({ data: [] }),
       ),
-      getRepositoryTree(params.owner, params.name, selectedRef).catch(
+      getRepositoryTree(params.owner, params.name, selectedRef, undefined, {
+        authToken: authOptions.authToken,
+      }).catch(
         (): RepositoryTree => ({
           ref_name: selectedRef,
           last_commit: null,
@@ -63,6 +81,7 @@ export const useRepositoryRoute = routeLoader$(async ({ params, url }) => {
     params.name,
     selectedRef,
     tree.entries,
+    authOptions,
   );
 
   return {

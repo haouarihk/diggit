@@ -7,6 +7,7 @@ import {
   RepoPageContent,
 } from "~/components/repository/RepoHeader";
 import {
+  type ApiAuthOptions,
   getRepository,
   listIssueLabels,
   listPullRequests,
@@ -16,18 +17,20 @@ import {
   getPullRequestSearchInput,
   parsePullRequestSearchQuery,
 } from "~/lib/repo-list-query";
+import { authTokenFromCookie } from "~/lib/server-auth";
 
 export const useRepositoryPullRequestsPage = routeLoader$(
-  async ({ params, url }) => {
+  async ({ cookie, params, url }) => {
+    const authOptions: ApiAuthOptions = { authToken: authTokenFromCookie(cookie) };
     const page = url.searchParams.get("page") ?? undefined;
     const q = url.searchParams.get("q") ?? undefined;
     const query = getPullRequestSearchInput(q);
     const parsedQuery = parsePullRequestSearchQuery(query);
     const selectedPage = Number.parseInt(page ?? "1", 10) || 1;
 
-    const repo = await getRepository(params.owner, params.name);
+    const repo = await getRepository(params.owner, params.name, authOptions);
     const [pullRequestCount, pullRequests, labels] = await Promise.all([
-      listPullRequests(params.owner, params.name, { limit: 1 }).catch(() =>
+      listPullRequests(params.owner, params.name, { limit: 1 }, authOptions).catch(() =>
         emptyPullRequests(1),
       ),
       listPullRequests(params.owner, params.name, {
@@ -36,8 +39,10 @@ export const useRepositoryPullRequestsPage = routeLoader$(
         page: selectedPage,
         q: parsedQuery.searchText || undefined,
         status: parsedQuery.status ?? "all",
-      }).catch(() => emptyPullRequests(selectedPage)),
-      listIssueLabels(params.owner, params.name).catch(() => ({ data: [] })),
+      }, authOptions).catch(() => emptyPullRequests(selectedPage)),
+      listIssueLabels(params.owner, params.name, authOptions).catch(() => ({
+        data: [],
+      })),
     ]);
 
     return {

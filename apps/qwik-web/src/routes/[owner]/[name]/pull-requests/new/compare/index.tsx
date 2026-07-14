@@ -28,20 +28,22 @@ import {
   type PullRequestSourceMode,
   type PullRequestSourceSelection,
 } from "~/lib/pull-request-flow";
+import { authTokenFromCookie } from "~/lib/server-auth";
 
-export const useComparePullRequestPage = routeLoader$(async ({ params, url }) => {
+export const useComparePullRequestPage = routeLoader$(async ({ cookie, params, url }) => {
+  const authToken = authTokenFromCookie(cookie);
   const from = url.searchParams.get("from") ?? undefined;
   const server = url.searchParams.get("server") ?? undefined;
   const rawSourceMode = url.searchParams.get("sourceMode") ?? undefined;
   const targetBranch = url.searchParams.get("targetBranch") ?? undefined;
   const sourceMode = normalizeSourceMode(rawSourceMode);
   const [repo, pullRequests, options] = await Promise.all([
-    getRepository(params.owner, params.name),
-    listPullRequests(params.owner, params.name, { limit: 1 }).catch(() => ({
+    getRepository(params.owner, params.name, { authToken }),
+    listPullRequests(params.owner, params.name, { limit: 1 }, { authToken }).catch(() => ({
       data: [],
       pagination: { page: 1, limit: 1, total: 0, totalPages: 0 },
     })),
-    getPullRequestOptions(params.owner, params.name),
+    getPullRequestOptions(params.owner, params.name, { authToken }),
   ]);
 
   const targetBranches =
@@ -63,7 +65,7 @@ export const useComparePullRequestPage = routeLoader$(async ({ params, url }) =>
         source_repo_url: selectedSource.url,
         source_repository_id: selectedSource.repositoryId,
         target_branch: selectedTarget,
-      }).catch((error) => unavailableCompare(error))
+      }, { authToken }).catch((error) => unavailableCompare(error))
     : unavailableCompare("Choose a source branch to compare.");
 
   return {

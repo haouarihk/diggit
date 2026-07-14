@@ -7,15 +7,17 @@ import {
   RepoPageContent,
 } from "~/components/repository/RepoHeader";
 import { getPullRequestOptions, getRepository, listPullRequests } from "~/lib/api";
+import { authTokenFromCookie } from "~/lib/server-auth";
 
-export const useNewPullRequestPage = routeLoader$(async ({ params }) => {
+export const useNewPullRequestPage = routeLoader$(async ({ cookie, params }) => {
+  const authToken = authTokenFromCookie(cookie);
   const [repo, pullRequests, options] = await Promise.all([
-    getRepository(params.owner, params.name),
-    listPullRequests(params.owner, params.name, { limit: 1 }).catch(() => ({
+    getRepository(params.owner, params.name, { authToken }),
+    listPullRequests(params.owner, params.name, { limit: 1 }, { authToken }).catch(() => ({
       data: [],
       pagination: { page: 1, limit: 1, total: 0, totalPages: 0 },
     })),
-    getPullRequestOptions(params.owner, params.name),
+    getPullRequestOptions(params.owner, params.name, { authToken }),
   ]);
 
   return {

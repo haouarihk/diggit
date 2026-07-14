@@ -5,13 +5,15 @@ import {
   RepoPageContent,
 } from "~/components/repository/RepoHeader";
 import { RepositoryCodeBrowser } from "~/components/repository/code/RepositoryCodeBrowser";
+import { authTokenFromCookie } from "~/lib/server-auth";
 import {
   decodeCodeBrowserPath,
   loadRepositoryCodeBrowser,
 } from "../../code-browser";
 
-export const useRepositoryBlobRoute = routeLoader$(async ({ params, url }) => {
+export const useRepositoryBlobRoute = routeLoader$(async ({ cookie, params, url }) => {
   return loadRepositoryCodeBrowser(params.owner, params.name, {
+    authToken: authTokenFromCookie(cookie),
     currentPath: decodeCodeBrowserPath(params.path),
     mode: "blob",
     query: url.searchParams.get("q")?.trim() ?? "",

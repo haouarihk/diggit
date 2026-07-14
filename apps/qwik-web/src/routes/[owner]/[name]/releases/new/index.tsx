@@ -7,17 +7,20 @@ import {
   RepoPageContent,
 } from "~/components/repository/RepoHeader";
 import {
+  type ApiAuthOptions,
   getRepository,
   listPullRequests,
   listReleases,
   listRepositoryBranches,
   listRepositoryTags,
 } from "~/lib/api";
+import { authTokenFromCookie } from "~/lib/server-auth";
 
-export const useNewRepositoryReleasePage = routeLoader$(async ({ params }) => {
+export const useNewRepositoryReleasePage = routeLoader$(async ({ cookie, params }) => {
+  const authOptions: ApiAuthOptions = { authToken: authTokenFromCookie(cookie) };
   const [repo, pullRequests, releaseCount, tags, branches] = await Promise.all([
-    getRepository(params.owner, params.name),
-    listPullRequests(params.owner, params.name, { limit: 1 }).catch(() => ({
+    getRepository(params.owner, params.name, authOptions),
+    listPullRequests(params.owner, params.name, { limit: 1 }, authOptions).catch(() => ({
       data: [],
       pagination: { page: 1, limit: 1, total: 0, totalPages: 0 },
     })),
@@ -25,12 +28,16 @@ export const useNewRepositoryReleasePage = routeLoader$(async ({ params }) => {
       page: 1,
       limit: 1,
       status: "published",
-    }).catch(() => ({
+    }, authOptions).catch(() => ({
       data: [],
       pagination: { page: 1, limit: 1, total: 0, totalPages: 0 },
     })),
-    listRepositoryTags(params.owner, params.name).catch(() => ({ data: [] })),
-    listRepositoryBranches(params.owner, params.name).catch(() => ({ data: [] })),
+    listRepositoryTags(params.owner, params.name, authOptions).catch(() => ({
+      data: [],
+    })),
+    listRepositoryBranches(params.owner, params.name, authOptions).catch(() => ({
+      data: [],
+    })),
   ]);
 
   return {

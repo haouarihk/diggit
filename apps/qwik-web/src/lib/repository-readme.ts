@@ -1,4 +1,5 @@
 import {
+  type ApiAuthOptions,
   getRepositoryFile,
   type RepositoryFile,
   type RepositoryTreeEntry,
@@ -17,11 +18,14 @@ export async function getRepositoryReadme(
   name: string,
   refName: string,
   entries: RepositoryTreeEntry[],
+  options?: ApiAuthOptions,
 ): Promise<RepositoryFile | null> {
   const readmeEntry = findReadmeEntry(entries);
   if (!readmeEntry) {
     return null;
   }
 
-  return getRepositoryFile(owner, name, readmeEntry.path, refName).catch(() => null);
+  return getRepositoryFile(owner, name, readmeEntry.path, refName, options).catch(
+    () => null,
+  );
 }

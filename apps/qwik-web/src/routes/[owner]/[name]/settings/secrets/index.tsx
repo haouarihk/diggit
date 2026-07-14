@@ -5,11 +5,17 @@ import {
   listRepositoryRunnerSecrets,
   listRepositoryRunnerVariables,
 } from "~/lib/api";
+import { authTokenFromCookie } from "~/lib/server-auth";
 
-export const useRepositorySecretsPage = routeLoader$(async ({ params }) => {
+export const useRepositorySecretsPage = routeLoader$(async ({ cookie, params }) => {
+  const authToken = authTokenFromCookie(cookie);
   const [secrets, variables] = await Promise.all([
-    listRepositoryRunnerSecrets(params.owner, params.name).catch(() => ({ data: [] })),
-    listRepositoryRunnerVariables(params.owner, params.name).catch(() => ({ data: [] })),
+    listRepositoryRunnerSecrets(params.owner, params.name, { authToken }).catch(() => ({
+      data: [],
+    })),
+    listRepositoryRunnerVariables(params.owner, params.name, { authToken }).catch(() => ({
+      data: [],
+    })),
   ]);
 
   return {

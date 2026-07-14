@@ -6,9 +6,11 @@ import {
   getOrganization,
   listOrganizationRepositories,
 } from "~/lib/api";
+import { authTokenFromCookie } from "~/lib/server-auth";
 
 export const useOrganizationRepositoriesRoute = routeLoader$(
-  async ({ params, url }) => {
+  async ({ cookie, params, url }) => {
+    const authToken = authTokenFromCookie(cookie);
     const filters = {
       q: url.searchParams.get("q")?.trim() ?? "",
       sort: url.searchParams.get("sort")?.trim() ?? "updated",
@@ -16,7 +18,9 @@ export const useOrganizationRepositoriesRoute = routeLoader$(
     };
     const [organization, repos] = await Promise.all([
       getOrganization(params.org),
-      listOrganizationRepositories(params.org, filters).catch(() => ({ data: [] })),
+      listOrganizationRepositories(params.org, filters, { authToken }).catch(() => ({
+        data: [],
+      })),
     ]);
 
     return {

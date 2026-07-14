@@ -7,6 +7,7 @@ import {
   RepoPageContent,
 } from "~/components/repository/RepoHeader";
 import {
+  type ApiAuthOptions,
   getRepository,
   getRepositoryIssue,
   listPullRequests,
@@ -15,12 +16,14 @@ import {
   type ActivityItem,
   type Issue,
 } from "~/lib/api";
+import { authTokenFromCookie } from "~/lib/server-auth";
 
-export const useRepositoryIssuePage = routeLoader$(async ({ params }) => {
+export const useRepositoryIssuePage = routeLoader$(async ({ cookie, params }) => {
+  const authOptions: ApiAuthOptions = { authToken: authTokenFromCookie(cookie) };
   const issueNumber = Number.parseInt(params.number, 10);
   const [repo, pullRequests, issueCount, issue, activity] = await Promise.all([
-    getRepository(params.owner, params.name),
-    listPullRequests(params.owner, params.name, { limit: 1 }).catch(() => ({
+    getRepository(params.owner, params.name, authOptions),
+    listPullRequests(params.owner, params.name, { limit: 1 }, authOptions).catch(() => ({
       data: [],
       pagination: { page: 1, limit: 1, total: 0, totalPages: 0 },
     })),
@@ -28,11 +31,16 @@ export const useRepositoryIssuePage = routeLoader$(async ({ params }) => {
       page: 1,
       limit: 1,
       status: "open",
-    }).catch(() => emptyIssues()),
-    getRepositoryIssue(params.owner, params.name, issueNumber),
-    listRepositoryIssueActivity(params.owner, params.name, issueNumber, 1, 100).catch(
-      () => emptyActivity(),
-    ),
+    }, authOptions).catch(() => emptyIssues()),
+    getRepositoryIssue(params.owner, params.name, issueNumber, authOptions),
+    listRepositoryIssueActivity(
+      params.owner,
+      params.name,
+      issueNumber,
+      1,
+      100,
+      authOptions,
+    ).catch(() => emptyActivity()),
   ]);
 
   return {
