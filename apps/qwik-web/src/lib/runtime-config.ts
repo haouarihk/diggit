@@ -24,7 +24,6 @@ export function runtimeConfigScript() {
   const config: DiggitRuntimeConfig = {
     publicApiUrl: normalizeRuntimeUrl(
       runtimeEnv("PUBLIC_API_URL") ??
-        runtimeEnv("PUBLIC_WEB_URL") ??
         runtimeEnv("APP_BASE_URL"),
     ),
   };

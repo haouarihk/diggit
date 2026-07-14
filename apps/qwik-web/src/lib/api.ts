@@ -451,7 +451,6 @@ export function publicApiBaseUrl() {
     browserRuntimePublicApiUrl() ??
     import.meta.env.PUBLIC_API_URL ??
     runtimeEnv("PUBLIC_API_URL") ??
-    runtimeEnv("PUBLIC_WEB_URL") ??
     runtimeEnv("APP_BASE_URL");
 
   if (configuredUrl) {
