@@ -448,7 +448,7 @@ pub(crate) async fn get_repo(
     Path((owner, name)): Path<(String, String)>,
 ) -> ApiResult<Json<RepositoryResponse>> {
     let auth = optional_auth(&state, &headers)?;
-    enforce_rate_limit(&state, "repo-tree", &format!("{owner}/{name}"), 120, 60).await?;
+    enforce_rate_limit(&state, "repo-detail", &format!("{owner}/{name}"), 240, 60).await?;
     let repo = find_repo(&state.pool, &owner, &name).await?;
     ensure_repo_visible(&state.pool, auth.as_ref(), &repo).await?;
     let response =
