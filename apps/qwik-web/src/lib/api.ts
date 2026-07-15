@@ -1032,7 +1032,7 @@ async function fetchServerApi<T>(
   });
 
   if (!response.ok) {
-    throw new Error(`API request failed: ${response.status}`);
+    throw new Error(`API request failed: ${response.status} ${path}`);
   }
 
   return response.json() as Promise<T>;

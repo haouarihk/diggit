@@ -1,6 +1,9 @@
 import { component$ } from "@builder.io/qwik";
 import { type DocumentHead, routeLoader$ } from "@builder.io/qwik-city";
 import {
+  PrivateRepositoryNotFound,
+} from "~/components/repository/PrivateRepositoryNotFound";
+import {
   RepoHeader,
   RepoPageContent,
 } from "~/components/repository/RepoHeader";
@@ -103,14 +106,7 @@ export default component$(() => {
   const route = useRepositoryRoute();
 
   if (!route.value.repository) {
-    return (
-      <section class="repository-not-found">
-        <h1 class="repository-not-found__title">Repository not found</h1>
-        <p class="repository-not-found__text">
-          The backend did not return a repository for this route.
-        </p>
-      </section>
-    );
+    return <PrivateRepositoryNotFound />;
   }
 
   const repository = route.value.repository;
