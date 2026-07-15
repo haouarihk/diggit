@@ -5254,6 +5254,11 @@ img {
   color: var(--color-muted);
 }
 
+.repository-not-found__actions {
+  display: flex;
+  gap: 12px;
+}
+
 .eyebrow {
   display: inline-flex;
   align-items: center;

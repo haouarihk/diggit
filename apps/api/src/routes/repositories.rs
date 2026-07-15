@@ -34,6 +34,66 @@ const FIXED_COMMENT_REACTIONS: [&str; 72] = [
 const MAX_COMMENT_ATTACHMENT_BYTES: usize = 10 * 1024 * 1024;
 const MAX_RELEASE_ASSET_BYTES: usize = 100 * 1024 * 1024;
 
+fn repo_rate_limit_identity(
+    headers: &HeaderMap,
+    auth: Option<&AuthUser>,
+    owner: &str,
+    name: &str,
+) -> String {
+    let requester = auth
+        .map(|auth| format!("user:{}", auth.username))
+        .or_else(|| forwarded_rate_limit_identity(headers))
+        .unwrap_or_else(|| "anonymous".to_string());
+    format!("{requester}:{owner}/{name}")
+}
+
+fn forwarded_rate_limit_identity(headers: &HeaderMap) -> Option<String> {
+    for header_name in ["cf-connecting-ip", "x-real-ip"] {
+        if let Some(value) = header_value(headers, header_name) {
+            return Some(format!("ip:{value}"));
+        }
+    }
+
+    if let Some(value) = header_value(headers, "x-forwarded-for") {
+        let forwarded_ip = value
+            .split(',')
+            .next()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())?;
+        return Some(format!("ip:{forwarded_ip}"));
+    }
+
+    header_value(headers, "user-agent").map(|value| format!("agent:{}", hash_rate_limit_value(&value)))
+}
+
+fn header_value(headers: &HeaderMap, name: &str) -> Option<String> {
+    headers
+        .get(name)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn hash_rate_limit_value(value: &str) -> String {
+    let digest = format!("{:x}", Sha256::digest(value.as_bytes()));
+    digest[..16].to_string()
+}
+
+async fn enforce_repo_read_rate_limit(
+    state: &AppState,
+    headers: &HeaderMap,
+    auth: Option<&AuthUser>,
+    scope: &str,
+    owner: &str,
+    name: &str,
+    limit: u64,
+    window_seconds: u64,
+) -> ApiResult<()> {
+    let identity = repo_rate_limit_identity(headers, auth, owner, name);
+    enforce_rate_limit(state, scope, &identity, limit, window_seconds).await
+}
+
 pub(crate) async fn create_repo(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -448,7 +508,8 @@ pub(crate) async fn get_repo(
     Path((owner, name)): Path<(String, String)>,
 ) -> ApiResult<Json<RepositoryResponse>> {
     let auth = optional_auth(&state, &headers)?;
-    enforce_rate_limit(&state, "repo-detail", &format!("{owner}/{name}"), 240, 60).await?;
+    enforce_repo_read_rate_limit(&state, &headers, auth.as_ref(), "repo-detail", &owner, &name, 240, 60)
+        .await?;
     let repo = find_repo(&state.pool, &owner, &name).await?;
     ensure_repo_visible(&state.pool, auth.as_ref(), &repo).await?;
     let response =
@@ -463,7 +524,8 @@ pub(crate) async fn list_repo_tree(
     Query(query): Query<RepoTreeQuery>,
 ) -> ApiResult<Json<RepositoryTreeResponse>> {
     let auth = optional_auth(&state, &headers)?;
-    enforce_rate_limit(&state, "repo-tree", &format!("{owner}/{name}"), 120, 60).await?;
+    enforce_repo_read_rate_limit(&state, &headers, auth.as_ref(), "repo-tree", &owner, &name, 120, 60)
+        .await?;
     let repo = find_repo(&state.pool, &owner, &name).await?;
     ensure_repo_visible(&state.pool, auth.as_ref(), &repo).await?;
     let ref_name = query
@@ -574,7 +636,8 @@ pub(crate) async fn list_repo_tags(
     Path((owner, name)): Path<(String, String)>,
 ) -> ApiResult<Json<RepositoryTagListResponse>> {
     let auth = optional_auth(&state, &headers)?;
-    enforce_rate_limit(&state, "repo-tags", &format!("{owner}/{name}"), 120, 60).await?;
+    enforce_repo_read_rate_limit(&state, &headers, auth.as_ref(), "repo-tags", &owner, &name, 120, 60)
+        .await?;
     let repo = find_repo(&state.pool, &owner, &name).await?;
     ensure_repo_visible(&state.pool, auth.as_ref(), &repo).await?;
     let output = run_git_command(
@@ -614,7 +677,17 @@ pub(crate) async fn list_repo_branches(
     Path((owner, name)): Path<(String, String)>,
 ) -> ApiResult<Json<RepositoryBranchListResponse>> {
     let auth = optional_auth(&state, &headers)?;
-    enforce_rate_limit(&state, "repo-branches", &format!("{owner}/{name}"), 120, 60).await?;
+    enforce_repo_read_rate_limit(
+        &state,
+        &headers,
+        auth.as_ref(),
+        "repo-branches",
+        &owner,
+        &name,
+        120,
+        60,
+    )
+    .await?;
     let repo = find_repo(&state.pool, &owner, &name).await?;
     ensure_repo_visible(&state.pool, auth.as_ref(), &repo).await?;
     Ok(Json(RepositoryBranchListResponse {
@@ -629,7 +702,8 @@ pub(crate) async fn get_repo_stats(
     Query(query): Query<RepoRefQuery>,
 ) -> ApiResult<Json<RepositoryStatsResponse>> {
     let auth = optional_auth(&state, &headers)?;
-    enforce_rate_limit(&state, "repo-stats", &format!("{owner}/{name}"), 60, 60).await?;
+    enforce_repo_read_rate_limit(&state, &headers, auth.as_ref(), "repo-stats", &owner, &name, 60, 60)
+        .await?;
     let repo = find_repo(&state.pool, &owner, &name).await?;
     ensure_repo_visible(&state.pool, auth.as_ref(), &repo).await?;
     Ok(Json(
@@ -1116,10 +1190,13 @@ pub(crate) async fn compare_repo_refs(
     Path((owner, name, range)): Path<(String, String, String)>,
 ) -> ApiResult<Json<RepositoryCompareResponse>> {
     let auth = optional_auth(&state, &headers)?;
-    enforce_rate_limit(
+    enforce_repo_read_rate_limit(
         &state,
+        &headers,
+        auth.as_ref(),
         "repo-compare-refs",
-        &format!("{owner}/{name}"),
+        &owner,
+        &name,
         20,
         60,
     )
@@ -1145,7 +1222,17 @@ pub(crate) async fn list_repo_languages(
     Query(query): Query<RepoRefQuery>,
 ) -> ApiResult<Json<RepositoryLanguageListResponse>> {
     let auth = optional_auth(&state, &headers)?;
-    enforce_rate_limit(&state, "repo-languages", &format!("{owner}/{name}"), 60, 60).await?;
+    enforce_repo_read_rate_limit(
+        &state,
+        &headers,
+        auth.as_ref(),
+        "repo-languages",
+        &owner,
+        &name,
+        60,
+        60,
+    )
+    .await?;
     let repo = find_repo(&state.pool, &owner, &name).await?;
     ensure_repo_visible(&state.pool, auth.as_ref(), &repo).await?;
     Ok(Json(
@@ -1160,10 +1247,13 @@ pub(crate) async fn list_repo_contributors(
     Query(query): Query<RepoRefQuery>,
 ) -> ApiResult<Json<RepositoryContributorListResponse>> {
     let auth = optional_auth(&state, &headers)?;
-    enforce_rate_limit(
+    enforce_repo_read_rate_limit(
         &state,
+        &headers,
+        auth.as_ref(),
         "repo-contributors",
-        &format!("{owner}/{name}"),
+        &owner,
+        &name,
         60,
         60,
     )
@@ -1182,7 +1272,8 @@ pub(crate) async fn get_repo_file(
     Query(query): Query<RepoFileQuery>,
 ) -> ApiResult<Json<RepositoryFileResponse>> {
     let auth = optional_auth(&state, &headers)?;
-    enforce_rate_limit(&state, "repo-file", &format!("{owner}/{name}"), 120, 60).await?;
+    enforce_repo_read_rate_limit(&state, &headers, auth.as_ref(), "repo-file", &owner, &name, 120, 60)
+        .await?;
     let repo = find_repo(&state.pool, &owner, &name).await?;
     ensure_repo_visible(&state.pool, auth.as_ref(), &repo).await?;
     let path = normalize_repo_file_path(&query.path)?;
@@ -1217,7 +1308,8 @@ pub(crate) async fn get_repo_raw_file(
     Query(query): Query<RepoFileQuery>,
 ) -> ApiResult<Response> {
     let auth = optional_auth(&state, &headers)?;
-    enforce_rate_limit(&state, "repo-raw", &format!("{owner}/{name}"), 60, 60).await?;
+    enforce_repo_read_rate_limit(&state, &headers, auth.as_ref(), "repo-raw", &owner, &name, 60, 60)
+        .await?;
     let repo = find_repo(&state.pool, &owner, &name).await?;
     ensure_repo_visible(&state.pool, auth.as_ref(), &repo).await?;
     let path = normalize_repo_file_path(&query.path)?;
@@ -1264,10 +1356,13 @@ pub(crate) async fn get_commit_route(
     Path((owner, name, sha)): Path<(String, String, String)>,
 ) -> ApiResult<Json<RepositoryCommitDetailResponse>> {
     let auth = optional_auth(&state, &headers)?;
-    enforce_rate_limit(
+    enforce_repo_read_rate_limit(
         &state,
+        &headers,
+        auth.as_ref(),
         "repo-commit-detail",
-        &format!("{owner}/{name}"),
+        &owner,
+        &name,
         60,
         60,
     )
@@ -1286,7 +1381,8 @@ pub(crate) async fn compare_upstream(
     Path((owner, name)): Path<(String, String)>,
 ) -> ApiResult<Json<RepositoryCompareResponse>> {
     let auth = optional_auth(&state, &headers)?;
-    enforce_rate_limit(&state, "repo-compare", &format!("{owner}/{name}"), 20, 60).await?;
+    enforce_repo_read_rate_limit(&state, &headers, auth.as_ref(), "repo-compare", &owner, &name, 20, 60)
+        .await?;
     let repo = find_repo(&state.pool, &owner, &name).await?;
     ensure_repo_visible(&state.pool, auth.as_ref(), &repo).await?;
     Ok(Json(compare_repo_upstream(&state, &repo).await?))
@@ -1936,10 +2032,13 @@ pub(crate) async fn compare_pull_request(
     Json(input): Json<ComparePullRequestRequest>,
 ) -> ApiResult<Json<RepositoryCompareResponse>> {
     let auth = optional_auth(&state, &headers)?;
-    enforce_rate_limit(
+    enforce_repo_read_rate_limit(
         &state,
+        &headers,
+        auth.as_ref(),
         "repo-pr-compare",
-        &format!("{owner}/{name}"),
+        &owner,
+        &name,
         20,
         60,
     )

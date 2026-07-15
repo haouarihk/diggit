@@ -421,6 +421,7 @@ type Collection<T> = {
 
 export type ApiAuthOptions = {
   authToken?: string | null;
+  forwardedHeaders?: HeadersInit;
 };
 
 export type PaginatedCollection<T> = Collection<T> & {
@@ -437,6 +438,28 @@ declare const process: {
 };
 
 const DEFAULT_API_URL = "http://localhost:3001";
+
+export class ApiRequestError extends Error {
+  status: number;
+  path: string;
+  retryAfterSeconds: number | null;
+
+  constructor(
+    status: number,
+    path: string,
+    retryAfterSeconds: number | null = null,
+  ) {
+    super(`API request failed: ${status} ${path}`);
+    this.name = "ApiRequestError";
+    this.status = status;
+    this.path = path;
+    this.retryAfterSeconds = retryAfterSeconds;
+  }
+}
+
+export function isApiRequestError(error: unknown): error is ApiRequestError {
+  return error instanceof ApiRequestError;
+}
 
 export function serverApiBaseUrl() {
   return normalizeApiUrl(
@@ -1028,18 +1051,29 @@ async function fetchServerApi<T>(
   const response = await fetch(`${serverApiBaseUrl()}${path}`, {
     ...init,
     cache: "no-store",
-    headers: requestHeaders(init?.headers, options?.authToken),
+    headers: requestHeaders(init?.headers, options?.authToken, options?.forwardedHeaders),
   });
 
   if (!response.ok) {
-    throw new Error(`API request failed: ${response.status} ${path}`);
+    throw new ApiRequestError(
+      response.status,
+      path,
+      parseRetryAfterSeconds(response.headers.get("retry-after")),
+    );
   }
 
   return response.json() as Promise<T>;
 }
 
-function requestHeaders(headers?: HeadersInit, authToken?: string | null) {
-  const merged = new Headers({ "content-type": "application/json" });
+function requestHeaders(
+  headers?: HeadersInit,
+  authToken?: string | null,
+  forwardedHeaders?: HeadersInit,
+) {
+  const merged = new Headers(forwardedHeaders);
+  if (!merged.has("content-type")) {
+    merged.set("content-type", "application/json");
+  }
   if (authToken) {
     merged.set("authorization", `Bearer ${authToken}`);
   }
@@ -1051,6 +1085,24 @@ function requestHeaders(headers?: HeadersInit, authToken?: string | null) {
     merged.set(key, value);
   });
   return merged;
+}
+
+function parseRetryAfterSeconds(value: string | null) {
+  if (!value) {
+    return null;
+  }
+
+  const seconds = Number(value);
+  if (Number.isFinite(seconds)) {
+    return Math.max(0, Math.ceil(seconds));
+  }
+
+  const retryAt = Date.parse(value);
+  if (Number.isNaN(retryAt)) {
+    return null;
+  }
+
+  return Math.max(0, Math.ceil((retryAt - Date.now()) / 1000));
 }
 
 function normalizeApiUrl(value: string | undefined) {
