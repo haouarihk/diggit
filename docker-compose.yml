@@ -68,6 +68,7 @@ services:
       API_INTERNAL_URL: ${API_INTERNAL_URL:-http://api:3001}
       API_URL: ${API_URL:-http://localhost:3001}
       PUBLIC_WEB_URL: ${PUBLIC_WEB_URL:-http://localhost:3000}
+      ORIGIN: ${PUBLIC_WEB_URL:-http://localhost:3000}
       PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:3001}
       ALLOWED_HOSTS: ${ALLOWED_HOSTS:-localhost,127.0.0.1}
       PORT: 3000

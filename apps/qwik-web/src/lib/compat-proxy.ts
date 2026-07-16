@@ -13,7 +13,15 @@ const HOP_BY_HOP_HEADERS = [
   "upgrade",
 ] as const;
 
-export async function proxyCompatRequest(url: URL, request: Request) {
+type ProxyCompatRequestOptions = {
+  bearerToken?: string | null;
+};
+
+export async function proxyCompatRequest(
+  url: URL,
+  request: Request,
+  options?: ProxyCompatRequestOptions,
+) {
   const targetUrl = new URL(
     `${url.pathname}${url.search}`,
     `${serverApiBaseUrl()}/`,
@@ -21,6 +29,9 @@ export async function proxyCompatRequest(url: URL, request: Request) {
   const headers = new Headers(request.headers);
   for (const header of HOP_BY_HOP_HEADERS) {
     headers.delete(header);
+  }
+  if (options?.bearerToken && !headers.has("authorization")) {
+    headers.set("authorization", `Bearer ${options.bearerToken}`);
   }
 
   try {
