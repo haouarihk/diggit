@@ -685,6 +685,11 @@ fn shell_words(command: &str) -> anyhow::Result<Vec<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::state::Cache;
+    use reqwest::Client;
+    use sqlx::PgPool;
+    use std::{env, sync::Arc};
+    use tokio::time::{Duration, timeout};
 
     #[test]
     fn parses_git_upload_pack_command() {
@@ -718,5 +723,38 @@ mod tests {
             public_key_fingerprint(public_key).unwrap(),
             ssh_key_fingerprint(&openssh).unwrap()
         );
+    }
+
+    #[tokio::test]
+    async fn spawned_ssh_server_keeps_running_without_clients() {
+        let temp_root = env::temp_dir().join(format!("diggit-ssh-test-{}", Uuid::new_v4()));
+        let state = AppState {
+            pool: PgPool::connect_lazy("postgres://diggit:diggit@localhost/diggit").unwrap(),
+            config: Arc::new(Config {
+                database_url: "postgres://diggit:diggit@localhost/diggit".to_string(),
+                redis_url: None,
+                cache_ttl_seconds: 60,
+                social_preview_cache_ttl_seconds: 14_400,
+                app_base_url: "http://localhost:3001".to_string(),
+                public_web_url: "http://localhost:3000".to_string(),
+                git_storage_path: temp_root.join("git"),
+                attachment_storage_path: temp_root.join("attachments"),
+                jwt_secret: "test-secret-that-is-long-enough-for-validation".to_string(),
+                admin_usernames: vec!["alice".to_string()],
+                signups_enabled: true,
+                ssh_bind_host: "127.0.0.1".to_string(),
+                ssh_host_key_path: temp_root.join("ssh_host_ed25519_key"),
+                ssh_port: 0,
+                port: 3001,
+            }),
+            http: Client::new(),
+            cache: Cache::new(None, 60),
+        };
+
+        let mut handle = spawn_ssh_server(state).await.unwrap();
+        let result = timeout(Duration::from_millis(100), &mut handle).await;
+        assert!(result.is_err(), "SSH server task exited without clients");
+        handle.abort();
+        let _ = std::fs::remove_dir_all(temp_root);
     }
 }

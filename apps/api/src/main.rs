@@ -3,7 +3,7 @@ use std::{env, net::SocketAddr, sync::Arc};
 use reqwest::Client;
 use sqlx::postgres::PgPoolOptions;
 use tokio::fs;
-use tracing::info;
+use tracing::{error, info};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 mod config;
@@ -47,18 +47,24 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let ssh_server = spawn_ssh_server(state.clone()).await?;
+    tokio::spawn(async move {
+        match ssh_server.await {
+            Ok(Ok(())) => {
+                error!("SSH server stopped unexpectedly");
+            }
+            Ok(Err(error)) => {
+                error!(%error, "SSH server failed");
+            }
+            Err(error) => {
+                error!(%error, "SSH server join failed");
+            }
+        }
+    });
     let app = routes::router(state);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], config.port));
     let listener = tokio::net::TcpListener::bind(addr).await?;
     info!("diggit api listening on http://{}", addr);
-    tokio::select! {
-        result = axum::serve(listener, app) => {
-            result?;
-        }
-        result = ssh_server => {
-            result??;
-        }
-    }
+    axum::serve(listener, app).await?;
     Ok(())
 }
