@@ -357,8 +357,32 @@ pub(crate) fn router(state: AppState) -> Router {
             post(repositories::merge_pull_request),
         )
         .route(
+            "/repos/{owner}/{name}/pull-requests/{id}/merge-state",
+            get(repositories::get_pull_request_merge_state),
+        )
+        .route(
+            "/repos/{owner}/{name}/pull-requests/{id}/resolve-conflicts",
+            post(repositories::resolve_pull_request_conflicts),
+        )
+        .route(
+            "/repos/{owner}/{name}/pull-requests/{id}/force-rebase",
+            post(repositories::force_rebase_pull_request),
+        )
+        .route(
             "/repos/{owner}/{name}/pull/{id}/merge",
             post(repositories::merge_pull_request),
+        )
+        .route(
+            "/repos/{owner}/{name}/pull/{id}/merge-state",
+            get(repositories::get_pull_request_merge_state),
+        )
+        .route(
+            "/repos/{owner}/{name}/pull/{id}/resolve-conflicts",
+            post(repositories::resolve_pull_request_conflicts),
+        )
+        .route(
+            "/repos/{owner}/{name}/pull/{id}/force-rebase",
+            post(repositories::force_rebase_pull_request),
         )
         .route(
             "/repos/{owner}/{name}/pull-requests/{id}/comments",
@@ -468,8 +492,32 @@ pub(crate) fn router(state: AppState) -> Router {
             post(repositories::merge_pull_request),
         )
         .route(
+            "/{owner}/{name}/pull-requests/{id}/merge-state",
+            get(repositories::get_pull_request_merge_state),
+        )
+        .route(
+            "/{owner}/{name}/pull-requests/{id}/resolve-conflicts",
+            post(repositories::resolve_pull_request_conflicts),
+        )
+        .route(
+            "/{owner}/{name}/pull-requests/{id}/force-rebase",
+            post(repositories::force_rebase_pull_request),
+        )
+        .route(
             "/{owner}/{name}/pull/{id}/merge",
             post(repositories::merge_pull_request),
+        )
+        .route(
+            "/{owner}/{name}/pull/{id}/merge-state",
+            get(repositories::get_pull_request_merge_state),
+        )
+        .route(
+            "/{owner}/{name}/pull/{id}/resolve-conflicts",
+            post(repositories::resolve_pull_request_conflicts),
+        )
+        .route(
+            "/{owner}/{name}/pull/{id}/force-rebase",
+            post(repositories::force_rebase_pull_request),
         )
         .route(
             "/{owner}/{name}/pull-requests/{id}/comments",

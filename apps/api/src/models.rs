@@ -387,6 +387,32 @@ pub(crate) struct PullRequestResponse {
 }
 
 #[derive(Debug, Serialize)]
+pub(crate) struct PullRequestMergeStateResponse {
+    pub(crate) status: String,
+    pub(crate) message: Option<String>,
+    pub(crate) can_resolve: bool,
+    pub(crate) can_force_rebase: bool,
+    pub(crate) current_label: String,
+    pub(crate) incoming_label: String,
+    pub(crate) files: Vec<PullRequestConflictFileResponse>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct PullRequestConflictFileResponse {
+    pub(crate) path: String,
+    pub(crate) current_exists: bool,
+    pub(crate) incoming_exists: bool,
+    pub(crate) current_size: Option<i64>,
+    pub(crate) incoming_size: Option<i64>,
+    pub(crate) current_is_binary: bool,
+    pub(crate) incoming_is_binary: bool,
+    pub(crate) current_content: Option<String>,
+    pub(crate) incoming_content: Option<String>,
+    pub(crate) can_resolve: bool,
+    pub(crate) reason: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
 pub(crate) struct PullRequestSourceOptionResponse {
     pub(crate) repository_id: Option<Uuid>,
     pub(crate) owner_handle: String,
@@ -1088,6 +1114,24 @@ pub(crate) struct ComparePullRequestRequest {
 pub(crate) struct UpdatePullRequestRequest {
     pub(crate) status: Option<String>,
     pub(crate) labels: Option<Vec<String>>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum PullRequestConflictResolutionChoice {
+    AcceptIncoming,
+    KeepCurrent,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct PullRequestConflictResolutionInput {
+    pub(crate) path: String,
+    pub(crate) resolution: PullRequestConflictResolutionChoice,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct ResolvePullRequestConflictsRequest {
+    pub(crate) files: Vec<PullRequestConflictResolutionInput>,
 }
 
 #[derive(Debug, Deserialize)]

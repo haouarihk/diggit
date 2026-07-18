@@ -5,6 +5,30 @@ use std::{collections::HashMap, os::unix::fs::PermissionsExt, process::Stdio};
 const GIT_COMMAND_TIMEOUT_SECONDS: u64 = 30;
 const MAX_GIT_OUTPUT_BYTES: usize = 2 * 1024 * 1024;
 const MAX_RAW_FILE_BYTES: i64 = 10 * 1024 * 1024;
+pub(crate) const MAX_WEB_CONFLICT_FILE_BYTES: i64 = 800 * 1024;
+
+#[derive(Debug, Clone)]
+pub(crate) struct PullRequestMergeState {
+    pub(crate) is_mergeable: bool,
+    pub(crate) files: Vec<PullRequestMergeConflictFile>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct PullRequestMergeConflictFile {
+    pub(crate) path: String,
+    pub(crate) current: PullRequestConflictFileSide,
+    pub(crate) incoming: PullRequestConflictFileSide,
+    pub(crate) can_resolve_in_web: bool,
+    pub(crate) reason: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct PullRequestConflictFileSide {
+    pub(crate) exists: bool,
+    pub(crate) size: Option<i64>,
+    pub(crate) is_binary: bool,
+    pub(crate) content: Option<String>,
+}
 
 pub(crate) async fn create_bare_repo(
     config: &Config,
@@ -343,6 +367,479 @@ pub(crate) async fn commit_repo_file_change_in_worktree(
     .trim()
     .to_string();
     Ok(sha)
+}
+
+pub(crate) async fn pull_request_merge_state(
+    repo: &Repository,
+    current_branch: &str,
+    incoming_ref: &str,
+) -> ApiResult<PullRequestMergeState> {
+    let worktree = env::temp_dir().join(format!("diggit-pr-merge-state-{}", Uuid::now_v7()));
+    create_registered_worktree(repo, &format!("refs/heads/{current_branch}"), &worktree).await?;
+    let result = pull_request_merge_state_in_worktree(repo, current_branch, incoming_ref, &worktree).await;
+    cleanup_registered_worktree(repo, &worktree).await;
+    result
+}
+
+pub(crate) async fn resolve_pull_request_conflicts(
+    repo: &Repository,
+    current_branch: &str,
+    incoming_ref: &str,
+    incoming_label: &str,
+    author: &AuthUser,
+    resolutions: &HashMap<String, PullRequestConflictResolutionChoice>,
+) -> ApiResult<String> {
+    let worktree = env::temp_dir().join(format!("diggit-pr-resolve-{}", Uuid::now_v7()));
+    create_registered_worktree(repo, &format!("refs/heads/{current_branch}"), &worktree).await?;
+    let result = resolve_pull_request_conflicts_in_worktree(
+        repo,
+        current_branch,
+        incoming_ref,
+        incoming_label,
+        author,
+        resolutions,
+        &worktree,
+    )
+    .await;
+    cleanup_registered_worktree(repo, &worktree).await;
+    result
+}
+
+pub(crate) async fn force_rebase_branch(
+    repo: &Repository,
+    current_branch: &str,
+    incoming_ref: &str,
+    incoming_label: &str,
+    author: &AuthUser,
+) -> ApiResult<String> {
+    let worktree = env::temp_dir().join(format!("diggit-pr-rebase-{}", Uuid::now_v7()));
+    create_registered_worktree(repo, &format!("refs/heads/{current_branch}"), &worktree).await?;
+    let result =
+        force_rebase_branch_in_worktree(repo, current_branch, incoming_ref, incoming_label, author, &worktree)
+            .await;
+    cleanup_registered_worktree(repo, &worktree).await;
+    result
+}
+
+async fn pull_request_merge_state_in_worktree(
+    repo: &Repository,
+    current_branch: &str,
+    incoming_ref: &str,
+    worktree: &PathBuf,
+) -> ApiResult<PullRequestMergeState> {
+    let output = registered_worktree_output(
+        worktree,
+        &[
+            "merge".to_string(),
+            "--no-commit".to_string(),
+            "--no-ff".to_string(),
+            incoming_ref.to_string(),
+        ],
+    )
+    .await?;
+    if output.status.success() {
+        return Ok(PullRequestMergeState {
+            is_mergeable: true,
+            files: Vec::new(),
+        });
+    }
+
+    let files = collect_pull_request_conflicts(
+        repo,
+        &format!("refs/heads/{current_branch}"),
+        incoming_ref,
+        worktree,
+    )
+    .await?;
+    if files.is_empty() {
+        return Err(git_failure_error(&output, "git merge failed"));
+    }
+
+    Ok(PullRequestMergeState {
+        is_mergeable: false,
+        files,
+    })
+}
+
+async fn resolve_pull_request_conflicts_in_worktree(
+    repo: &Repository,
+    current_branch: &str,
+    incoming_ref: &str,
+    incoming_label: &str,
+    author: &AuthUser,
+    resolutions: &HashMap<String, PullRequestConflictResolutionChoice>,
+    worktree: &PathBuf,
+) -> ApiResult<String> {
+    let output = registered_worktree_output(
+        worktree,
+        &[
+            "merge".to_string(),
+            "--no-commit".to_string(),
+            "--no-ff".to_string(),
+            incoming_ref.to_string(),
+        ],
+    )
+    .await?;
+    if output.status.success() {
+        return Err(ApiError::BadRequest(
+            "pull request no longer has merge conflicts".to_string(),
+        ));
+    }
+
+    let files = collect_pull_request_conflicts(
+        repo,
+        &format!("refs/heads/{current_branch}"),
+        incoming_ref,
+        worktree,
+    )
+    .await?;
+    if files.is_empty() {
+        return Err(git_failure_error(&output, "git merge failed"));
+    }
+
+    for file in &files {
+        if !file.can_resolve_in_web {
+            return Err(ApiError::BadRequest(format!(
+                "{} must be resolved locally: {}",
+                file.path,
+                file.reason
+                    .clone()
+                    .unwrap_or_else(|| "web resolution is not available".to_string())
+            )));
+        }
+    }
+
+    for file in &files {
+        if !resolutions.contains_key(&file.path) {
+            return Err(ApiError::BadRequest(format!(
+                "missing resolution for conflicted file {}",
+                file.path
+            )));
+        }
+    }
+    for path in resolutions.keys() {
+        if !files.iter().any(|file| file.path == *path) {
+            return Err(ApiError::BadRequest(format!(
+                "{path} is not a conflicted file for this pull request"
+            )));
+        }
+    }
+
+    for file in &files {
+        let args = match resolutions.get(&file.path) {
+            Some(PullRequestConflictResolutionChoice::AcceptIncoming) => vec![
+                "checkout".to_string(),
+                "--theirs".to_string(),
+                "--".to_string(),
+                file.path.clone(),
+            ],
+            Some(PullRequestConflictResolutionChoice::KeepCurrent) => vec![
+                "checkout".to_string(),
+                "--ours".to_string(),
+                "--".to_string(),
+                file.path.clone(),
+            ],
+            None => unreachable!(),
+        };
+        run_registered_worktree_command(worktree, &args).await?;
+        run_registered_worktree_command(
+            worktree,
+            &["add".to_string(), "--".to_string(), file.path.clone()],
+        )
+        .await?;
+    }
+
+    let remaining = conflicted_paths_in_registered_worktree(worktree).await?;
+    if !remaining.is_empty() {
+        return Err(ApiError::BadRequest(format!(
+            "some merge conflicts remain unresolved: {}",
+            remaining.join(", ")
+        )));
+    }
+
+    let sha = commit_registered_worktree(
+        worktree,
+        author,
+        &format!("Resolve merge conflicts from {incoming_label} into {current_branch}"),
+    )
+    .await?;
+    update_branch_ref(repo, current_branch, &sha).await?;
+    Ok(sha)
+}
+
+async fn force_rebase_branch_in_worktree(
+    repo: &Repository,
+    current_branch: &str,
+    incoming_ref: &str,
+    incoming_label: &str,
+    author: &AuthUser,
+    worktree: &PathBuf,
+) -> ApiResult<String> {
+    let output = registered_worktree_output_with_author(
+        worktree,
+        &["rebase".to_string(), incoming_ref.to_string()],
+        author,
+    )
+    .await?;
+    if !output.status.success() {
+        let conflicted_paths = conflicted_paths_in_registered_worktree(worktree).await?;
+        if !conflicted_paths.is_empty() {
+            return Err(ApiError::Conflict(format!(
+                "rebase onto {incoming_label} failed with conflicts in {}",
+                conflicted_paths.join(", ")
+            )));
+        }
+        return Err(git_failure_error(&output, "git rebase failed"));
+    }
+
+    let sha = run_registered_worktree_command(
+        worktree,
+        &["rev-parse".to_string(), "HEAD".to_string()],
+    )
+    .await?
+    .trim()
+    .to_string();
+    update_branch_ref(repo, current_branch, &sha).await?;
+    Ok(sha)
+}
+
+async fn collect_pull_request_conflicts(
+    repo: &Repository,
+    current_ref: &str,
+    incoming_ref: &str,
+    worktree: &PathBuf,
+) -> ApiResult<Vec<PullRequestMergeConflictFile>> {
+    let mut paths = conflicted_paths_in_registered_worktree(worktree).await?;
+    paths.sort();
+    let mut files = Vec::with_capacity(paths.len());
+    for path in paths {
+        let current = conflict_file_side_for_ref(repo, &path, current_ref).await?;
+        let incoming = conflict_file_side_for_ref(repo, &path, incoming_ref).await?;
+        let reason = conflict_resolution_reason(&current, &incoming);
+        let can_resolve_in_web = reason.is_none();
+        files.push(PullRequestMergeConflictFile {
+            path,
+            current,
+            incoming,
+            can_resolve_in_web,
+            reason,
+        });
+    }
+    Ok(files)
+}
+
+async fn conflict_file_side_for_ref(
+    repo: &Repository,
+    path: &str,
+    ref_name: &str,
+) -> ApiResult<PullRequestConflictFileSide> {
+    let object = format!("{ref_name}:{path}");
+    let exists = git_command(
+        repo,
+        &["cat-file".to_string(), "-e".to_string(), object.clone()],
+    )
+    .await?;
+    if !exists.status.success() {
+        return Ok(PullRequestConflictFileSide {
+            exists: false,
+            size: None,
+            is_binary: false,
+            content: None,
+        });
+    }
+
+    let size = run_git_command(
+        repo,
+        &["cat-file".to_string(), "-s".to_string(), object.clone()],
+    )
+    .await?
+    .trim()
+    .parse::<i64>()
+    .unwrap_or(0);
+    let name = repo_path_name(path);
+    let is_binary = is_binary_extension(file_extension(&name).as_deref());
+    let content = if is_binary || size > MAX_WEB_CONFLICT_FILE_BYTES {
+        None
+    } else {
+        Some(run_git_command(repo, &["show".to_string(), object]).await?)
+    };
+
+    Ok(PullRequestConflictFileSide {
+        exists: true,
+        size: Some(size),
+        is_binary,
+        content,
+    })
+}
+
+fn conflict_resolution_reason(
+    current: &PullRequestConflictFileSide,
+    incoming: &PullRequestConflictFileSide,
+) -> Option<String> {
+    if current.is_binary || incoming.is_binary {
+        return Some("binary files must be resolved locally".to_string());
+    }
+
+    let size = current
+        .size
+        .into_iter()
+        .chain(incoming.size)
+        .max()
+        .unwrap_or(0);
+    if size > MAX_WEB_CONFLICT_FILE_BYTES {
+        return Some(format!(
+            "files larger than {} KB must be resolved locally",
+            MAX_WEB_CONFLICT_FILE_BYTES / 1024
+        ));
+    }
+
+    None
+}
+
+async fn create_registered_worktree(
+    repo: &Repository,
+    start_ref: &str,
+    worktree: &PathBuf,
+) -> ApiResult<()> {
+    if let Some(parent) = worktree.parent() {
+        fs::create_dir_all(parent).await?;
+    }
+    run_git_command(
+        repo,
+        &[
+            "worktree".to_string(),
+            "add".to_string(),
+            "--detach".to_string(),
+            worktree_path_arg(worktree),
+            start_ref.to_string(),
+        ],
+    )
+    .await
+    .map(|_| ())
+}
+
+async fn cleanup_registered_worktree(repo: &Repository, worktree: &PathBuf) {
+    let _ = run_git_command(
+        repo,
+        &[
+            "worktree".to_string(),
+            "remove".to_string(),
+            "--force".to_string(),
+            worktree_path_arg(worktree),
+        ],
+    )
+    .await;
+    let _ = fs::remove_dir_all(worktree).await;
+}
+
+async fn conflicted_paths_in_registered_worktree(worktree: &PathBuf) -> ApiResult<Vec<String>> {
+    Ok(run_registered_worktree_command(
+        worktree,
+        &[
+            "diff".to_string(),
+            "--name-only".to_string(),
+            "--diff-filter=U".to_string(),
+        ],
+    )
+    .await?
+    .lines()
+    .map(str::trim)
+    .filter(|line| !line.is_empty())
+    .map(ToOwned::to_owned)
+    .collect())
+}
+
+async fn commit_registered_worktree(
+    worktree: &PathBuf,
+    author: &AuthUser,
+    message: &str,
+) -> ApiResult<String> {
+    let output = registered_worktree_output_with_author(
+        worktree,
+        &[
+            "commit".to_string(),
+            "-m".to_string(),
+            message.to_string(),
+        ],
+        author,
+    )
+    .await?;
+    if !output.status.success() {
+        return Err(git_failure_error(&output, "git commit failed"));
+    }
+
+    Ok(run_registered_worktree_command(
+        worktree,
+        &["rev-parse".to_string(), "HEAD".to_string()],
+    )
+    .await?
+    .trim()
+    .to_string())
+}
+
+async fn update_branch_ref(repo: &Repository, branch: &str, sha: &str) -> ApiResult<()> {
+    run_git_command(
+        repo,
+        &[
+            "update-ref".to_string(),
+            format!("refs/heads/{branch}"),
+            sha.to_string(),
+        ],
+    )
+    .await
+    .map(|_| ())
+}
+
+async fn run_registered_worktree_command(worktree: &PathBuf, args: &[String]) -> ApiResult<String> {
+    let output = registered_worktree_output(worktree, args).await?;
+    if !output.status.success() {
+        return Err(git_failure_error(
+            &output,
+            "git worktree command failed",
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+async fn registered_worktree_output(
+    worktree: &PathBuf,
+    args: &[String],
+) -> ApiResult<std::process::Output> {
+    let mut command = Command::new("git");
+    command.arg("-C").arg(worktree);
+    for arg in args {
+        command.arg(arg);
+    }
+    timeout_command(command).await
+}
+
+async fn registered_worktree_output_with_author(
+    worktree: &PathBuf,
+    args: &[String],
+    author: &AuthUser,
+) -> ApiResult<std::process::Output> {
+    let mut command = Command::new("git");
+    command
+        .arg("-C")
+        .arg(worktree)
+        .env("GIT_AUTHOR_NAME", &author.username)
+        .env(
+            "GIT_AUTHOR_EMAIL",
+            format!("{}@diggit.local", author.username),
+        )
+        .env("GIT_COMMITTER_NAME", &author.username)
+        .env(
+            "GIT_COMMITTER_EMAIL",
+            format!("{}@diggit.local", author.username),
+        );
+    for arg in args {
+        command.arg(arg);
+    }
+    timeout_command(command).await
+}
+
+fn worktree_path_arg(worktree: &PathBuf) -> String {
+    worktree.to_string_lossy().to_string()
 }
 
 pub(crate) async fn resolve_git_ref(
@@ -1705,6 +2202,7 @@ pub(crate) fn media_type_for_path(path: &str) -> String {
 mod tests {
     use super::*;
     use std::os::unix::process::ExitStatusExt;
+    use std::path::{Path, PathBuf};
 
     #[test]
     fn parses_ahead_behind_counts() {
@@ -1778,5 +2276,306 @@ index 1111111..2222222 100644
             git_failure_error(&output, "git merge failed"),
             ApiError::Conflict(_)
         ));
+    }
+
+    #[test]
+    fn conflict_resolution_reason_blocks_binary_and_large_files() {
+        let text = PullRequestConflictFileSide {
+            exists: true,
+            size: Some(128),
+            is_binary: false,
+            content: Some("hello".to_string()),
+        };
+        let binary = PullRequestConflictFileSide {
+            exists: true,
+            size: Some(128),
+            is_binary: true,
+            content: None,
+        };
+        assert_eq!(
+            conflict_resolution_reason(&text, &binary).as_deref(),
+            Some("binary files must be resolved locally")
+        );
+
+        let large = PullRequestConflictFileSide {
+            exists: true,
+            size: Some(MAX_WEB_CONFLICT_FILE_BYTES + 1),
+            is_binary: false,
+            content: None,
+        };
+        assert_eq!(
+            conflict_resolution_reason(&text, &large).as_deref(),
+            Some("files larger than 800 KB must be resolved locally")
+        );
+    }
+
+    #[tokio::test]
+    async fn detects_pull_request_conflicts_in_registered_worktree() {
+        let (root, repo) = create_conflict_repo("detect").await;
+        let target_ref = fetch_upstream_ref(&repo, &repo.local_path, "main")
+            .await
+            .unwrap();
+
+        let merge_state = pull_request_merge_state(&repo, "feature", &target_ref)
+            .await
+            .unwrap();
+
+        assert!(!merge_state.is_mergeable);
+        assert_eq!(merge_state.files.len(), 1);
+        assert_eq!(merge_state.files[0].path, "conflict.txt");
+        assert!(merge_state.files[0].can_resolve_in_web);
+        assert_eq!(
+            merge_state.files[0].current.content.as_deref(),
+            Some("feature change\n")
+        );
+        assert_eq!(
+            merge_state.files[0].incoming.content.as_deref(),
+            Some("main change\n")
+        );
+
+        cleanup_test_repo(root).await;
+    }
+
+    #[tokio::test]
+    async fn resolves_pull_request_conflicts_with_selected_version() {
+        let (root, repo) = create_conflict_repo("resolve").await;
+        let target_ref = fetch_upstream_ref(&repo, &repo.local_path, "main")
+            .await
+            .unwrap();
+        let auth = test_auth_user();
+        let mut resolutions = HashMap::new();
+        resolutions.insert(
+            "conflict.txt".to_string(),
+            PullRequestConflictResolutionChoice::KeepCurrent,
+        );
+
+        let commit_sha = resolve_pull_request_conflicts(
+            &repo,
+            "feature",
+            &target_ref,
+            "main",
+            &auth,
+            &resolutions,
+        )
+        .await
+        .unwrap();
+
+        let head = resolve_git_ref(&repo, Some("refs/heads/feature"))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(head, commit_sha);
+        let file = repo_file_response(&repo, "conflict.txt", Some("refs/heads/feature"))
+            .await
+            .unwrap();
+        assert_eq!(file.content, "feature change\n");
+
+        cleanup_test_repo(root).await;
+    }
+
+    #[tokio::test]
+    async fn force_rebase_branch_replays_clean_commits() {
+        let (root, repo) = create_clean_rebase_repo("rebase-success").await;
+        let before = resolve_git_ref(&repo, Some("refs/heads/feature"))
+            .await
+            .unwrap()
+            .unwrap();
+        let target_ref = fetch_upstream_ref(&repo, &repo.local_path, "main")
+            .await
+            .unwrap();
+
+        let commit_sha = force_rebase_branch(
+            &repo,
+            "feature",
+            &target_ref,
+            "main",
+            &test_auth_user(),
+        )
+        .await
+        .unwrap();
+
+        let after = resolve_git_ref(&repo, Some("refs/heads/feature"))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(after, commit_sha);
+        assert_ne!(after, before);
+        let feature_file = repo_file_response(&repo, "feature.txt", Some("refs/heads/feature"))
+            .await
+            .unwrap();
+        assert_eq!(feature_file.content, "feature branch only\n");
+
+        cleanup_test_repo(root).await;
+    }
+
+    #[tokio::test]
+    async fn force_rebase_branch_returns_conflict_for_conflicting_history() {
+        let (root, repo) = create_conflict_repo("rebase-failure").await;
+        let target_ref = fetch_upstream_ref(&repo, &repo.local_path, "main")
+            .await
+            .unwrap();
+
+        let error = force_rebase_branch(
+            &repo,
+            "feature",
+            &target_ref,
+            "main",
+            &test_auth_user(),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(matches!(error, ApiError::Conflict(_)));
+
+        cleanup_test_repo(root).await;
+    }
+
+    async fn create_conflict_repo(label: &str) -> (PathBuf, Repository) {
+        let (root, repo, worktree) = create_test_repo(label).await;
+        write_and_commit(&worktree, "conflict.txt", "base\n", "base commit").await;
+        push_branch(&worktree, "main").await;
+
+        run_test_git(Some(&worktree), &["checkout", "-b", "feature"]).await;
+        write_and_commit(
+            &worktree,
+            "conflict.txt",
+            "feature change\n",
+            "feature change",
+        )
+        .await;
+        push_branch(&worktree, "feature").await;
+
+        run_test_git(Some(&worktree), &["checkout", "main"]).await;
+        write_and_commit(&worktree, "conflict.txt", "main change\n", "main change").await;
+        push_branch(&worktree, "main").await;
+
+        (root, repo)
+    }
+
+    async fn create_clean_rebase_repo(label: &str) -> (PathBuf, Repository) {
+        let (root, repo, worktree) = create_test_repo(label).await;
+        write_and_commit(&worktree, "main.txt", "base\n", "base commit").await;
+        push_branch(&worktree, "main").await;
+
+        run_test_git(Some(&worktree), &["checkout", "-b", "feature"]).await;
+        write_and_commit(
+            &worktree,
+            "feature.txt",
+            "feature branch only\n",
+            "feature file",
+        )
+        .await;
+        push_branch(&worktree, "feature").await;
+
+        run_test_git(Some(&worktree), &["checkout", "main"]).await;
+        write_and_commit(&worktree, "main.txt", "main branch update\n", "main change").await;
+        push_branch(&worktree, "main").await;
+
+        (root, repo)
+    }
+
+    async fn create_test_repo(label: &str) -> (PathBuf, Repository, PathBuf) {
+        let root = env::temp_dir().join(format!("diggit-git-tests-{label}-{}", Uuid::now_v7()));
+        let bare = root.join("repo.git");
+        let worktree = root.join("worktree");
+        fs::create_dir_all(&root).await.unwrap();
+
+        run_test_git(
+            None,
+            &[
+                "init",
+                "--bare",
+                "--initial-branch=main",
+                bare.to_string_lossy().as_ref(),
+            ],
+        )
+        .await;
+        run_test_git(
+            None,
+            &[
+                "clone",
+                bare.to_string_lossy().as_ref(),
+                worktree.to_string_lossy().as_ref(),
+            ],
+        )
+        .await;
+        run_test_git(Some(&worktree), &["config", "user.name", "Diggit Test"]).await;
+        run_test_git(
+            Some(&worktree),
+            &["config", "user.email", "diggit-tests@example.com"],
+        )
+        .await;
+
+        (root, test_repository(&bare), worktree)
+    }
+
+    async fn write_and_commit(worktree: &Path, path: &str, content: &str, message: &str) {
+        let file_path = worktree.join(path);
+        if let Some(parent) = file_path.parent() {
+            fs::create_dir_all(parent).await.unwrap();
+        }
+        fs::write(&file_path, content).await.unwrap();
+        run_test_git(Some(worktree), &["add", "--", path]).await;
+        run_test_git(Some(worktree), &["commit", "-m", message]).await;
+    }
+
+    async fn push_branch(worktree: &Path, branch: &str) {
+        run_test_git(Some(worktree), &["push", "-u", "origin", branch]).await;
+    }
+
+    async fn run_test_git(cwd: Option<&Path>, args: &[&str]) -> String {
+        let mut command = Command::new("git");
+        if let Some(cwd) = cwd {
+            command.current_dir(cwd);
+        }
+        for arg in args {
+            command.arg(arg);
+        }
+        let output = command.output().await.unwrap();
+        assert!(
+            output.status.success(),
+            "git {:?} failed\nstdout: {}\nstderr: {}",
+            args,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).to_string()
+    }
+
+    async fn cleanup_test_repo(root: PathBuf) {
+        let _ = fs::remove_dir_all(root).await;
+    }
+
+    fn test_repository(path: &Path) -> Repository {
+        Repository {
+            id: Uuid::now_v7(),
+            namespace_id: None,
+            owner_id: None,
+            owner_handle: "tester".to_string(),
+            name: "repo".to_string(),
+            description: String::new(),
+            visibility: "public".to_string(),
+            default_branch: "main".to_string(),
+            issues_enabled: true,
+            pull_requests_enabled: true,
+            pull_request_policy: "anyone".to_string(),
+            archived_at: None,
+            dominant_language: String::new(),
+            stars_count: 0,
+            local_path: path.to_string_lossy().to_string(),
+            remote_url: None,
+            remote_server: None,
+            source_repository_id: None,
+            source_remote_url: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }
+    }
+
+    fn test_auth_user() -> AuthUser {
+        AuthUser {
+            id: Uuid::now_v7(),
+            username: "diggit-tester".to_string(),
+        }
     }
 }

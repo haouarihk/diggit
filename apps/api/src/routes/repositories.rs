@@ -12,7 +12,7 @@ use pulldown_cmark::{Options as MarkdownOptions, Parser as MarkdownParser, html}
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use sqlx::Row;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Path as FsPath, PathBuf};
 use tokio::fs;
 use uuid::Uuid;
@@ -2231,6 +2231,149 @@ pub(crate) async fn merge_pull_request(
     });
     Ok(Json(
         pull_request_response(&state, &target, response_pr, Some(&auth)).await?,
+    ))
+}
+
+pub(crate) async fn get_pull_request_merge_state(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((owner, name, id)): Path<(String, String, i64)>,
+) -> ApiResult<Json<PullRequestMergeStateResponse>> {
+    let auth = optional_auth(&state, &headers)?;
+    enforce_repo_read_rate_limit(
+        &state,
+        &headers,
+        auth.as_ref(),
+        "pr-merge-state",
+        &owner,
+        &name,
+        60,
+        60,
+    )
+    .await?;
+    let target = find_repo(&state.pool, &owner, &name).await?;
+    ensure_repo_visible(&state.pool, auth.as_ref(), &target).await?;
+    let pr = find_pull_request(&state, target.id, id).await?;
+    Ok(Json(
+        pull_request_merge_state_response(&state, &target, &pr, auth.as_ref()).await?,
+    ))
+}
+
+pub(crate) async fn resolve_pull_request_conflicts(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((owner, name, id)): Path<(String, String, i64)>,
+    Json(input): Json<ResolvePullRequestConflictsRequest>,
+) -> ApiResult<Json<PullRequestMergeStateResponse>> {
+    let auth = require_auth(&state, &headers)?;
+    enforce_rate_limit(&state, "pr-resolve-conflicts", &auth.username, 20, 300).await?;
+    let target = find_repo(&state.pool, &owner, &name).await?;
+    ensure_repo_visible(&state.pool, Some(&auth), &target).await?;
+    let pr = find_pull_request(&state, target.id, id).await?;
+    if pr.status != "open" {
+        return Err(ApiError::BadRequest(
+            "only open pull requests can resolve conflicts".to_string(),
+        ));
+    }
+
+    let source = require_local_pull_request_source_repository(&state, &pr, Some(&auth)).await?;
+    ensure_repo_writer(&state, &auth, &source).await?;
+    let target_ref = fetch_upstream_ref(&source, &target.local_path, &pr.target_branch).await?;
+    let resolutions = normalize_pull_request_conflict_resolutions(&input)?;
+    let commit_sha = crate::services::resolve_pull_request_conflicts(
+        &source,
+        &pr.source_branch,
+        &target_ref,
+        &pr.target_branch,
+        &auth,
+        &resolutions,
+    )
+    .await?;
+    record_commit_author(&state, &source, &auth, &commit_sha).await?;
+    sqlx::query("UPDATE repositories SET updated_at = now() WHERE id = $1")
+        .bind(source.id)
+        .execute(&state.pool)
+        .await?;
+    invalidate_repo_cache(&state, &source.owner_handle, &source.name).await;
+    invalidate_repo_cache(&state, &target.owner_handle, &target.name).await;
+
+    let timeline_author = issue_author(&state, &RepoActionAuth::Local(auth.clone())).await?;
+    record_timeline_event(
+        &state,
+        target.id,
+        None,
+        Some(pr.id),
+        &timeline_author,
+        "resolved_conflicts",
+        format!(
+            "resolved merge conflicts from {} into {}",
+            pr.target_branch, pr.source_branch
+        ),
+        json!({
+            "commit_sha": commit_sha,
+            "source_branch": pr.source_branch,
+            "target_branch": pr.target_branch,
+            "resolved_files": input.files.iter().map(|file| file.path.clone()).collect::<Vec<_>>()
+        }),
+    )
+    .await?;
+
+    let refreshed_pr = find_pull_request(&state, target.id, id).await?;
+    Ok(Json(
+        pull_request_merge_state_response(&state, &target, &refreshed_pr, Some(&auth)).await?,
+    ))
+}
+
+pub(crate) async fn force_rebase_pull_request(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((owner, name, id)): Path<(String, String, i64)>,
+) -> ApiResult<Json<PullRequestMergeStateResponse>> {
+    let auth = require_auth(&state, &headers)?;
+    enforce_rate_limit(&state, "pr-force-rebase", &auth.username, 10, 300).await?;
+    let target = find_repo(&state.pool, &owner, &name).await?;
+    ensure_repo_visible(&state.pool, Some(&auth), &target).await?;
+    let pr = find_pull_request(&state, target.id, id).await?;
+    if pr.status != "open" {
+        return Err(ApiError::BadRequest(
+            "only open pull requests can be rebased".to_string(),
+        ));
+    }
+
+    let source = require_local_pull_request_source_repository(&state, &pr, Some(&auth)).await?;
+    ensure_repo_writer(&state, &auth, &source).await?;
+    let target_ref = fetch_upstream_ref(&source, &target.local_path, &pr.target_branch).await?;
+    let commit_sha =
+        crate::services::force_rebase_branch(&source, &pr.source_branch, &target_ref, &pr.target_branch, &auth)
+            .await?;
+    record_commit_author(&state, &source, &auth, &commit_sha).await?;
+    sqlx::query("UPDATE repositories SET updated_at = now() WHERE id = $1")
+        .bind(source.id)
+        .execute(&state.pool)
+        .await?;
+    invalidate_repo_cache(&state, &source.owner_handle, &source.name).await;
+    invalidate_repo_cache(&state, &target.owner_handle, &target.name).await;
+
+    let timeline_author = issue_author(&state, &RepoActionAuth::Local(auth.clone())).await?;
+    record_timeline_event(
+        &state,
+        target.id,
+        None,
+        Some(pr.id),
+        &timeline_author,
+        "rebased",
+        format!("rebased {} onto {}", pr.source_branch, pr.target_branch),
+        json!({
+            "commit_sha": commit_sha,
+            "source_branch": pr.source_branch,
+            "target_branch": pr.target_branch
+        }),
+    )
+    .await?;
+
+    let refreshed_pr = find_pull_request(&state, target.id, id).await?;
+    Ok(Json(
+        pull_request_merge_state_response(&state, &target, &refreshed_pr, Some(&auth)).await?,
     ))
 }
 
@@ -4915,6 +5058,166 @@ async fn ensure_pull_request_source_visible(
         ensure_repo_visible(&state.pool, auth, &source).await?;
     }
     Ok(())
+}
+
+async fn pull_request_merge_state_response(
+    state: &AppState,
+    target: &Repository,
+    pr: &PullRequest,
+    auth: Option<&AuthUser>,
+) -> ApiResult<PullRequestMergeStateResponse> {
+    let current_label = pr.source_branch.clone();
+    let incoming_label = pr.target_branch.clone();
+    if pr.status != "open" {
+        return Ok(PullRequestMergeStateResponse {
+            status: pr.status.clone(),
+            message: Some("Only open pull requests can be updated.".to_string()),
+            can_resolve: false,
+            can_force_rebase: false,
+            current_label,
+            incoming_label,
+            files: Vec::new(),
+        });
+    }
+
+    let Some(source) = pull_request_source_repository(state, pr).await? else {
+        return Ok(PullRequestMergeStateResponse {
+            status: "external_readonly".to_string(),
+            message: Some(
+                "Web conflict resolution is only available for Diggit-hosted source repositories."
+                    .to_string(),
+            ),
+            can_resolve: false,
+            can_force_rebase: false,
+            current_label,
+            incoming_label,
+            files: Vec::new(),
+        });
+    };
+    ensure_repo_visible(&state.pool, auth, &source).await?;
+    let can_write_source = match auth {
+        Some(auth) => can_update_pull_request(state, auth, &source).await?,
+        None => false,
+    };
+
+    let merge_state = match fetch_upstream_ref(&source, &target.local_path, &pr.target_branch).await {
+        Ok(target_ref) => match crate::services::pull_request_merge_state(
+            &source,
+            &pr.source_branch,
+            &target_ref,
+        )
+        .await
+        {
+            Ok(merge_state) => merge_state,
+            Err(error) => {
+                return Ok(PullRequestMergeStateResponse {
+                    status: "unavailable".to_string(),
+                    message: Some(error.to_string()),
+                    can_resolve: false,
+                    can_force_rebase: can_write_source,
+                    current_label,
+                    incoming_label,
+                    files: Vec::new(),
+                });
+            }
+        },
+        Err(error) => {
+            return Ok(PullRequestMergeStateResponse {
+                status: "unavailable".to_string(),
+                message: Some(error.to_string()),
+                can_resolve: false,
+                can_force_rebase: can_write_source,
+                current_label,
+                incoming_label,
+                files: Vec::new(),
+            });
+        }
+    };
+
+    let files = merge_state
+        .files
+        .into_iter()
+        .map(|file| PullRequestConflictFileResponse {
+            path: file.path,
+            current_exists: file.current.exists,
+            incoming_exists: file.incoming.exists,
+            current_size: file.current.size,
+            incoming_size: file.incoming.size,
+            current_is_binary: file.current.is_binary,
+            incoming_is_binary: file.incoming.is_binary,
+            current_content: file.current.content,
+            incoming_content: file.incoming.content,
+            can_resolve: file.can_resolve_in_web,
+            reason: file.reason,
+        })
+        .collect::<Vec<_>>();
+    let all_web_resolvable = !files.is_empty() && files.iter().all(|file| file.can_resolve);
+    let message = if merge_state.is_mergeable {
+        None
+    } else if files.iter().any(|file| !file.can_resolve) {
+        Some("Some conflicted files must be resolved locally.".to_string())
+    } else {
+        Some(format!("{} conflicted files need resolution.", files.len()))
+    };
+
+    Ok(PullRequestMergeStateResponse {
+        status: if merge_state.is_mergeable {
+            "mergeable".to_string()
+        } else {
+            "conflicts".to_string()
+        },
+        message,
+        can_resolve: can_write_source && all_web_resolvable,
+        can_force_rebase: can_write_source,
+        current_label,
+        incoming_label,
+        files,
+    })
+}
+
+async fn pull_request_source_repository(
+    state: &AppState,
+    pr: &PullRequest,
+) -> ApiResult<Option<Repository>> {
+    let Some(source_id) = pr.source_repository_id else {
+        return Ok(None);
+    };
+    Ok(Some(
+        sqlx::query_as::<_, Repository>("SELECT * FROM repositories WHERE id = $1")
+            .bind(source_id)
+            .fetch_one(&state.pool)
+            .await?,
+    ))
+}
+
+async fn require_local_pull_request_source_repository(
+    state: &AppState,
+    pr: &PullRequest,
+    auth: Option<&AuthUser>,
+) -> ApiResult<Repository> {
+    let source = pull_request_source_repository(state, pr).await?.ok_or_else(|| {
+        ApiError::BadRequest(
+            "web conflict resolution is only available for Diggit-hosted source repositories"
+                .to_string(),
+        )
+    })?;
+    ensure_repo_visible(&state.pool, auth, &source).await?;
+    Ok(source)
+}
+
+fn normalize_pull_request_conflict_resolutions(
+    input: &ResolvePullRequestConflictsRequest,
+) -> ApiResult<HashMap<String, PullRequestConflictResolutionChoice>> {
+    let mut files = HashMap::with_capacity(input.files.len());
+    for file in &input.files {
+        let path = normalize_repo_file_path(&file.path)?;
+        if files.insert(path, file.resolution).is_some() {
+            return Err(ApiError::BadRequest(
+                "duplicate conflicted file path".to_string(),
+            ));
+        }
+    }
+    Ok(files)
 }
 
 fn normalize_pull_request_list_status_filter(status: Option<&str>) -> ApiResult<Option<String>> {

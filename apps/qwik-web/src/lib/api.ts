@@ -245,6 +245,41 @@ export type PullRequest = {
   viewer_can_update: boolean;
 };
 
+export type PullRequestConflictResolutionChoice =
+  | "accept_incoming"
+  | "keep_current";
+
+export type PullRequestConflictFile = {
+  path: string;
+  current_exists: boolean;
+  incoming_exists: boolean;
+  current_size: number | null;
+  incoming_size: number | null;
+  current_is_binary: boolean;
+  incoming_is_binary: boolean;
+  current_content: string | null;
+  incoming_content: string | null;
+  can_resolve: boolean;
+  reason: string | null;
+};
+
+export type PullRequestMergeState = {
+  status:
+    | "mergeable"
+    | "conflicts"
+    | "external_readonly"
+    | "unavailable"
+    | "closed"
+    | "merged"
+    | string;
+  message: string | null;
+  can_resolve: boolean;
+  can_force_rebase: boolean;
+  current_label: string;
+  incoming_label: string;
+  files: PullRequestConflictFile[];
+};
+
 export type PullRequestSourceOption = {
   repository_id: string | null;
   owner_handle: string;
@@ -803,6 +838,43 @@ export async function getPullRequest(
 ) {
   return fetchServerApi<PullRequest>(
     `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pull/${encodeURIComponent(String(id))}`,
+    undefined,
+    options,
+  );
+}
+
+export function pullRequestMergeStateApiPath(
+  owner: string,
+  name: string,
+  id: number | string,
+) {
+  return `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pull-requests/${encodeURIComponent(String(id))}/merge-state`;
+}
+
+export function pullRequestResolveConflictsApiPath(
+  owner: string,
+  name: string,
+  id: number | string,
+) {
+  return `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pull-requests/${encodeURIComponent(String(id))}/resolve-conflicts`;
+}
+
+export function pullRequestForceRebaseApiPath(
+  owner: string,
+  name: string,
+  id: number | string,
+) {
+  return `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pull-requests/${encodeURIComponent(String(id))}/force-rebase`;
+}
+
+export async function getPullRequestMergeState(
+  owner: string,
+  name: string,
+  id: number | string,
+  options?: ApiAuthOptions,
+) {
+  return fetchServerApi<PullRequestMergeState>(
+    pullRequestMergeStateApiPath(owner, name, id),
     undefined,
     options,
   );
