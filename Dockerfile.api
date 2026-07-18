@@ -25,7 +25,8 @@ COPY apps/api/src ./apps/api/src
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
   --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
   --mount=type=cache,target=/app/apps/api/target,sharing=locked \
-  cargo build --release --locked --manifest-path apps/api/Cargo.toml
+  cargo build --release --locked --manifest-path apps/api/Cargo.toml \
+  && cp /app/apps/api/target/release/diggit-api /tmp/diggit-api
 
 FROM debian:bookworm-slim AS runtime
 
