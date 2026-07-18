@@ -67,24 +67,6 @@ export const PullRequestDetailPanel = component$(
       (mergeState.value.can_force_rebase || mergeState.value.files.length > 0);
     const mergeBlockedByConflicts = mergeState.value.status === "conflicts";
 
-    const refreshMergeState = async (token?: string | null) => {
-      const response = await fetch(
-        `${publicApiBaseUrl()}${pullRequestMergeStateApiPath(owner, name, pullRequest.value.id)}`,
-        {
-          headers: token ? { authorization: `Bearer ${token}` } : undefined,
-        },
-      );
-      if (!response.ok) {
-        mergeState.value = unavailableMergeState(
-          `Merge state unavailable: ${response.status}`,
-        );
-        return false;
-      }
-
-      mergeState.value = (await response.json()) as PullRequestMergeState;
-      return true;
-    };
-
     const updateStatus = $(async (status: "open" | "closed") => {
       const token = getAuthToken();
       if (!token) {
@@ -115,7 +97,20 @@ export const PullRequestDetailPanel = component$(
       const nextPullRequest = (await response.json()) as PullRequest;
       pullRequest.value = nextPullRequest;
       labelInput.value = joinLabels(nextPullRequest.labels);
-      await refreshMergeState(token);
+      const mergeStateResponse = await fetch(
+        `${publicApiBaseUrl()}${pullRequestMergeStateApiPath(owner, name, pullRequest.value.id)}`,
+        {
+          headers: { authorization: `Bearer ${token}` },
+        },
+      );
+      if (!mergeStateResponse.ok) {
+        mergeState.value = unavailableMergeState(
+          `Merge state unavailable: ${mergeStateResponse.status}`,
+        );
+      } else {
+        mergeState.value =
+          (await mergeStateResponse.json()) as PullRequestMergeState;
+      }
       message.value = status === "closed" ? "Pull request closed." : "Pull request reopened.";
     });
 
