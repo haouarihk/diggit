@@ -16,8 +16,6 @@ RUN mkdir -p apps/api/src \
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
   --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
   --mount=type=cache,target=/app/apps/api/target,sharing=locked \
-  cargo clean --release --manifest-path apps/api/Cargo.toml -p diggit-api \
-  && \
   cargo build --release --locked --manifest-path apps/api/Cargo.toml \
   && cp /app/apps/api/target/release/diggit-api /tmp/diggit-api
 
@@ -27,6 +25,8 @@ COPY apps/api/src ./apps/api/src
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
   --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
   --mount=type=cache,target=/app/apps/api/target,sharing=locked \
+  cargo clean --release --manifest-path apps/api/Cargo.toml -p diggit-api \
+  && \
   cargo build --release --locked --manifest-path apps/api/Cargo.toml \
   && cp /app/apps/api/target/release/diggit-api /tmp/diggit-api
 
