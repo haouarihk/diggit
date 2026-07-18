@@ -806,7 +806,13 @@ async fn registered_worktree_output(
     args: &[String],
 ) -> ApiResult<std::process::Output> {
     let mut command = Command::new("git");
-    command.arg("-C").arg(worktree);
+    command
+        .arg("-C")
+        .arg(worktree)
+        .env("GIT_AUTHOR_NAME", "Diggit")
+        .env("GIT_AUTHOR_EMAIL", "noreply@diggit.local")
+        .env("GIT_COMMITTER_NAME", "Diggit")
+        .env("GIT_COMMITTER_EMAIL", "noreply@diggit.local");
     for arg in args {
         command.arg(arg);
     }
