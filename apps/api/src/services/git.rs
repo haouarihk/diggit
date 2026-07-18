@@ -29,9 +29,7 @@ pub(crate) async fn create_bare_repo(
         .output()
         .await?;
     if !output.status.success() {
-        return Err(ApiError::BadRequest(
-            String::from_utf8_lossy(&output.stderr).to_string(),
-        ));
+        return Err(git_failure_error(&output, "git init failed"));
     }
     ensure_bare_repo_head(path, "main").await?;
     ensure_repo_post_receive_hook(config, owner, name, path).await?;
@@ -58,9 +56,7 @@ async fn ensure_bare_repo_head(path: &PathBuf, branch: &str) -> ApiResult<()> {
         .output()
         .await?;
     if !output.status.success() {
-        return Err(ApiError::BadRequest(
-            String::from_utf8_lossy(&output.stderr).to_string(),
-        ));
+        return Err(git_failure_error(&output, "failed to update repository HEAD"));
     }
 
     Ok(())
@@ -99,6 +95,32 @@ async fn ensure_repo_post_receive_hook(
 
 fn shell_single_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+fn git_failure_message(output: &std::process::Output, fallback: &str) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if !stderr.is_empty() {
+        return stderr;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if !stdout.is_empty() {
+        return stdout;
+    }
+
+    match output.status.code() {
+        Some(code) => format!("{fallback} (exit code {code})"),
+        None => fallback.to_string(),
+    }
+}
+
+fn git_failure_error(output: &std::process::Output, fallback: &str) -> ApiError {
+    let message = git_failure_message(output, fallback);
+    if message.contains("CONFLICT (") || message.contains("Automatic merge failed") {
+        ApiError::Conflict(message)
+    } else {
+        ApiError::BadRequest(message)
+    }
 }
 
 pub(crate) async fn list_branches(repo: &Repository) -> ApiResult<Vec<RepositoryBranchResponse>> {
@@ -309,9 +331,7 @@ pub(crate) async fn commit_repo_file_change_in_worktree(
         .env("GIT_COMMITTER_EMAIL", &author_email);
     let output = command.output().await?;
     if !output.status.success() {
-        return Err(ApiError::BadRequest(
-            String::from_utf8_lossy(&output.stderr).trim().to_string(),
-        ));
+        return Err(git_failure_error(&output, "git commit failed"));
     }
 
     let sha = run_git_worktree_command(
@@ -1178,9 +1198,7 @@ async fn merge_ref_into_branch_in_worktree(
         );
     let output = command.output().await?;
     if !output.status.success() {
-        return Err(ApiError::BadRequest(
-            String::from_utf8_lossy(&output.stderr).trim().to_string(),
-        ));
+        return Err(git_failure_error(&output, "git merge failed"));
     }
     Ok(())
 }
@@ -1222,9 +1240,7 @@ async fn sync_from_upstream_in_worktree(
         );
     let output = command.output().await?;
     if !output.status.success() {
-        return Err(ApiError::BadRequest(
-            String::from_utf8_lossy(&output.stderr).trim().to_string(),
-        ));
+        return Err(git_failure_error(&output, "git merge failed"));
     }
     Ok(())
 }
@@ -1232,9 +1248,7 @@ async fn sync_from_upstream_in_worktree(
 pub(crate) async fn run_git_command(repo: &Repository, args: &[String]) -> ApiResult<String> {
     let output = git_command(repo, args).await?;
     if !output.status.success() {
-        return Err(ApiError::BadRequest(
-            String::from_utf8_lossy(&output.stderr).trim().to_string(),
-        ));
+        return Err(git_failure_error(&output, "git command failed"));
     }
     ensure_output_size(&output.stdout)?;
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
@@ -1246,9 +1260,7 @@ pub(crate) async fn run_git_command_bytes(
 ) -> ApiResult<Vec<u8>> {
     let output = git_command(repo, args).await?;
     if !output.status.success() {
-        return Err(ApiError::BadRequest(
-            String::from_utf8_lossy(&output.stderr).trim().to_string(),
-        ));
+        return Err(git_failure_error(&output, "git command failed"));
     }
     if output.stdout.len() > MAX_RAW_FILE_BYTES as usize {
         return Err(ApiError::BadRequest(
@@ -1288,9 +1300,7 @@ pub(crate) async fn run_git_worktree_command(
 ) -> ApiResult<String> {
     let output = git_worktree_command(repo, worktree, args).await?;
     if !output.status.success() {
-        return Err(ApiError::BadRequest(
-            String::from_utf8_lossy(&output.stderr).trim().to_string(),
-        ));
+        return Err(git_failure_error(&output, "git worktree command failed"));
     }
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
@@ -1694,6 +1704,7 @@ pub(crate) fn media_type_for_path(path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::process::ExitStatusExt;
 
     #[test]
     fn parses_ahead_behind_counts() {
@@ -1739,5 +1750,33 @@ index 1111111..2222222 100644
 
         let default_branch = parse_branch_line("main\0def456", "main").unwrap();
         assert!(default_branch.is_default);
+    }
+
+    #[test]
+    fn git_failure_message_falls_back_to_stdout() {
+        let output = std::process::Output {
+            status: std::process::ExitStatus::from_raw(256),
+            stdout: b"Automatic merge failed; fix conflicts and then commit the result.\n".to_vec(),
+            stderr: Vec::new(),
+        };
+
+        assert_eq!(
+            git_failure_message(&output, "git merge failed"),
+            "Automatic merge failed; fix conflicts and then commit the result."
+        );
+    }
+
+    #[test]
+    fn git_failure_error_uses_conflict_for_merge_conflicts() {
+        let output = std::process::Output {
+            status: std::process::ExitStatus::from_raw(256),
+            stdout: b"CONFLICT (content): Merge conflict in src/main.ts\nAutomatic merge failed; fix conflicts and then commit the result.\n".to_vec(),
+            stderr: Vec::new(),
+        };
+
+        assert!(matches!(
+            git_failure_error(&output, "git merge failed"),
+            ApiError::Conflict(_)
+        ));
     }
 }

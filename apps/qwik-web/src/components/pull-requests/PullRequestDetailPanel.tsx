@@ -14,6 +14,19 @@ type PullRequestDetailPanelProps = {
   pullRequest: PullRequest;
 };
 
+async function responseErrorMessage(response: Response, fallback: string) {
+  try {
+    const body = (await response.json()) as { error?: string };
+    if (typeof body.error === "string" && body.error.trim().length > 0) {
+      return `${fallback}: ${body.error.trim()}`;
+    }
+  } catch {
+    // Ignore malformed error payloads and fall back to the status code.
+  }
+
+  return `${fallback}: ${response.status}`;
+}
+
 export const PullRequestDetailPanel = component$(
   ({
     activity,
@@ -54,7 +67,7 @@ export const PullRequestDetailPanel = component$(
       isBusy.value = false;
 
       if (!response.ok) {
-        message.value = `Failed to update pull request: ${response.status}`;
+        message.value = await responseErrorMessage(response, "Failed to update pull request");
         return;
       }
 
@@ -83,7 +96,7 @@ export const PullRequestDetailPanel = component$(
       isBusy.value = false;
 
       if (!response.ok) {
-        message.value = `Merge failed: ${response.status}`;
+        message.value = await responseErrorMessage(response, "Merge failed");
         return;
       }
 
@@ -116,7 +129,7 @@ export const PullRequestDetailPanel = component$(
       isBusy.value = false;
 
       if (!response.ok) {
-        message.value = `Failed to update labels: ${response.status}`;
+        message.value = await responseErrorMessage(response, "Failed to update labels");
         return;
       }
 
