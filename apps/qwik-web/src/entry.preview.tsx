@@ -18,4 +18,12 @@ import render from "./entry.ssr";
 /**
  * The default export is the QwikCity adapter used by Vite preview.
  */
-export default createQwikCity({ render, qwikCityPlan });
+export default createQwikCity({
+  render,
+  qwikCityPlan,
+  // Diggit proxies GitLab-compatible POST endpoints like /oauth/token through
+  // Qwik. External OAuth clients such as Dokploy do not send a browser Origin
+  // header, so Qwik City's built-in origin check would reject the request
+  // before the proxy route can forward it to the API.
+  checkOrigin: false,
+});
