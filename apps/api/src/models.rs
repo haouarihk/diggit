@@ -886,8 +886,8 @@ pub(crate) struct OAuthTokenRequest {
     pub(crate) grant_type: String,
     pub(crate) code: Option<String>,
     pub(crate) refresh_token: Option<String>,
-    pub(crate) client_id: String,
-    pub(crate) client_secret: String,
+    pub(crate) client_id: Option<String>,
+    pub(crate) client_secret: Option<String>,
     pub(crate) redirect_uri: Option<String>,
 }
 

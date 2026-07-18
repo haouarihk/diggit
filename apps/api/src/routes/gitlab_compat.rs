@@ -157,9 +157,10 @@ pub(crate) async fn oauth_authorize_post(
 
 pub(crate) async fn oauth_token(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Form(input): Form<OAuthTokenRequest>,
 ) -> ApiResult<Json<OAuthTokenIssueResponse>> {
-    Ok(Json(exchange_oauth_token(&state, input).await?))
+    Ok(Json(exchange_oauth_token(&state, &headers, input).await?))
 }
 
 pub(crate) async fn gitlab_user(

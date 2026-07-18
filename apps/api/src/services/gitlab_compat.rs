@@ -354,10 +354,22 @@ pub(crate) fn oauth_redirect_uri_matches(registered: &str, provided: &str) -> Ap
 
 pub(crate) async fn exchange_oauth_token(
     state: &AppState,
+    headers: &HeaderMap,
     input: OAuthTokenRequest,
 ) -> ApiResult<OAuthTokenIssueResponse> {
-    let application = find_oauth_application_by_client_id(state, &input.client_id).await?;
-    verify_oauth_client_secret(&application, &input.client_secret)?;
+    let basic_credentials = oauth_client_credentials_from_headers(headers);
+    let client_id = input
+        .client_id
+        .as_deref()
+        .or(basic_credentials.as_ref().map(|(client_id, _)| client_id.as_str()))
+        .ok_or(ApiError::Unauthorized)?;
+    let client_secret = input
+        .client_secret
+        .as_deref()
+        .or(basic_credentials.as_ref().map(|(_, client_secret)| client_secret.as_str()))
+        .ok_or(ApiError::Unauthorized)?;
+    let application = find_oauth_application_by_client_id(state, client_id).await?;
+    verify_oauth_client_secret(&application, client_secret)?;
 
     match input.grant_type.as_str() {
         "authorization_code" => {
@@ -1001,7 +1013,10 @@ async fn exchange_authorization_code(
     .fetch_one(&state.pool)
     .await?;
 
-    if row.4.is_some() || row.3 < Utc::now() || row.2 != redirect_uri {
+    if row.4.is_some()
+        || row.3 < Utc::now()
+        || !oauth_redirect_uri_matches(&row.2, redirect_uri)?
+    {
         return Err(ApiError::Unauthorized);
     }
 
@@ -1177,6 +1192,10 @@ pub(crate) fn oauth_access_token_from_headers(headers: &HeaderMap) -> Option<Str
     if let Some(token) = bearer_token(headers) {
         return Some(token.to_string());
     }
+    oauth_client_credentials_from_headers(headers).map(|(_, password)| password)
+}
+
+fn oauth_client_credentials_from_headers(headers: &HeaderMap) -> Option<(String, String)> {
     headers
         .get("authorization")
         .and_then(|value| value.to_str().ok())
@@ -1186,7 +1205,7 @@ pub(crate) fn oauth_access_token_from_headers(headers: &HeaderMap) -> Option<Str
         .and_then(|credentials| {
             credentials
                 .split_once(':')
-                .map(|(_, password)| password.to_string())
+                .map(|(username, password)| (username.to_string(), password.to_string()))
         })
 }
 
@@ -1783,6 +1802,30 @@ mod tests {
         assert_eq!(
             oauth_access_token_from_headers(&headers),
             Some("abc".to_string())
+        );
+    }
+
+    #[test]
+    fn oauth_client_credentials_decode_from_basic_auth() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "authorization",
+            "Basic Y2xpZW50LXV1aWQ6c2VjcmV0LXZhbHVl".parse().unwrap(),
+        );
+        assert_eq!(
+            oauth_client_credentials_from_headers(&headers),
+            Some(("client-uuid".to_string(), "secret-value".to_string()))
+        );
+    }
+
+    #[test]
+    fn redirect_uri_matches_ignores_equivalent_url_formatting() {
+        assert!(
+            oauth_redirect_uri_matches(
+                "https://panel.haouarihk.com/api/providers/gitlab/callback?gitlabId=test",
+                "https://panel.haouarihk.com:443/api/providers/gitlab/callback?gitlabId=test",
+            )
+            .unwrap()
         );
     }
 
